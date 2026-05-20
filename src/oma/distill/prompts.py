@@ -1,0 +1,149 @@
+"""The cache-split curator prompt (oma.distill.md:59; ports
+``swarms/distillation/prompts.py:_build_distill_system:475-501``).
+
+Prompt-cache eligibility (Anthropic ``cache_control: ephemeral`` / OpenAI
+automatic prompt cache) requires a byte-stable prefix at the start of input
+across calls. The rule block is huge and identical across every curation, so
+cost forces the split: the **stable system prefix** is role directive +
+``ANTI_META_BLOCK`` + output schema (constant per scope); the **variable user
+message** is the rendered goal-scoped posts. Posts are NEVER interpolated into
+the prefix — doing so would defeat the cache on every call (the swarms
+cache-miss-from-prefix-mutation gotcha).
+
+``ANTI_META_BLOCK`` is imported from ``oma.forum`` and re-exported: it is the
+*same object* (identity, not equality) the agent wrote against, so the rule
+the curator filters against is byte-for-byte the rule the agent saw
+(oma.forum.md / oma.distill.md "the anti-meta discipline").
+
+C4 corollary (Design Principles §6/§11): a hosted curator distilling the
+*public corpus* is corpus-curation, not being the user's *task* inference
+provider — the structure is an agent/curator tax, never a human tax.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from oma.distill.schema import BUCKETS
+from oma.forum import ANTI_META_BLOCK, assert_anti_meta_rules_present
+
+__all__ = ["ANTI_META_BLOCK", "assert_anti_meta_rules_present", "build_distill_prompt"]
+
+_SYSTEM_ROLE = (
+    "ROLE: you are a curator. You read a corpus of structured, "
+    "evidence-grounded forum posts written by coding agents after their "
+    "sessions, and you distill them into a compact, falsifiable bundle of "
+    "Insights for a future agent to be seeded with. You are NOT summarizing "
+    "your own work — you are curating collective evidence. Be scarce: a small "
+    "bundle of grounded Insights beats a large bundle of plausible ones.\n"
+)
+
+_PER_GOAL_DIRECTIVE = (
+    "SCOPE: per-goal. Every input post shares ONE goal (across sessions and "
+    "agents and time). Distill what transfers to the next agent pursuing that "
+    "same goal. A claim independently grounded by posts from different "
+    "sessions is recurrence — mark it confidence='high'.\n"
+)
+
+_CROSS_GOAL_DIRECTIVE = (
+    "SCOPE: cross-goal. Input posts span many goals. Distill ONLY rules that "
+    "generalize across goals — the corpus-wide transferable layer. Keep each "
+    "primitive concrete even while wording it goal-agnostically. A claim "
+    "recurring across different goals/sessions is confidence='high'.\n"
+)
+
+_OUTPUT_SCHEMA = (
+    "OUTPUT (strict JSON, no prose outside it). Six buckets, each a list of "
+    "Insights:\n"
+    "{\n" + "".join(f'  "{b}": [<Insight>, ...],\n' for b in BUCKETS) + "}\n"
+    "where <Insight> is:\n"
+    "{\n"
+    '  "text": "<the rule, \'when X do Y\' — concrete, <=240 chars>",\n'
+    '  "applies_when": "<concrete condition it holds, <=200 chars>",\n'
+    '  "does_not_apply_when": "<concrete boundary, <=200 chars; NOT '
+    "'always'/'never'/'n/a' — an unbounded rule is REJECTED>\",\n"
+    '  "evidence": [{"post_id": "<a real cited packet id>", "quote": '
+    '"<verbatim <=200-char excerpt copied from that post>"}],\n'
+    '  "confidence": "high" | "medium" | "low"\n'
+    "}\n"
+    "Field semantics:\n"
+    "- transferable_insights: concrete actionable rules.\n"
+    "- confirmed_constraints: invariants verified by post evidence.\n"
+    "- rejected_hypotheses: approaches evidence showed are wrong "
+    "(first-class; what NOT to try).\n"
+    "- pitfalls: failure modes to avoid; the boundary names where they do "
+    "NOT apply so a future agent does not over-generalize.\n"
+    "- checks: quick concrete verifications (name the command/file/flag).\n"
+    "- next_steps: specific experiments a future agent should try.\n"
+    "NON-NEGOTIABLE (the parser drops violations mechanically — do not rely "
+    "on it, but it will):\n"
+    "- Every Insight needs non-empty text, applies_when, does_not_apply_when, "
+    "and >=1 evidence entry, or it is DROPPED. Empty buckets are correct.\n"
+    "- VERBATIM QUOTE: each evidence.quote MUST be a literal substring of the "
+    "cited post. Paraphrases are DROPPED — the quote is what proves the "
+    "Insight is grounded, not invented. Do not invent post ids.\n"
+    "- At most 5 Insights per bucket. Prefer fewer, higher-signal.\n"
+    "- Weight high-reuse / high-rating authors over unrated ones when claims "
+    "conflict; a low-rated or contradicted claim becomes a "
+    "rejected_hypotheses/pitfalls Insight, not a transferable one.\n"
+)
+
+# Sanitize rendered post text exactly as swarms ``_sanitize_prompt_excerpt``:
+# neutralize a standalone protocol token line, collapse newlines, bound length
+# (the binding constraint on how much signal reaches the curator).
+_PROTOCOL_LINE_RE = re.compile(r"(?m)^(\s*)(INSIGHT|COMMENT|EVIDENCE|POST)(\s*)$")
+_POST_EXCERPT_CHARS = 2000
+
+
+def _sanitize(value: Any, *, max_chars: int = _POST_EXCERPT_CHARS) -> str:
+    text = "" if value is None else str(value)
+    text = _PROTOCOL_LINE_RE.sub(r"\1[\2]\3", text)
+    text = " ".join(text.splitlines())
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+
+def _render_post(post: dict[str, Any]) -> str:
+    structured = post.get("structured")
+    if isinstance(structured, dict):
+        body = " | ".join(f"{k}={_sanitize(v)}" for k, v in structured.items() if isinstance(v, str))
+    else:
+        body = _sanitize(post.get("text") or post.get("content"))
+    meta = f"kind={post.get('kind')}"
+    if post.get("reply_to"):
+        meta += f" reply_to={post.get('reply_to')} stance={post.get('stance')}"
+    hint = ""
+    sig = post.get("_signal")
+    if isinstance(sig, dict):
+        hint = (
+            f" [reuse={float(sig.get('reuse', 0)):.0f}"
+            f" injected={int(sig.get('inject_count', 0))}x"
+            f" rating={sig.get('rating_bucket', 'neutral')}]"
+        )
+    return f"- id={post.get('id')} agent={post.get('agent_id')} {meta}{hint}: {body}"
+
+
+def _stable_system(scope: str) -> str:
+    """The cache-stable system prefix. Stable across every call of the same
+    ``scope`` (role directive + ANTI_META_BLOCK + schema); contains NO
+    per-call post data."""
+    directive = _PER_GOAL_DIRECTIVE if scope == "per_goal" else _CROSS_GOAL_DIRECTIVE
+    return f"{_SYSTEM_ROLE}\n{directive}\n{ANTI_META_BLOCK}\n{_OUTPUT_SCHEMA}"
+
+
+def build_distill_prompt(
+    *,
+    posts: list[dict[str, Any]],
+    scope: str,
+    goal: str | None,
+) -> tuple[str, str]:
+    """Return ``(system, user)``. ``system`` is the cache-stable prefix (never
+    contains posts); ``user`` is the variable rendered corpus. Posts should
+    arrive already weighted/ordered (``oma.distill.weighting.weigh_posts``)."""
+    system = _stable_system(scope)
+    scope_line = f"SCOPE={scope} GOAL={goal if goal is not None else '(cross-goal / ungoaled corpus)'}"
+    rendered = "\n".join(_render_post(p) for p in posts)
+    user = f"{scope_line}\nPOSTS ({len(posts)}):\n{rendered}\n\nReturn the JSON bundle now."
+    return system, user

@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"user","message":{"content":"optimize the parser hot loop"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll profile the loop first."}]}}
+{"type":"tool_use","name":"Bash","input":{"command":"python -m cProfile parse.py"}}
+{"type":"tool_result","content":"cumtime 4.2s in tokenize()"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Hot path is tokenize(); memoizing it. Note OPENAI_API_KEY=sk-proj-LEAKLEAKLEAKLEAKLEAKLEAK in env."}]}}
+{"type":"result","result":"Applied memoization; 1.8x speedup."}

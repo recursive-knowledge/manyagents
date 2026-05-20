@@ -1,0 +1,3 @@
+{
+  "pty_tee": "$ gemini -p 'reduce peak memory in the data loader'\n[gemini] Inspecting loader.py ...\n[gemini] The loader materializes the full list; switching to a streaming generator.\n[gemini] Peak RSS 512MB -> 96MB on the 1M-row sample.\n"
+}

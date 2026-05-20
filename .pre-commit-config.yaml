@@ -8,9 +8,11 @@ repos:
       - id: check-yaml
         args: [--unsafe]
       - id: check-json
-        exclude: ^\.devcontainer/devcontainer\.json
+        # JSONL adapter fixtures (one JSON object per line) aren't single-doc JSON.
+        exclude: ^(\.devcontainer/devcontainer\.json|tests/fixtures/adapter_samples/.*\.json)$
       - id: pretty-format-json
-        exclude: ^\.devcontainer/devcontainer\.json
+        # JSONL adapter fixtures (one JSON object per line) aren't single-doc JSON.
+        exclude: ^(\.devcontainer/devcontainer\.json|tests/fixtures/adapter_samples/.*\.json)$
         args: [--autofix, --no-sort-keys]
       - id: end-of-file-fixer
       - id: trailing-whitespace
