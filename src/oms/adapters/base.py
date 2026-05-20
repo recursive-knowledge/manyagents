@@ -26,6 +26,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -80,7 +81,7 @@ def _kill_process_group(proc: subprocess.Popen[str], sig: int = signal.SIGTERM) 
     concept here — ``Popen.terminate()`` (sig != SIGKILL) or
     ``Popen.kill()`` (sig == SIGKILL) is the equivalent."""
     with contextlib.suppress(ProcessLookupError, OSError):
-        if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        if sys.platform != "win32":  # mypy: narrows so os.{killpg,getpgid} resolve
             os.killpg(os.getpgid(proc.pid), sig)
         elif sig == _SIGKILL:  # Windows: SIGKILL collapses to SIGTERM (above)
             proc.kill()
