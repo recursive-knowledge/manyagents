@@ -1,4 +1,4 @@
-"""M7 tests for oma.distill — the curator (oma.distill.md Verification).
+"""M7 tests for oms.distill — the curator (oms.distill.md Verification).
 
 Covers: mechanical bundle validation **port + harden (C3)** (invented
 post_id / paraphrase / unbounded `does_not_apply_when` / ≤5-per-bucket /
@@ -6,7 +6,7 @@ shared anti-meta code / Evidence string-id remap / recurrence promotion);
 no-carry-forward + per/cross independence; outcome weighting; hybrid
 ``local|server|auto`` resolution incl. auto→local fallback; the exact
 zero-posts sentinel; idempotency + CurationError; the byte-identical
-``ANTI_META_BLOCK`` shared with oma.forum; the cache-split prompt.
+``ANTI_META_BLOCK`` shared with oms.forum; the cache-split prompt.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from typing import Any
 
 import pytest
 
-from oma import distill, forum
-from oma.bank import FakeBank
-from oma.core import Packet, clear_packet_cache
-from oma.distill import (
+from oms import distill, forum
+from oms.bank import FakeBank
+from oms.core import Packet, clear_packet_cache
+from oms.distill import (
     ANTI_META_BLOCK,
     BUCKETS,
     CurationError,
@@ -30,10 +30,10 @@ from oma.distill import (
     resolve,
     validate_bundle,
 )
-from oma.distill.parse import _norm
-from oma.distill.prompts import assert_anti_meta_rules_present
-from oma.distill.resolve import AutoCurator, LocalCurator
-from oma.distill.weighting import weigh_posts
+from oms.distill.parse import _norm
+from oms.distill.prompts import assert_anti_meta_rules_present
+from oms.distill.resolve import AutoCurator, LocalCurator
+from oms.distill.weighting import weigh_posts
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +261,7 @@ def test_resolve_selects_each_mode() -> None:
     assert isinstance(resolve("server", server_url=""), ServerCurator)
     assert isinstance(resolve("local", model=m), LocalCurator)
     assert isinstance(resolve("auto", model=m, server_url=""), AutoCurator)
-    with pytest.raises(ValueError, match="bad OMA_CURATOR_MODE"):
+    with pytest.raises(ValueError, match="bad OMS_CURATOR_MODE"):
         resolve("bogus", model=m)
 
 

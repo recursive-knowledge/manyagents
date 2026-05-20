@@ -1,11 +1,11 @@
-"""M11.4 tests for ``oma._handlers`` — the four knowledge-loop verbs.
+"""M11.4 tests for ``oms._handlers`` — the four knowledge-loop verbs.
 
-These moved out of ``oma.cli`` when M11.4 ripped the bash slash subcommands;
+These moved out of ``oms.cli`` when M11.4 ripped the bash slash subcommands;
 the same C1 / retrieval / accept-reject behaviour is now tested by calling
 the handlers directly with kwargs (no argparse Namespace). The verbs are
 exposed to users **inside the wrapped agent** via the MCP server +
 per-adapter skills — this module covers the underlying handler functions
-that both the in-agent surface (via ``oma._mcp``) and any future
+that both the in-agent surface (via ``oms._mcp``) and any future
 programmatic caller rely on.
 
 The headline case stays **C1**: a rejected/parser-refused post is NOT
@@ -19,17 +19,17 @@ from typing import Any
 
 import pytest
 
-from oma import _handlers as h
-from oma.bank import FakeBank
+from oms import _handlers as h
+from oms.bank import FakeBank
 
 
 @pytest.fixture(autouse=True)
 def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMA_HOME", str(tmp_path / ".oma"))
-    monkeypatch.delenv("OMA_NONINTERACTIVE", raising=False)
-    monkeypatch.delenv("OMA_SESSION", raising=False)
-    monkeypatch.setenv("OMA_INSTALL_SKILLS", "deny")
-    from oma.forum import clear_discuss_gate
+    monkeypatch.setenv("OMS_HOME", str(tmp_path / ".oms"))
+    monkeypatch.delenv("OMS_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("OMS_SESSION", raising=False)
+    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")
+    from oms.forum import clear_discuss_gate
 
     clear_discuss_gate()
 
@@ -88,7 +88,7 @@ def _patch_adapter(monkeypatch: pytest.MonkeyPatch, adapter: FakeAdapter) -> Non
 
 async def _seed_session(bank: FakeBank, *, sid: str = "S1", goal: str | None = "speed") -> None:
     await bank.put_session(sid, goal=goal)
-    from oma.cli import _write_active
+    from oms.cli import _write_active
 
     _write_active(sid)
 
@@ -140,7 +140,7 @@ async def test_noninteractive_self_distill_accepts_unrated(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OMA_NONINTERACTIVE", "1")
+    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
     await _seed_session(fake_bank)
     _patch_adapter(monkeypatch, FakeAdapter(json.dumps(_GOOD)))
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted().io())
@@ -206,7 +206,7 @@ async def test_inject_noninteractive_denied_no_ledger(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OMA_NONINTERACTIVE", "1")
+    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
     await _seed_session(fake_bank)
     pid = await _seed_distill(fake_bank)
     s = Scripted()

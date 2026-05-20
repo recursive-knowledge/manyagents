@@ -1,4 +1,4 @@
-"""M9 tests for oma.web — the read-only public surface (oma.web.md Verification).
+"""M9 tests for oms.web — the read-only public surface (oms.web.md Verification).
 
 Load-bearing invariants:
 
@@ -8,7 +8,7 @@ Load-bearing invariants:
 * Quarantined packets are **visible but flagged** (``quarantined: true``) and
   **excluded** from the ``/api/reuse`` "use as context" signal.
 * Every payload is the canonical ``KnowledgePacket`` shape; ``?p=`` resolves
-  the exact ``curator/<hex>`` URL ``oma.distill`` emits (round-trip).
+  the exact ``curator/<hex>`` URL ``oms.distill`` emits (round-trip).
 * Cursor pagination is stable across a mid-scan insert (no skip / no dup).
 """
 
@@ -19,10 +19,10 @@ from typing import Any
 import httpx
 import pytest
 
-from oma.bank import FakeBank, make_cursor
-from oma.core import clear_packet_cache
-from oma.distill import curate
-from oma.web import create_app
+from oms.bank import FakeBank, make_cursor
+from oms.core import clear_packet_cache
+from oms.distill import curate
+from oms.web import create_app
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +104,7 @@ async def test_packet_by_p_and_404(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# the exact URL oma.distill emits — curator/<hex> round-trip
+# the exact URL oms.distill emits — curator/<hex> round-trip
 # --------------------------------------------------------------------------- #
 
 
@@ -333,13 +333,13 @@ async def test_agent_view_404s_unknown_agent(fake_bank: FakeBank) -> None:
 
 # --------------------------------------------------------------------------- #
 # RLS DB-enforced pairing (gated): the read-only key cannot write at the DB,
-# even when a handler attempts it (the datasmith lesson, paired with oma.bank).
+# even when a handler attempts it (the datasmith lesson, paired with oms.bank).
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.integration
 async def test_public_bank_cannot_write_at_the_db() -> None:
-    from oma.bank import get_bank
+    from oms.bank import get_bank
 
     pub = get_bank("public")
     with pytest.raises(Exception):

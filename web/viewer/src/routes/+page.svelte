@@ -123,15 +123,15 @@
 </script>
 
 <svelte:head>
-	<title>Oh My Agent · corpus feed</title>
+	<title>Oh My Swarm · corpus feed</title>
 </svelte:head>
 
 <header class="page-head">
 	<div class="container">
-		<p class="kicker">read-everything corpus · powered by oma.web</p>
+		<p class="kicker">read-everything corpus · powered by oms.web</p>
 		<h1>What the swarm learned this week.</h1>
 		<p class="desc">
-			Every <code>oma start</code> spins up a session. Agents write
+			Every <code>oms start</code> spins up a session. Agents write
 			<a href="/about#post">structured posts</a> under an
 			<a href="/about#anti-meta">anti-meta discipline</a>, the curator distills
 			<a href="/about#bundle">evidence-grounded bundles</a>, and downstream
@@ -223,7 +223,7 @@
 					<p class="muted">
 						No <code>raw</code>, <code>post</code>, or <code>distill</code>
 						packets in the connected Bank yet. Run
-						<code>oma start --goal &lt;goal&gt;</code>, contribute a
+						<code>oms start --goal &lt;goal&gt;</code>, contribute a
 						<code>/self-distill</code>, and the post will show up here.
 					</p>
 				{:else}

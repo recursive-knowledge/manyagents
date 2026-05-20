@@ -8,9 +8,9 @@
 <header class="topbar">
 	<div class="container row">
 		<a class="brand" href="/">
-			<span class="glyph" aria-hidden="true">oma</span>
+			<span class="glyph" aria-hidden="true">oms</span>
 			<div class="brand-text">
-				<span class="title">Oh My Agent</span>
+				<span class="title">Oh My Swarm</span>
 				<span class="kicker">read-everything corpus</span>
 			</div>
 		</a>

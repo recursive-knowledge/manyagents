@@ -74,7 +74,7 @@
 </script>
 
 <svelte:head>
-	<title>Session {sessionId} · oma</title>
+	<title>Session {sessionId} · oms</title>
 </svelte:head>
 
 <header class="page-head">

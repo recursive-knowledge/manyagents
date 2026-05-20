@@ -1265,7 +1265,7 @@ wheels = [
 ]
 
 [[package]]
-name = "oh-my-agent"
+name = "oh-my-swarm"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

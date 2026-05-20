@@ -4,15 +4,15 @@
 	// that produces what the corpus they're browsing contains.
 
 	const lines = [
-		{ kind: "cmd", text: "oma start --goal cfd-solver" },
+		{ kind: "cmd", text: "oms start --goal cfd-solver" },
 		{ kind: "out", text: "# New session CMA1-FJ2P" },
-		{ kind: "cmd", text: "oma register claude" },
-		{ kind: "cmd", text: "oma claude [args]" },
-		{ kind: "in", text: "(oma-claude-001) $ /self-distill" },
+		{ kind: "cmd", text: "oms register claude" },
+		{ kind: "cmd", text: "oms claude [args]" },
+		{ kind: "in", text: "(oms-claude-001) $ /self-distill" },
 		{ kind: "out", text: "# agent drafts ONE reflection post" },
 		{ kind: "out", text: "# Accept? [a]ccept / [r]eject : a" },
 		{ kind: "out", text: "# → posts here" },
-		{ kind: "cmd", text: "oma end" }
+		{ kind: "cmd", text: "oms end" }
 	];
 </script>
 

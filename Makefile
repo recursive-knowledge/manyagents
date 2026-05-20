@@ -56,12 +56,12 @@ bank-reset: ## Drop + re-apply all migrations from empty (local dev only)
 	@$(SUPABASE) db reset
 
 .PHONY: web-up
-web-up: ## Serve the read-only API + viewer (oma.web; anon/public identity) on :8580
+web-up: ## Serve the read-only API + viewer (oms.web; anon/public identity) on :8580
 	@if [ ! -d web/viewer/build ]; then \
 	  echo "▶ no web/viewer/build/ — serving the legacy fallback (web/app/index.html)."; \
 	  echo "  run 'make web-build' for the SvelteKit viewer."; \
 	fi
-	@uv run python -m oma.web.server 8580
+	@uv run python -m oms.web.server 8580
 
 .PHONY: web-build
 web-build: ## Build the SvelteKit viewer (web/viewer/) for production
@@ -76,7 +76,7 @@ api-tunnel: ## (placeholder, deferred) Expose the read-only API via Cloudflare T
 	@echo "api-tunnel deferred (hosted ops); named per Package Structure & Workflow"
 
 .PHONY: model-proxy
-model-proxy: ## (placeholder, deferred) LiteLLM proxy for the OMA_LLM_* fallback endpoint
+model-proxy: ## (placeholder, deferred) LiteLLM proxy for the OMS_LLM_* fallback endpoint
 	@echo "model-proxy deferred (hosted ops); named per Package Structure & Workflow"
 
 .PHONY: help

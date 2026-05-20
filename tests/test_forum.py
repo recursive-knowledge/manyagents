@@ -1,7 +1,7 @@
-"""M6 tests for oma.forum — mechanical parser (missing-field / bad-ref /
+"""M6 tests for oms.forum — mechanical parser (missing-field / bad-ref /
 banned-meta / forge / no-history / reply-to-quarantined), the byte-identical
 ANTI_META_BLOCK, /discuss retrieval-before-post, and C1 (rejected post not
-persisted; preference is distill-only) (oma.forum.md Verification)."""
+persisted; preference is distill-only) (oms.forum.md Verification)."""
 
 from __future__ import annotations
 
@@ -9,18 +9,18 @@ from typing import Any
 
 import pytest
 
-from oma import forum
-from oma.bank import FakeBank
-from oma.core import Packet
-from oma.forum import (
+from oms import forum
+from oms.bank import FakeBank
+from oms.core import Packet
+from oms.forum import (
     ANTI_META_BLOCK,
     assert_anti_meta_rules_present,
     clear_discuss_gate,
     enforce_retrieved_before_reply,
     parse_post,
 )
-from oma.forum import anti_meta as anti_meta_mod
-from oma.forum.discuss import retrieve
+from oms.forum import anti_meta as anti_meta_mod
+from oms.forum.discuss import retrieve
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +240,12 @@ async def test_valid_post_round_trips_and_carries_no_preference(fake_bank: FakeB
 
 
 # --------------------------------------------------------------------------- #
-# render_post_prompt — agent-side prompt (M8 added the renderer to oma.forum)
+# render_post_prompt — agent-side prompt (M8 added the renderer to oms.forum)
 # --------------------------------------------------------------------------- #
 
 
 def test_render_post_prompt_embeds_anti_meta_and_schema() -> None:
-    from oma.forum import render_post_prompt
+    from oms.forum import render_post_prompt
 
     p = render_post_prompt(kind="reflection", goal="speed", guidance="focus on the hot loop")
     assert ANTI_META_BLOCK in p  # the SAME object the parser filters against
@@ -256,7 +256,7 @@ def test_render_post_prompt_embeds_anti_meta_and_schema() -> None:
 
 
 def test_render_post_prompt_reply_no_history_forbids_citation() -> None:
-    from oma.forum import render_post_prompt
+    from oms.forum import render_post_prompt
 
     p = render_post_prompt(kind="reply", goal="g", prior_posts=[])
     assert "no-history hardening" in p and "do NOT reference any post id" in p

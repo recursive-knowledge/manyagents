@@ -1,5 +1,5 @@
 """Simulate the Overview's Alice/Bob (… Carol/Dave/Erin) stories end-to-end
-through the **real** ``oma.cli`` handlers on a shared in-memory FakeBank.
+through the **real** ``oms.cli`` handlers on a shared in-memory FakeBank.
 
 Nothing here is mocked except the three seams a real run would shell out to:
 the wrapped agent's headless model (returns canned post JSON), the PTY spawn
@@ -21,14 +21,14 @@ import os
 import tempfile
 from typing import Any
 
-os.environ["OMA_CURATOR_MODE"] = "local"  # local curator; no server attempt
-os.environ["OMA_HOME"] = tempfile.mkdtemp(prefix="oma-sim-")
+os.environ["OMS_CURATOR_MODE"] = "local"  # local curator; no server attempt
+os.environ["OMS_HOME"] = tempfile.mkdtemp(prefix="oms-sim-")
 
-from oma import cli
-from oma.bank import FakeBank
-from oma.capture.models import CanonicalTrace, TraceEvent
+from oms import cli
+from oms.bank import FakeBank
+from oms.capture.models import CanonicalTrace, TraceEvent
 
-_resolve_mod = importlib.import_module("oma.distill.resolve")
+_resolve_mod = importlib.import_module("oms.distill.resolve")
 
 # Mutable seam state: the next post the wrapped agent "writes", and the next
 # bundle the curator "returns". Set immediately before the verb that consumes it.
@@ -66,7 +66,7 @@ class _Adapter:
         )
 
 
-from oma import _handlers as h  # noqa: E402
+from oms import _handlers as h  # noqa: E402
 
 h._adapter_for = lambda name, *, session_id, agent_id: _Adapter(name, session_id, agent_id)  # type: ignore[assignment]
 cli._pty_spawn = lambda argv: None  # type: ignore[assignment]
@@ -94,13 +94,13 @@ def _args(*argv: str) -> Any:
 async def verb(bank: FakeBank, *argv: str, inputs: tuple[str, ...] = (), post: str | None = None) -> list[str]:  # noqa: C901 — one elif per verb is the dispatch; refactoring would be artificial
     """Drive one verb through its real handler. ``post`` sets the canned agent
     JSON for self-distill/discuss. M11.4: the four knowledge-loop verbs live
-    in ``oma._handlers`` (kwargs API, no argparse coupling); the session-
-    lifecycle verbs stay in ``oma.cli._DISPATCH``."""
+    in ``oms._handlers`` (kwargs API, no argparse coupling); the session-
+    lifecycle verbs stay in ``oms.cli._DISPATCH``."""
     if post is not None:
         STATE["post"] = post
     io = _IO(*inputs)
     name = argv[0]
-    if name == "run":  # `oma <adapter>` — the PTY leg
+    if name == "run":  # `oms <adapter>` — the PTY leg
         rc = await cli._do_run_agent(argv[1], list(argv[2:]), None, bank=bank, io=io.pair())
     elif name == "self-distill":
         rc = await h.do_self_distill(
@@ -204,7 +204,7 @@ async def story_a(bank: FakeBank) -> None:
     alice_post = next(
         p["id"] for p in bank._packets.values() if p.get("kind") == "reflection" and p.get("goal") == "cfd-solver"
     )
-    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `oma end`.")
+    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `oms end`.")
     print("  She told no one. The goal — not a session id — is the only key.")
 
     # --- Bob (Codex), a different org, SAME goal, new session ------------

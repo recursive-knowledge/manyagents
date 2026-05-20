@@ -1,6 +1,6 @@
-"""M4 tests for oma.capture — conformance, the security-critical scrub
+"""M4 tests for oms.capture — conformance, the security-critical scrub
 (highest-priority test in the project), fidelity-aware bounding, and the
-validate→scrub→bound→persist round-trip (oma.capture.md Verification)."""
+validate→scrub→bound→persist round-trip (oms.capture.md Verification)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from dataclasses import asdict
 
 import pytest
 
-from oma.bank import FakeBank
-from oma.capture import (
+from oms.bank import FakeBank
+from oms.capture import (
     SCRUB_VERSION,
     CanonicalTrace,
     ConformanceError,
@@ -21,7 +21,7 @@ from oma.capture import (
     scrub,
     validate,
 )
-from oma.capture.bound import _MARKER_RESERVE
+from oms.capture.bound import _MARKER_RESERVE
 
 
 def _trace(events: list[TraceEvent], *, fidelity: str = "structured", **kw: object) -> CanonicalTrace:
@@ -130,7 +130,7 @@ def test_within_budget_trace_passes_through_only_stamping_bytes_out() -> None:
 
 
 def test_50mb_pty_trace_bounded_within_budget_and_truncated() -> None:
-    big = "x" * 50_000_000  # synthetic 50 MB PTY tee (oma.capture.md Verification)
+    big = "x" * 50_000_000  # synthetic 50 MB PTY tee (oms.capture.md Verification)
     t = _trace([TraceEvent(0.0, "system", big)], fidelity="pty", bytes_in=len(big))
     budget = 2 * 1024 * 1024
     out = bound(t, max_bytes=budget)
@@ -199,7 +199,7 @@ async def test_persist_incomplete_capture_is_flagged(fake_bank: FakeBank) -> Non
 
 
 async def test_persist_round_trips_via_core_packet(fake_bank: FakeBank) -> None:
-    from oma.core import Packet, clear_packet_cache
+    from oms.core import Packet, clear_packet_cache
 
     clear_packet_cache()
     await fake_bank.put_session("S")
@@ -212,7 +212,7 @@ async def test_traces_body_roundtrips_to_canonicaltrace(fake_bank: FakeBank) -> 
     """M7 replays distillation from ``traces.body``; the serialization must be
     loss-free. Reconstruct the dataclasses from the stored JSON and assert
     re-serializing yields byte-identical output (bijective)."""
-    from oma.capture import _serialize
+    from oms.capture import _serialize
 
     await fake_bank.put_session("S")
     src = _trace(

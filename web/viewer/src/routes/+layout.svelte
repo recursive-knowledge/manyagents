@@ -10,8 +10,8 @@
 <footer class="site-foot">
 	<div class="container">
 		<span class="muted">
-			Read API: <code>oma.web</code> · grant enforced at the database
-			(oma.bank migration 00004).
+			Read API: <code>oms.web</code> · grant enforced at the database
+			(oms.bank migration 00004).
 		</span>
 		<span class="muted right">
 			<a href="/about">About</a> · <a href="https://github.com/" rel="noopener">source</a>

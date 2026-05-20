@@ -1,5 +1,5 @@
-"""M1 tests for oma.utils — sid codec, config precedence, provider, rate
-limit detection, log prefixes (oma.utils.md Verification)."""
+"""M1 tests for oms.utils — sid codec, config precedence, provider, rate
+limit detection, log prefixes (oms.utils.md Verification)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import httpx
 import pytest
 import respx
 
-from oma.utils import config, provider, sid
-from oma.utils.log import get_logger
-from oma.utils.provider import (
+from oms.utils import config, provider, sid
+from oms.utils.log import get_logger
+from oms.utils.provider import (
     OpenAICompatibleProvider,
     ProviderUnavailable,
     RateLimit,
@@ -94,16 +94,16 @@ def test_sid_parse_rejects_unfixable() -> None:
 
 
 def test_config_precedence_cli_over_env_over_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_X", raising=False)
-    assert config.resolve("OMA_X", "dflt") == "dflt"  # default
-    monkeypatch.setenv("OMA_X", "from_env")
-    assert config.resolve("OMA_X", "dflt") == "from_env"  # env > default
-    assert config.resolve("OMA_X", "dflt", cli_value="from_cli") == "from_cli"  # cli > env
+    monkeypatch.delenv("OMS_X", raising=False)
+    assert config.resolve("OMS_X", "dflt") == "dflt"  # default
+    monkeypatch.setenv("OMS_X", "from_env")
+    assert config.resolve("OMS_X", "dflt") == "from_env"  # env > default
+    assert config.resolve("OMS_X", "dflt", cli_value="from_cli") == "from_cli"  # cli > env
 
 
 def test_config_casts() -> None:
-    assert config.resolve("OMA_MISSING", 42, cast=int) == 42
-    assert config.resolve("OMA_MISSING", 1.5, cast=float) == 1.5
+    assert config.resolve("OMS_MISSING", 42, cast=int) == 42
+    assert config.resolve("OMS_MISSING", 1.5, cast=float) == 1.5
 
 
 @pytest.mark.parametrize(
@@ -125,11 +125,11 @@ def test_config_as_bool(raw: str, expected: bool) -> None:
 
 
 def test_config_snapshot_constants_have_expected_defaults() -> None:
-    assert config.OMA_DISTILL_TIMEOUT_S == 600
-    assert config.OMA_TRACE_MAX_BYTES == 2 * 1024 * 1024
-    assert config.OMA_CURATOR_MODE == "auto"
-    assert config.OMA_RATING_PROMPT is True
-    assert config.OMA_NONINTERACTIVE is False
+    assert config.OMS_DISTILL_TIMEOUT_S == 600
+    assert config.OMS_TRACE_MAX_BYTES == 2 * 1024 * 1024
+    assert config.OMS_CURATOR_MODE == "auto"
+    assert config.OMS_RATING_PROMPT is True
+    assert config.OMS_NONINTERACTIVE is False
 
 
 # --------------------------------------------------------------------------- #
@@ -155,24 +155,24 @@ class _AdapterWithModel:
 
 
 def test_provider_resolve_adapter_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("OMA_LLM_MODEL", raising=False)
+    monkeypatch.delenv("OMS_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("OMS_LLM_MODEL", raising=False)
     p = provider.resolve(adapter=_AdapterWithModel())
     assert p.complete("hi") == "echo:hi"
 
 
 def test_provider_resolve_openai_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMA_LLM_BASE_URL", "https://llm.example/v1")
-    monkeypatch.setenv("OMA_LLM_MODEL", "gpt-test")
-    monkeypatch.setenv("OMA_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("OMS_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("OMS_LLM_MODEL", "gpt-test")
+    monkeypatch.setenv("OMS_LLM_API_KEY", "sk-test")
     p = provider.resolve(adapter=None)
     assert isinstance(p, OpenAICompatibleProvider)
     assert p.model == "gpt-test"
 
 
 def test_provider_resolve_hard_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("OMA_LLM_MODEL", raising=False)
+    monkeypatch.delenv("OMS_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("OMS_LLM_MODEL", raising=False)
     with pytest.raises(ProviderUnavailable, match="ships no keys"):
         provider.resolve(adapter=None)
 
@@ -244,10 +244,10 @@ def test_rate_limit_retry_after_seconds() -> None:
 
 def test_log_emits_bracketed_level_prefixes() -> None:
     logger = get_logger("m1test")
-    assert logger.name == "oma.m1test"
-    handler = logging.getLogger("oma").handlers[0]
+    assert logger.name == "oms.m1test"
+    handler = logging.getLogger("oms").handlers[0]
     fmt = handler.formatter
     assert fmt is not None
     for level, tag in ((logging.INFO, "[INFO]"), (logging.DEBUG, "[DEBUG]")):
-        rec = logging.LogRecord("oma.x", level, __file__, 1, "hello", None, None)
+        rec = logging.LogRecord("oms.x", level, __file__, 1, "hello", None, None)
         assert fmt.format(rec).startswith(f"{tag} hello")

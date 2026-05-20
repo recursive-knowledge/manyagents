@@ -1,6 +1,6 @@
 -- 00006_swarms_taxonomy
 -- The raw|post|distill taxonomy + forum/curator subfields + soft goal scope
--- (oma.bank.md:59, oma.core.md Packet). DB CHECKs mirror the oma.core
+-- (oms.bank.md:59, oms.core.md Packet). DB CHECKs mirror the oms.core
 -- validators as defense-in-depth. Constraints are guarded so the migration is
 -- idempotent under a raw re-apply.
 

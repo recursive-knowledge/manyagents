@@ -57,8 +57,8 @@ ENV/
 env.bak/
 venv.bak/
 
-# oma local config (committed template is oma.env.example)
-oma.env
+# oms local config (committed template is oms.env.example)
+oms.env
 
 # Rope project settings
 .ropeproject
@@ -90,13 +90,13 @@ supabase/.branches/
 # MkDocs build output
 site/
 
-# Node / SvelteKit viewer (oma.web; web/viewer/)
+# Node / SvelteKit viewer (oms.web; web/viewer/)
 node_modules/
 web/viewer/build/
 web/viewer/.svelte-kit/
 # legacy paths kept in ignore in case stale local artifacts exist
-src/oma/web/app/build/
-src/oma/web/app/.svelte-kit/
+src/oms/web/app/build/
+src/oms/web/app/.svelte-kit/
 
 # Local artifacts
 .claude/

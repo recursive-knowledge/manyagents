@@ -1,5 +1,5 @@
 <script>
-	export let value = null; // 1..5 or null ("unrated" is valid; oma.forum)
+	export let value = null; // 1..5 or null ("unrated" is valid; oms.forum)
 </script>
 
 <span class="stars" title={value == null ? "unrated" : `${value} of 5`}>

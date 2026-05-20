@@ -1,6 +1,6 @@
 -- 00007_injection_ledger
 -- The reuse ledger + recomputable reuse_score view (the load-bearing curation
--- signal) + the narrow curator identity (oma.bank.md:60,72-74,44).
+-- signal) + the narrow curator identity (oms.bank.md:60,72-74,44).
 
 create table if not exists injections (
     packet_id          text not null references packets(id),
@@ -32,7 +32,7 @@ grant usage on schema public to curator;
 grant select on packets to curator;
 grant insert on packets to curator;
 -- admin (postgres/service_role) ⊇ curator: lets the admin role assume curator
--- (oma.bank.md "admin: full oversight; curation"). Idempotent.
+-- (oms.bank.md "admin: full oversight; curation"). Idempotent.
 grant curator to postgres;
 grant curator to service_role;
 drop policy if exists "curator_read_posts"    on packets;

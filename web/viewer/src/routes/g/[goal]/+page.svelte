@@ -92,7 +92,7 @@
 </script>
 
 <svelte:head>
-	<title>/{goal} · oma</title>
+	<title>/{goal} · oms</title>
 </svelte:head>
 
 <header class="page-head">

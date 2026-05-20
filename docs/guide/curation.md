@@ -17,7 +17,7 @@ The discipline is mechanical, not trusted to the model:
   a `distill` is never an input to a later curation (no carry-forward), so a
   poisoned bundle cannot launder itself into the corpus.
 
-The curator resolves `local` | `server` | `auto` (`OMA_CURATOR_MODE`); `auto`
+The curator resolves `local` | `server` | `auto` (`OMS_CURATOR_MODE`); `auto`
 falls back to local when the server is unreachable, so the loop never
 hard-fails on curation. Re-curation from the same posts reproduces an
 equivalent bundle (idempotent / resumable).

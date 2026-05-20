@@ -1,6 +1,6 @@
 -- 00001_initial_schema
 -- Core tables: sessions, agents, packets, traces. Append-only; later
--- migrations extend these (never edit this file). oma.bank.md is the rendering.
+-- migrations extend these (never edit this file). oms.bank.md is the rendering.
 
 create table if not exists sessions (
     id          text primary key,
@@ -35,7 +35,7 @@ create table if not exists traces (
 );
 
 -- Atomic, contiguous per-session agent sequence. Never max(seq)+1 client-side
--- (oma.bank.md identity rule). A counter row + ON CONFLICT increment is
+-- (oms.bank.md identity rule). A counter row + ON CONFLICT increment is
 -- transactional and concurrency-safe. SECURITY DEFINER is declared here (not
 -- only in 00004) so a raw re-apply of this file cannot silently reset it to
 -- INVOKER (CREATE OR REPLACE resets the security flag); search_path is pinned.

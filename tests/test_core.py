@@ -1,5 +1,5 @@
-"""M3 tests for oma.core — validators, .fetch() hydration (no I/O on bare
-ctor), Collection accessors, session.posts(goal) filtering (oma.core.md
+"""M3 tests for oms.core — validators, .fetch() hydration (no I/O on bare
+ctor), Collection accessors, session.posts(goal) filtering (oms.core.md
 Verification)."""
 
 from __future__ import annotations
@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from oma.bank import FakeBank
-from oma.core import Agent, Collection, Goal, KnowledgePacket, Packet, Session, clear_packet_cache
+from oms.bank import FakeBank
+from oms.core import Agent, Collection, Goal, KnowledgePacket, Packet, Session, clear_packet_cache
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +119,7 @@ class _ExplodingBank:
 async def test_bare_ctor_no_io_but_fetch_touches_bank(monkeypatch: pytest.MonkeyPatch) -> None:
     # get_bank() is the only Bank seam fetch() falls back to — make any touch
     # of it explode, so the assertions below are load-bearing, not decorative.
-    monkeypatch.setattr("oma.core.models.get_bank", lambda *a, **k: _ExplodingBank())
+    monkeypatch.setattr("oms.core.models.get_bank", lambda *a, **k: _ExplodingBank())
 
     p = Packet(id="S/p", type="post", agent_id=None)  # constructs — no Bank touch
     assert p.id == "S/p" and p.session_id == "S" and p.agent is None  # derived props: still no I/O

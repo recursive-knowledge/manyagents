@@ -1,6 +1,6 @@
 # Installation
 
-`oma` is built and managed entirely through `uv` and `make`.
+`oms` is built and managed entirely through `uv` and `make`.
 
 ## Requirements
 
@@ -24,9 +24,9 @@ make test      # pytest + coverage (offline)
 ```
 
 The `integration` (local Bank) and `online` (installed CLIs / live LLM) test
-suites are opt-in via `OMA_RUN_INTEGRATION=1` / `OMA_RUN_ONLINE=1`.
+suites are opt-in via `OMS_RUN_INTEGRATION=1` / `OMS_RUN_ONLINE=1`.
 
 ## Configuration
 
-Copy `oma.env.example` to `oma.env` (gitignored) and uncomment the tunables you
-need. Precedence is CLI flag > process env > `oma.env` > built-in default.
+Copy `oms.env.example` to `oms.env` (gitignored) and uncomment the tunables you
+need. Precedence is CLI flag > process env > `oms.env` > built-in default.

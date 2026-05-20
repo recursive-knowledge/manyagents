@@ -3,7 +3,7 @@
 Default suite is offline and ~full coverage. The ``integration`` (local Bank)
 and ``online`` (installed CLIs / live LLM) suites are opt-in via env, so
 ``make test`` stays green without external services. The in-memory fake-Bank
-fixture and respx HTTP mock are added by M2 (oma.bank).
+fixture and respx HTTP mock are added by M2 (oms.bank).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Iterable
 
 import pytest
 
-from oma.bank import FakeBank
+from oms.bank import FakeBank
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def fake_bank() -> FakeBank:
 
 
 _GATES = {
-    "integration": "OMA_RUN_INTEGRATION",
-    "online": "OMA_RUN_ONLINE",
+    "integration": "OMS_RUN_INTEGRATION",
+    "online": "OMS_RUN_ONLINE",
 }
 
 

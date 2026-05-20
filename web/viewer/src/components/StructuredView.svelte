@@ -1,7 +1,7 @@
 <script>
-	// Render either an oma.forum post body or an oma.distill 6-bucket bundle.
+	// Render either an oms.forum post body or an oms.distill 6-bucket bundle.
 	// Falls back to a JSON dump for unknown shapes so the audit value of the
-	// read-everything corpus is preserved (oma.web.md).
+	// read-everything corpus is preserved (oms.web.md).
 	export let packet;
 
 	const POST_ORDER = [

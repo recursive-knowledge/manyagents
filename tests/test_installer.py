@@ -1,4 +1,4 @@
-"""M11 tests for ``oma._installer`` — the transparency contract.
+"""M11 tests for ``oms._installer`` — the transparency contract.
 
 Headlines:
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from oma._installer import (
+from oms._installer import (
     FileOp,
     InstallPlan,
     apply_plan,
@@ -39,9 +39,9 @@ from oma._installer import (
 
 def test_merge_json_keys_creates_when_absent(tmp_path: Path) -> None:
     p = tmp_path / "settings.json"
-    text, prev = merge_json_keys(p, "mcpServers", "oma", {"command": "python"})
+    text, prev = merge_json_keys(p, "mcpServers", "oms", {"command": "python"})
     assert prev is None
-    assert json.loads(text) == {"mcpServers": {"oma": {"command": "python"}}}
+    assert json.loads(text) == {"mcpServers": {"oms": {"command": "python"}}}
 
 
 def test_merge_json_keys_preserves_third_party(tmp_path: Path) -> None:
@@ -55,19 +55,19 @@ def test_merge_json_keys_preserves_third_party(tmp_path: Path) -> None:
             indent=2,
         )
     )
-    text, _prev = merge_json_keys(p, "mcpServers", "oma", {"command": "python"})
+    text, _prev = merge_json_keys(p, "mcpServers", "oms", {"command": "python"})
     data = json.loads(text)
     assert data["mcpServers"]["other"] == {"command": "node"}  # third-party survives
-    assert data["mcpServers"]["oma"] == {"command": "python"}
+    assert data["mcpServers"]["oms"] == {"command": "python"}
     assert data["permissions"] == {"allow": ["Bash"]}  # unrelated top-level keys survive
 
 
 def test_merge_json_keys_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "settings.json"
-    payload = {"command": "python", "args": ["-m", "oma._mcp"]}
-    once, _ = merge_json_keys(p, "mcpServers", "oma", payload)
+    payload = {"command": "python", "args": ["-m", "oms._mcp"]}
+    once, _ = merge_json_keys(p, "mcpServers", "oms", payload)
     p.write_text(once)
-    twice, _ = merge_json_keys(p, "mcpServers", "oma", payload)
+    twice, _ = merge_json_keys(p, "mcpServers", "oms", payload)
     assert once == twice  # twice == once, byte-identical
 
 
@@ -87,21 +87,21 @@ def test_merge_toml_section_preserves_comments_and_other_servers(tmp_path: Path)
     )
     text, _prev = merge_toml_section(
         p,
-        "mcp_servers.oma",
-        {"command": "python", "args": ["-m", "oma._mcp"], "env_vars": ["OMA_SESSION"]},
+        "mcp_servers.oms",
+        {"command": "python", "args": ["-m", "oms._mcp"], "env_vars": ["OMS_SESSION"]},
     )
     assert "# user's codex config" in text  # top comment survives
     assert "# a comment on the args line" in text  # mid-document comment survives
     assert "docs-server" in text  # third-party server survives
-    assert "oma._mcp" in text  # our entry landed
+    assert "oms._mcp" in text  # our entry landed
 
 
 def test_merge_toml_section_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    value = {"command": "python", "args": ["-m", "oma._mcp"]}
-    once, _ = merge_toml_section(p, "mcp_servers.oma", value)
+    value = {"command": "python", "args": ["-m", "oms._mcp"]}
+    once, _ = merge_toml_section(p, "mcp_servers.oms", value)
     p.write_text(once)
-    twice, _ = merge_toml_section(p, "mcp_servers.oma", value)
+    twice, _ = merge_toml_section(p, "mcp_servers.oms", value)
     assert once == twice
 
 
@@ -127,11 +127,11 @@ def _two_file_plan(tmp_path: Path) -> InstallPlan:
                 path=tmp_path / "settings.json",
                 payload={
                     "__top_key__": "mcpServers",
-                    "__our_key__": "oma",
-                    "__value__": {"command": "python", "args": ["-m", "oma._mcp"]},
+                    "__our_key__": "oms",
+                    "__value__": {"command": "python", "args": ["-m", "oms._mcp"]},
                 },
-                description="register oma MCP server",
-                merge_keys=("mcpServers.oma",),
+                description="register oms MCP server",
+                merge_keys=("mcpServers.oms",),
             ),
         ],
     )
@@ -145,7 +145,7 @@ def test_apply_plan_writes_files_and_manifest(tmp_path: Path) -> None:
     skill = tmp_path / "skills" / "demo" / "SKILL.md"
     settings = tmp_path / "settings.json"
     assert skill.read_text() == "# demo skill"
-    assert json.loads(settings.read_text())["mcpServers"]["oma"]["command"] == "python"
+    assert json.loads(settings.read_text())["mcpServers"]["oms"]["command"] == "python"
     # manifest persisted
     assert (oma_home / "installed" / "demo.json").is_file()
     loaded = load_manifest("demo", oma_home)
@@ -202,7 +202,7 @@ def test_third_party_survives_install_and_uninstall_round_trip(tmp_path: Path) -
     # after install: our key + theirs
     mid = json.loads(settings.read_text())
     assert mid["mcpServers"]["other"] == {"command": "node", "args": ["other.js"]}
-    assert mid["mcpServers"]["oma"]["command"] == "python"
+    assert mid["mcpServers"]["oms"]["command"] == "python"
 
     # uninstall: pop our key only
     out_lines: list[str] = []
@@ -261,16 +261,16 @@ def _plan(tmp_path: Path) -> InstallPlan:
     return _two_file_plan(tmp_path)
 
 
-def test_consent_prompt_oma_install_skills_auto_silent_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMA_INSTALL_SKILLS", "auto")
+def test_consent_prompt_oms_install_skills_auto_silent_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMS_INSTALL_SKILLS", "auto")
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out.append)
     assert ok is True
     assert out == []  # silent
 
 
-def test_consent_prompt_oma_install_skills_deny_silent_no(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMA_INSTALL_SKILLS", "deny")
+def test_consent_prompt_oms_install_skills_deny_silent_no(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "y", output_fn=out.append)
     assert ok is False
@@ -278,7 +278,7 @@ def test_consent_prompt_oma_install_skills_deny_silent_no(tmp_path: Path, monkey
 
 
 def test_consent_prompt_default_asks_once_then_silent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
     out: list[str] = []
     # first call: no manifest yet → ask. Reply 'y'.
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "y", output_fn=out.append, manifest_exists=False)
@@ -290,7 +290,7 @@ def test_consent_prompt_default_asks_once_then_silent(tmp_path: Path, monkeypatc
 
 
 def test_consent_prompt_decline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out.append)
     assert ok is False
@@ -298,7 +298,7 @@ def test_consent_prompt_decline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_consent_prompt_diff_then_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMA_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
     answers = iter(["d", "y"])
     out: list[str] = []
     ok = consent_prompt(

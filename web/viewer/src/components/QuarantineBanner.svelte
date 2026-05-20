@@ -1,5 +1,5 @@
 <script>
-	// Visible-but-flagged invariant (oma.web.md): a quarantined packet stays
+	// Visible-but-flagged invariant (oms.web.md): a quarantined packet stays
 	// visible — the corpus is a read-everything audit record — but the "use
 	// as context" affordance is disabled wherever a packet renders this banner.
 	export let compact = false;

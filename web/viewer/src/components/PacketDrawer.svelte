@@ -12,7 +12,7 @@
 	let copyState = "";
 
 	function copyInject() {
-		// Quarantine invariant (oma.web.md): the "use as context" affordance
+		// Quarantine invariant (oms.web.md): the "use as context" affordance
 		// is disabled when packet.quarantined. The button below is guarded.
 		const cmd = `/inject @${packet.id}`;
 		navigator.clipboard?.writeText(cmd).then(
@@ -145,7 +145,7 @@
 				<button class="cta" on:click={copyInject}>
 					{copyState === "copied" ? "✓ copied" : `copy /inject @${shortId.slice(0, 8)}…`}
 				</button>
-				<span class="hint">paste into a live <code>oma</code> session</span>
+				<span class="hint">paste into a live <code>oms</code> session</span>
 			{/if}
 		</footer>
 	</aside>

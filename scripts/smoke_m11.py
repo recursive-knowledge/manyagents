@@ -1,7 +1,7 @@
 """M11 smoke — drive every in-agent verb (and the installer round-trip)
 against a FakeBank with a TMP HOME, so the real ~/.claude/ is never touched.
 
-This is what the user would otherwise do manually with `oma claude` + typing
+This is what the user would otherwise do manually with `oms claude` + typing
 `/self-distill` inside Claude Code. Here every layer the in-agent flow uses
 is exercised in isolation:
 
@@ -46,25 +46,25 @@ def _fail(msg: str) -> None:
 
 
 async def main() -> None:
-    tmp_home = Path(tempfile.mkdtemp(prefix="oma-smoke-m11-"))
-    oma_home = tmp_home / ".oma"
+    tmp_home = Path(tempfile.mkdtemp(prefix="oms-smoke-m11-"))
+    oma_home = tmp_home / ".oms"
     oma_home.mkdir(parents=True)
 
     # Redirect HOME so Path.home() points at our tmp — keeps the real ~/.claude
     # safe. The installer reads Path.home() / ".claude" / "skills" / ... so
     # this is the right knob.
     os.environ["HOME"] = str(tmp_home)
-    os.environ["OMA_HOME"] = str(oma_home)
-    os.environ["OMA_SESSION"] = "SMOKE-M11"
-    os.environ["OMA_INSTALL_SKILLS"] = "auto"  # silent yes for the smoke
+    os.environ["OMS_HOME"] = str(oma_home)
+    os.environ["OMS_SESSION"] = "SMOKE-M11"
+    os.environ["OMS_INSTALL_SKILLS"] = "auto"  # silent yes for the smoke
 
     # Wire a FakeBank in *before* importing the MCP tools so get_bank returns
     # the fake without ever touching Supabase.
-    from oma.bank import FakeBank
+    from oms.bank import FakeBank
 
     bank = FakeBank()
 
-    import oma.bank as oma_bank
+    import oms.bank as oma_bank
 
     oma_bank.get_bank = lambda *a, **k: bank  # type: ignore[assignment]
 
@@ -89,37 +89,37 @@ async def main() -> None:
     settings_path.write_text(before)
     _ok(f"seeded {settings_path} with a third-party MCP server + 'permissions' + 'theme'")
 
-    from oma.adapters.skills.claude import install
+    from oms.adapters.skills.claude import install
 
     manifest = install(session_id="SMOKE-M11", oma_home=oma_home, scope="user")
     assert manifest is not None
     skills_root = tmp_home / ".claude" / "skills"
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
-        skill = skills_root / f"oma-{verb}" / "SKILL.md"
+        skill = skills_root / f"oms-{verb}" / "SKILL.md"
         assert skill.is_file(), f"missing {skill}"
         body = skill.read_text()
         assert f"name: {verb}" in body
-        assert "mcp__oma__" in body
+        assert "mcp__oms__" in body
         _ok(f"installed {skill}  ({len(body)} bytes)")
 
     merged = json.loads(settings_path.read_text())
     assert merged["mcpServers"]["other"] == {"command": "node", "args": ["other.js"]}, "third-party server clobbered!"
-    assert merged["mcpServers"]["oma"] == {"command": sys.executable, "args": ["-m", "oma._mcp"]}, "our entry wrong"
+    assert merged["mcpServers"]["oms"] == {"command": sys.executable, "args": ["-m", "oms._mcp"]}, "our entry wrong"
     assert merged["permissions"] == {"allow": ["Bash(ls *)"]}, "unrelated keys clobbered!"
     assert merged["theme"] == "dark"
-    _ok(f"merged {settings_path}: oma + other survive together; permissions + theme intact")
+    _ok(f"merged {settings_path}: oms + other survive together; permissions + theme intact")
 
     # Idempotency: re-run; bytes must match.
-    skill0 = (skills_root / "oma-self-distill" / "SKILL.md").read_bytes()
+    skill0 = (skills_root / "oms-self-distill" / "SKILL.md").read_bytes()
     settings0 = settings_path.read_bytes()
     install(session_id="SMOKE-M11", oma_home=oma_home, scope="user")
-    assert (skills_root / "oma-self-distill" / "SKILL.md").read_bytes() == skill0
+    assert (skills_root / "oms-self-distill" / "SKILL.md").read_bytes() == skill0
     assert settings_path.read_bytes() == settings0
     _ok("re-ran install: bytes identical (twice == once, the idempotency invariant)")
 
     # --- 2. /self-distill flow -------------------------------------------- #
     _hr("STEP 2 — /self-distill flow (draft → commit)")
-    from oma._mcp import (
+    from oms._mcp import (
         commit_post,
         cross_distill,
         discuss_draft,
@@ -211,7 +211,7 @@ async def main() -> None:
                 ]
             })
 
-    rmod = importlib.import_module("oma.distill.resolve")
+    rmod = importlib.import_module("oms.distill.resolve")
     rmod._discover_local_model = lambda: _FakeModel()  # type: ignore[attr-defined]
 
     cd = await _tool(cross_distill)()
@@ -238,7 +238,7 @@ async def main() -> None:
 
     # --- 6. uninstall round-trip ----------------------------------------- #
     _hr("STEP 6 — uninstall (reverse cleanly; third-party content survives)")
-    from oma._installer import uninstall
+    from oms._installer import uninstall
 
     lines: list[str] = []
     rc = uninstall("claude", oma_home, output_fn=lines.append)
@@ -247,9 +247,9 @@ async def main() -> None:
         print(f"  {line}")
 
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
-        path = skills_root / f"oma-{verb}" / "SKILL.md"
+        path = skills_root / f"oms-{verb}" / "SKILL.md"
         assert not path.exists(), f"{path} should have been removed"
-    _ok("all four oma-* skill files removed")
+    _ok("all four oms-* skill files removed")
 
     after = json.loads(settings_path.read_text())
     expected = json.loads(before)

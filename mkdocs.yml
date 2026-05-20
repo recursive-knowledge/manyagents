@@ -1,8 +1,8 @@
-site_name: Oh My Agent
-site_url: https://oh-my-agent.org/
+site_name: Oh My Swarm
+site_url: https://oh-my-swarm.org/
 site_description: Wrap installed coding-agent CLIs; curate cross-session knowledge.
-repo_url: https://github.com/formula-code/oh-my-agent
-repo_name: formula-code/oh-my-agent
+repo_url: https://github.com/formula-code/oh-my-swarm
+repo_name: formula-code/oh-my-swarm
 
 theme:
   name: material
