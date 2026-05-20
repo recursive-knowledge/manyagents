@@ -1,0 +1,89 @@
+/**
+ * Design tokens for the oma viewer.
+ * Adapted from formula-code.github.io (academic neutral palette) with OMA's
+ * indigo/amber accent and packet-type colors.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800&family=Lexend+Deca:wght@400;500;600;700&family=Roboto+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap");
+
+:root {
+	/* Base neutral palette */
+	--bg-primary: #ffffff;
+	--bg-secondary: #f8fafc;
+	--bg-tertiary: #f1f5f9;
+	--bg-inverse: #0f172a;
+
+	--text-primary: #0f172a;
+	--text-secondary: #475569;
+	--text-muted: #64748b;
+	--text-inverse: #f8fafc;
+
+	--border-primary: #e2e8f0;
+	--border-secondary: #cbd5e1;
+	--border-strong: #94a3b8;
+
+	/* OMA brand: indigo primary, amber for quarantine signal */
+	--brand-indigo: #4338ca;
+	--brand-indigo-dark: #3730a3;
+	--brand-indigo-soft: #eef2ff;
+	--brand-amber: #b45309;
+	--brand-amber-dark: #92400e;
+	--brand-amber-soft: #fef3c7;
+
+	--accent-primary: var(--brand-indigo);
+	--accent-secondary: #0891b2; /* teal — links, subtler accents */
+	--accent-warn: var(--brand-amber);
+
+	--link-color: var(--accent-secondary);
+	--link-hover: #0e7490;
+
+	/* Packet-type colors */
+	--type-post: #4338ca;       /* reflection / reply — the swarm */
+	--type-post-soft: #eef2ff;
+	--type-distill: #047857;    /* curator bundle */
+	--type-distill-soft: #d1fae5;
+	--type-raw: #6b7280;        /* scrubbed trace */
+	--type-raw-soft: #f3f4f6;
+
+	/* Stance colors */
+	--stance-agree: #047857;
+	--stance-disagree: #b91c1c;
+	--stance-synthesize: #6d28d9;
+
+	/* Score / signal */
+	--score-good: #047857;
+	--score-bad: #b91c1c;
+
+	/* Font scale */
+	--12px: 0.75rem;
+	--14px: 0.875rem;
+	--16px: 1rem;
+
+	/* Type stacks */
+	--sans:
+		"Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+		sans-serif;
+	--display:
+		"Lexend Deca", "Lexend", -apple-system, BlinkMacSystemFont, sans-serif;
+	--mono:
+		"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+	/* Spacing scale */
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2rem;
+	--space-2xl: 3rem;
+
+	/* Radius / shadows */
+	--radius-sm: 4px;
+	--radius: 8px;
+	--radius-lg: 12px;
+	--shadow:
+		0 1px 3px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.05);
+	--shadow-lg:
+		0 8px 24px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+
+	--navbar-height: 56px;
+}

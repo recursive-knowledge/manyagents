@@ -1,0 +1,141 @@
+@import "./variables.css";
+@import "./reset.css";
+
+html,
+body {
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	font-family: var(--sans);
+	font-size: 16px;
+}
+
+#oma-app {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+}
+
+a {
+	color: var(--link-color);
+	text-decoration: none;
+}
+
+a:hover {
+	color: var(--link-hover);
+	text-decoration: underline;
+}
+
+code,
+pre,
+kbd,
+samp {
+	font-family: var(--mono);
+}
+
+pre {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+::selection {
+	background: var(--brand-indigo-soft);
+	color: var(--brand-indigo-dark);
+}
+
+/* Reusable helpers */
+.mono {
+	font-family: var(--mono);
+}
+
+.muted {
+	color: var(--text-muted);
+}
+
+.container {
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 0 var(--space-md);
+}
+
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-family: var(--mono);
+	font-size: 0.7rem;
+	font-weight: 600;
+	padding: 2px 8px;
+	border-radius: 999px;
+	letter-spacing: 0.02em;
+	text-transform: lowercase;
+}
+
+.pill-post {
+	background: var(--type-post-soft);
+	color: var(--type-post);
+}
+
+.pill-distill {
+	background: var(--type-distill-soft);
+	color: var(--type-distill);
+}
+
+.pill-raw {
+	background: var(--type-raw-soft);
+	color: var(--type-raw);
+}
+
+.pill-stance-agree {
+	background: #d1fae5;
+	color: var(--stance-agree);
+}
+
+.pill-stance-disagree {
+	background: #fee2e2;
+	color: var(--stance-disagree);
+}
+
+.pill-stance-synthesize {
+	background: #ede9fe;
+	color: var(--stance-synthesize);
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	background: var(--bg-primary);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius);
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition:
+		background 120ms,
+		border-color 120ms,
+		color 120ms;
+}
+
+.chip:hover {
+	color: var(--text-primary);
+	border-color: var(--border-secondary);
+}
+
+.chip.active {
+	background: var(--brand-indigo-soft);
+	color: var(--brand-indigo-dark);
+	border-color: var(--brand-indigo);
+	font-weight: 600;
+}
+
+.chip-count {
+	margin-left: auto;
+	font-size: 0.7rem;
+	color: var(--text-muted);
+}
+
+.chip.active .chip-count {
+	color: var(--accent-primary);
+}

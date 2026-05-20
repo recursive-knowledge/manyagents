@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en" class="bg-slate-950 text-slate-100">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oh My Agent — viewer</title>
+    <!--
+      M9 ships this static Tailwind-CDN viewer (talks only to oma.web.api).
+      The Svelte + Vite build is an M10 deliverable (see oma.web.md Decision
+      log). The behavior under test — visible-but-flagged quarantine, excluded
+      from the "use as context" affordance — is implemented here verbatim so
+      the M10 port is a re-skin, not a re-spec.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen">
+    <main class="mx-auto max-w-3xl p-6">
+      <header class="mb-6 flex items-baseline justify-between">
+        <h1 class="text-xl font-semibold">Oh My Agent</h1>
+        <span class="text-xs text-slate-400">read-only corpus viewer</span>
+      </header>
+      <form id="nav" class="mb-6 flex gap-2">
+        <input
+          id="session"
+          class="flex-1 rounded bg-slate-800 px-3 py-2 text-sm outline-none"
+          placeholder="session id, e.g. CMA1-FJ2P (or 'curator' for a bundle)"
+        />
+        <input
+          id="packet"
+          class="w-48 rounded bg-slate-800 px-3 py-2 text-sm outline-none"
+          placeholder="?p= (optional)"
+        />
+        <button class="rounded bg-indigo-600 px-4 py-2 text-sm font-medium">Open</button>
+      </form>
+      <div id="out" class="space-y-4"></div>
+    </main>
+
+    <script>
+      const out = document.getElementById("out");
+      const esc = (s) =>
+        String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+      function quarantineBanner() {
+        return `<div class="rounded border border-amber-500 bg-amber-950/60 p-3 text-sm text-amber-200">
+          ⚠ withdrawn from distribution — flagged as suspect. Excluded from
+          "use as context".</div>`;
+      }
+
+      function packetCard(p) {
+        const q = p.quarantined === true;
+        const ctx = q
+          ? `<span class="text-xs text-slate-500">(reuse disabled — quarantined)</span>`
+          : `<button data-id="${esc(p.id)}" class="use-ctx text-xs text-indigo-400 hover:underline">use as context</button>`;
+        return `<article class="rounded border border-slate-800 bg-slate-900 p-4">
+          ${q ? quarantineBanner() : ""}
+          <div class="mt-2 flex items-center justify-between">
+            <code class="text-xs text-slate-400">${esc(p.id)}</code>
+            <span class="rounded bg-slate-800 px-2 py-0.5 text-xs">${esc(p.type)}</span>
+          </div>
+          <div class="mt-1 text-xs text-slate-500">
+            goal: ${esc(p.goal ?? "—")} · rating: ${esc(p.rating ?? "unrated")}
+            ${p.kind ? "· " + esc(p.kind) : ""} ${p.scope ? "· " + esc(p.scope) : ""}
+          </div>
+          <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs text-slate-300">${esc(
+            JSON.stringify(p.structured ?? p.bundle ?? {}, null, 2)
+          )}</pre>
+          <div class="mt-2">${ctx}</div>
+        </article>`;
+      }
+
+      async function load(session, packet) {
+        out.innerHTML = `<p class="text-sm text-slate-400">loading…</p>`;
+        try {
+          if (packet) {
+            const r = await fetch(`/s/${encodeURIComponent(session)}?p=${encodeURIComponent(packet)}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            out.innerHTML = packetCard(await r.json());
+          } else {
+            const r = await fetch(`/s/${encodeURIComponent(session)}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const data = await r.json();
+            const head = `<div class="rounded border border-slate-800 bg-slate-900 p-4 text-sm">
+              <div class="font-medium">session ${esc(data.session?.id)}</div>
+              <div class="text-xs text-slate-500">goal: ${esc(
+                data.session?.goal ?? "—"
+              )} · status: ${esc(data.session?.status)}</div></div>`;
+            out.innerHTML = head + data.packets.map(packetCard).join("");
+          }
+        } catch (e) {
+          out.innerHTML = `<p class="text-sm text-rose-400">error: ${esc(e.message)}</p>`;
+        }
+      }
+
+      document.getElementById("nav").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const s = document.getElementById("session").value.trim();
+        const p = document.getElementById("packet").value.trim();
+        if (s) {
+          const u = new URL(location);
+          u.searchParams.set("s", s);
+          p ? u.searchParams.set("p", p) : u.searchParams.delete("p");
+          history.replaceState({}, "", u);
+          load(s, p);
+        }
+      });
+
+      out.addEventListener("click", (e) => {
+        const btn = e.target.closest(".use-ctx");
+        if (btn) navigator.clipboard?.writeText(`/inject @${btn.dataset.id}`);
+      });
+
+      const params = new URLSearchParams(location.search);
+      if (params.get("s")) {
+        document.getElementById("session").value = params.get("s");
+        document.getElementById("packet").value = params.get("p") ?? "";
+        load(params.get("s"), params.get("p"));
+      }
+    </script>
+  </body>
+</html>
