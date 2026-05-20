@@ -68,6 +68,11 @@ def _unregister_proc(proc: subprocess.Popen[str]) -> None:
         _active_procs.discard(proc)
 
 
+# Windows' ``signal`` module has no SIGKILL; fall back to SIGTERM there (the
+# Popen.terminate() branch in _kill_process_group still does the right thing).
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
 def _kill_process_group(proc: subprocess.Popen[str], sig: int = signal.SIGTERM) -> None:
     """Terminate the process and (on POSIX) its whole process group, since
     agent subprocesses are launched with ``start_new_session=True`` to keep
@@ -77,7 +82,7 @@ def _kill_process_group(proc: subprocess.Popen[str], sig: int = signal.SIGTERM) 
     with contextlib.suppress(ProcessLookupError, OSError):
         if hasattr(os, "killpg") and hasattr(os, "getpgid"):
             os.killpg(os.getpgid(proc.pid), sig)
-        elif sig == getattr(signal, "SIGKILL", -1):  # Windows: no SIGKILL constant pre-3.12 in all builds
+        elif sig == _SIGKILL:  # Windows: SIGKILL collapses to SIGTERM (above)
             proc.kill()
         else:
             proc.terminate()
@@ -86,7 +91,7 @@ def _kill_process_group(proc: subprocess.Popen[str], sig: int = signal.SIGTERM) 
 def terminate_all_agents(*, force: bool = False) -> None:
     """Kill every tracked agent subprocess (the M8 SIGINT seam). ``force``
     sends SIGKILL instead of SIGTERM."""
-    sig = signal.SIGKILL if force else signal.SIGTERM
+    sig = _SIGKILL if force else signal.SIGTERM
     for proc in list(_active_procs):  # snapshot — concurrent mutation safe
         _kill_process_group(proc, sig)
 
@@ -126,7 +131,7 @@ def run_agent_subprocess(
         out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
         err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
         if proc is not None:
-            _kill_process_group(proc, signal.SIGKILL)
+            _kill_process_group(proc, _SIGKILL)
             proc.wait()
         return -1, out, err, time.time() - start
     except KeyboardInterrupt:
@@ -139,7 +144,7 @@ def run_agent_subprocess(
         if proc is not None:
             _unregister_proc(proc)
             if proc.poll() is None:
-                _kill_process_group(proc, signal.SIGKILL)
+                _kill_process_group(proc, _SIGKILL)
                 proc.wait()
 
 
