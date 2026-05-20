@@ -1,0 +1,185 @@
+[project]
+name = "oh-my-agent"
+version = "0.1.0"
+description = "Wrap installed coding-agent CLIs; capture traces, curate cross-session knowledge, serve a read-only viewer."
+authors = [{ name = "Atharva Sehgal", email = "atharva.sehgal@gmail.com" }]
+readme = "README.md"
+keywords = ['agents', 'knowledge-curation', 'llm']
+requires-python = ">=3.12,<4.0"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# Runtime deps are declared per milestone as the code that imports them lands,
+# so `deptry src` (DEP002) and `make check` stay green at every boundary.
+# M0 scaffolding only needs python-dotenv (oma.env loading in __init__).
+dependencies = [
+    "python-dotenv>=1.0.1",
+    "httpx>=0.27",
+    "supabase>=2.0",
+    "pydantic>=2.0",
+    # M9 oma.web: read-only FastAPI surface + uvicorn server entrypoint.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    # M11 in-agent surface: MCP server (oma._mcp) for Claude Code / Codex /
+    # Gemini, plus tomlkit for safe comment- and order-preserving merges into
+    # the user's ~/.codex/config.toml during install.
+    "mcp>=1.0",
+    "tomlkit>=0.13",
+]
+
+[project.scripts]
+oma = "oma.cli:main"
+
+[project.urls]
+Homepage = "https://oh-my-agent.org/"
+Repository = "https://github.com/formula-code/oh-my-agent"
+Documentation = "https://oh-my-agent.org/"
+
+[dependency-groups]
+dev = [
+    "build>=1.0",
+    "deptry>=0.23.0",
+    "mypy>=1.8",
+    "pre-commit>=3.5.0",
+    "pytest>=7.2.0",
+    "psycopg[binary]>=3.1",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0.0",
+    "respx>=0.21",
+    "ruff>=0.11.5",
+    "tox-uv>=1.11.3",
+]
+
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oma"]
+
+[tool.mypy]
+files = ["src"]
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "supabase.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "postgrest.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "oma.bank.supabase_bank"
+disable_error_code = ["no-any-unimported", "import-untyped"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a local Bank (Supabase); opt-in via OMA_RUN_INTEGRATION=1",
+    "online: requires installed agent CLIs / a live LLM; opt-in via OMA_RUN_ONLINE=1",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+fix = true
+extend-exclude = ["archive/", "scratch/"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = [
+    # flake8-2020
+    "YTT",
+    # flake8-bandit
+    "S",
+    # flake8-bugbear
+    "B",
+    # flake8-builtins
+    "A",
+    # flake8-comprehensions
+    "C4",
+    # flake8-debugger
+    "T10",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # mccabe
+    "C90",
+    # pycodestyle
+    "E", "W",
+    # pyflakes
+    "F",
+    # pygrep-hooks
+    "PGH",
+    # pyupgrade
+    "UP",
+    # ruff
+    "RUF",
+    # tryceratops
+    "TRY",
+]
+ignore = [
+    # LineTooLong
+    "E501",
+    # DoNotAssignLambda
+    "E731",
+    # try-except return (common in fallback patterns)
+    "TRY300",
+    # subprocess call security (we control inputs; oma wraps trusted CLIs)
+    "S603",
+    # partial executable path (we use claude, codex, gemini, npx, git)
+    "S607",
+    # builtin-argument-shadowing: oma's public vocabulary deliberately mirrors
+    # the frozen wire schema (`id`, `type`) and oma.core.md's documented
+    # signatures (e.g. Packet.fetch(cls, id: str)). A001/A003+ stay active.
+    "A002",
+    # mutable class attr without ClassVar (acceptable for registries)
+    "RUF012",
+    # PEP 695 type params (keep broad version compatibility)
+    "UP046",
+    "UP047",
+    # ternary suggestions (readability preference)
+    "SIM108",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["oma"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108", "PGH003", "B017", "SIM117", "F841"]
+"*.py" = ["TRY003"]
+
+[tool.ruff.format]
+preview = true
+
+[tool.coverage.report]
+skip_empty = true
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.deptry]
+ignore = ["DEP003"]

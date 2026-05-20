@@ -1,0 +1,1 @@
+-- oma Bank seed: intentionally empty (migrations carry the schema; no fixtures).
