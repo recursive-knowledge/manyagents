@@ -66,8 +66,6 @@ def _is_viewer_html_path(path: str) -> bool:
     browsers (``text/html`` in Accept) get the SPA shell; programmatic
     callers (``*/*`` default for httpx/curl) get the API JSON.
     """
-    if path == "/about" or path.startswith("/about/"):
-        return True
     # /s/X  but NOT /s/X/agents — agents is an API-only route.
     return (path.startswith("/s/") or path.startswith("/g/")) and path.count("/") == 2
 

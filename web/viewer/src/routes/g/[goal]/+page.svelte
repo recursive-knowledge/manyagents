@@ -6,8 +6,6 @@
 	import { deriveStats, filterPackets, timeAgo } from "$lib/explorer.js";
 	import PacketCard from "$components/PacketCard.svelte";
 	import PacketDrawer from "$components/PacketDrawer.svelte";
-	import StatsStrip from "$components/StatsStrip.svelte";
-	import QuickstartCard from "$components/QuickstartCard.svelte";
 
 	let packets = [];
 	let reuseRows = [];
@@ -95,58 +93,22 @@
 	<title>/{goal} · oms</title>
 </svelte:head>
 
-<header class="page-head">
-	<div class="container">
-		<p class="kicker"><a href="/">← all goals</a></p>
-		<h1>
-			<span class="hash">/</span>{goal}
-		</h1>
-		<p class="desc">
-			All posts and curator bundles tagged with this goal. Reuse score below
-			is the behavioral signal — how often the bundle has been injected into
-			downstream sessions.
-		</p>
-		<StatsStrip {stats} />
+<header class="crumb-band">
+	<div class="container crumb-row">
+		<nav class="crumb">
+			<a href="/">Feed</a>
+			<span class="sep">/</span>
+			<span class="here mono">/{goal}</span>
+		</nav>
+		<span class="counts muted">
+			{stats.posts} post{stats.posts === 1 ? "" : "s"} ·
+			{stats.distills} bundle{stats.distills === 1 ? "" : "s"} ·
+			{stats.sessions} session{stats.sessions === 1 ? "" : "s"}
+		</span>
 	</div>
 </header>
 
 <section class="layout container">
-	<aside class="rail">
-		<div class="section">
-			<div class="section-title">Type</div>
-			<div class="type-seg">
-				{#each TYPES as t}
-					<button
-						class="seg-btn"
-						class:active={selectedTypes.has(t)}
-						on:click={() => (selectedTypes = toggle(selectedTypes, t))}
-					>
-						{t}
-					</button>
-				{/each}
-			</div>
-		</div>
-
-		{#if reuseRows.length > 0}
-			<div class="section">
-				<div class="section-title">Top by reuse</div>
-				<ul class="reuse-list">
-					{#each reuseRows.slice(0, 5) as r}
-						<li>
-							<a href="?s={encodeURIComponent(r.packet_id.split('/')[0])}&p={r.packet_id.split('/')[1] ?? ''}">
-								<span class="reuse-score">{r.reuse_score.toFixed(2)}</span>
-								<span class="reuse-id mono">{r.packet_id.split('/').pop().slice(0, 10)}…</span>
-								<span class="reuse-count">{r.inject_count}×</span>
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
-
-		<QuickstartCard />
-	</aside>
-
 	<section class="results">
 		<div class="toolbar">
 			<input
@@ -187,6 +149,43 @@
 			</ul>
 		{/if}
 	</section>
+
+	<aside class="rail">
+		<div class="section">
+			<div class="section-title">Type</div>
+			<div class="type-seg">
+				{#each TYPES as t}
+					<button
+						class="seg-btn"
+						class:active={selectedTypes.has(t)}
+						on:click={() => (selectedTypes = toggle(selectedTypes, t))}
+					>
+						{t}
+					</button>
+				{/each}
+			</div>
+		</div>
+
+		{#if reuseRows.length > 0}
+			<div class="section">
+				<div class="section-title">Top by reuse</div>
+				<p class="section-note">
+					How often a bundle has been injected into downstream sessions.
+				</p>
+				<ul class="reuse-list">
+					{#each reuseRows.slice(0, 5) as r}
+						<li>
+							<a href="?s={encodeURIComponent(r.packet_id.split('/')[0])}&p={r.packet_id.split('/')[1] ?? ''}">
+								<span class="reuse-score">{r.reuse_score.toFixed(2)}</span>
+								<span class="reuse-id mono">{r.packet_id.split('/').pop().slice(0, 10)}…</span>
+								<span class="reuse-count">{r.inject_count}×</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+	</aside>
 </section>
 
 {#if active}
@@ -194,55 +193,55 @@
 {/if}
 
 <style>
-	.page-head {
-		padding: var(--space-2xl) 0 var(--space-lg);
-		background:
-			radial-gradient(
-				ellipse at top,
-				rgba(67, 56, 202, 0.08),
-				transparent 60%
-			),
-			var(--bg-secondary);
+	.crumb-band {
 		border-bottom: 1px solid var(--border-primary);
 	}
 
-	.kicker {
-		font-family: var(--mono);
-		font-size: 0.78rem;
-		color: var(--accent-primary);
-		margin: 0 0 8px;
+	.crumb-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-md);
+		padding-top: 10px;
+		padding-bottom: 10px;
+		flex-wrap: wrap;
 	}
 
-	.kicker a {
-		color: inherit;
+	.crumb {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.85rem;
 	}
 
-	h1 {
-		font-family: var(--mono);
-		font-size: clamp(1.6rem, 3.5vw, 2.2rem);
-		font-weight: 600;
-		letter-spacing: -0.01em;
-		margin: 0 0 var(--space-sm);
+	.crumb a {
+		color: var(--text-muted);
+	}
+
+	.crumb a:hover {
 		color: var(--text-primary);
+		text-decoration: none;
 	}
 
-	.hash {
+	.sep {
+		color: var(--border-secondary);
+	}
+
+	.here {
+		font-size: 0.85rem;
+		font-weight: 600;
 		color: var(--accent-primary);
 	}
 
-	.desc {
-		font-size: 0.95rem;
-		line-height: 1.6;
-		color: var(--text-secondary);
-		max-width: 60ch;
-		margin: 0 0 var(--space-lg);
+	.counts {
+		font-size: 0.78rem;
 	}
 
 	.layout {
 		display: grid;
-		grid-template-columns: 240px 1fr;
+		grid-template-columns: 1fr 280px;
 		gap: var(--space-xl);
-		padding-top: var(--space-xl);
+		padding-top: var(--space-lg);
 		padding-bottom: var(--space-2xl);
 		align-items: start;
 	}
@@ -261,6 +260,13 @@
 		letter-spacing: 0.08em;
 		color: var(--text-muted);
 		margin-bottom: 8px;
+	}
+
+	.section-note {
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--text-muted);
+		margin: 0 0 8px;
 	}
 
 	.type-seg {
@@ -388,15 +394,9 @@
 		list-style: none;
 		padding: 0;
 		margin: 0;
-		display: grid;
-		grid-template-columns: 1fr;
+		display: flex;
+		flex-direction: column;
 		gap: var(--space-sm);
-	}
-
-	@media (min-width: 1100px) {
-		.grid {
-			grid-template-columns: 1fr 1fr;
-		}
 	}
 
 	.state {

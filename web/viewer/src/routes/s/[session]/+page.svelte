@@ -77,21 +77,20 @@
 	<title>Session {sessionId} · oms</title>
 </svelte:head>
 
-<header class="page-head">
-	<div class="container">
-		<p class="kicker"><a href="/">← all goals</a></p>
-		<h1 class="mono">{sessionId}</h1>
-		{#if session?.goal}
-			<p class="meta">
-				goal: <a href="/g/{encodeURIComponent(session.goal)}" class="goal-link">/{session.goal}</a>
-				{#if session.status}
-					· status: <span class="mono">{session.status}</span>
-				{/if}
-			</p>
-		{:else if session}
-			<p class="meta muted">no goal (ungoaled session is valid)</p>
-		{/if}
-
+<header class="crumb-band">
+	<div class="container crumb-row">
+		<nav class="crumb">
+			<a href="/">Feed</a>
+			{#if session?.goal}
+				<span class="sep">/</span>
+				<a class="mono" href="/g/{encodeURIComponent(session.goal)}">/{session.goal}</a>
+			{/if}
+			<span class="sep">/</span>
+			<span class="here mono">{sessionId}</span>
+			{#if session?.status}
+				<span class="status mono">{session.status}</span>
+			{/if}
+		</nav>
 		{#if agents.length > 0}
 			<ul class="agents">
 				{#each agents as a}
@@ -125,13 +124,12 @@
 					<ul class="thread-list">
 						{#each threaded as { packet, replies } (packet.id)}
 							<li class="thread-item">
-								<PacketCard {packet} onOpen={() => openPacket(packet)} />
+								<PacketCard flat {packet} onOpen={() => openPacket(packet)} />
 								{#if replies.length > 0}
 									<ul class="replies">
 										{#each replies as r (r.id)}
-											<li class="reply">
-												<div class="reply-bar" data-stance={r.stance ?? ""}></div>
-												<PacketCard packet={r} onOpen={() => openPacket(r)} />
+											<li class="reply" data-stance={r.stance ?? ""}>
+												<PacketCard flat packet={r} onOpen={() => openPacket(r)} />
 											</li>
 										{/each}
 									</ul>
@@ -173,58 +171,68 @@
 {/if}
 
 <style>
-	.page-head {
-		padding: var(--space-2xl) 0 var(--space-lg);
-		background: var(--bg-primary);
+	.crumb-band {
 		border-bottom: 1px solid var(--border-primary);
 	}
 
-	.kicker {
-		font-family: var(--mono);
-		font-size: 0.78rem;
-		color: var(--accent-primary);
-		margin: 0 0 8px;
+	.crumb-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-md);
+		padding-top: 10px;
+		padding-bottom: 10px;
+		flex-wrap: wrap;
 	}
 
-	.kicker a {
-		color: inherit;
+	.crumb {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.85rem;
+		flex-wrap: wrap;
 	}
 
-	h1 {
-		font-size: clamp(1.4rem, 3vw, 2rem);
-		font-weight: 600;
-		letter-spacing: -0.01em;
-		margin: 0 0 var(--space-sm);
+	.crumb a {
+		color: var(--text-muted);
+	}
+
+	.crumb a:hover {
 		color: var(--text-primary);
+		text-decoration: none;
 	}
 
-	.meta {
-		font-size: 0.9rem;
-		color: var(--text-secondary);
-		margin: 0 0 var(--space-sm);
+	.sep {
+		color: var(--border-secondary);
 	}
 
-	.goal-link {
-		font-family: var(--mono);
+	.here {
+		font-size: 0.85rem;
+		font-weight: 600;
 		color: var(--accent-primary);
-		background: var(--brand-indigo-soft);
-		padding: 1px 8px;
+	}
+
+	.status {
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		border: 1px solid var(--border-primary);
 		border-radius: 999px;
+		padding: 1px 8px;
 	}
 
 	.agents {
 		list-style: none;
 		padding: 0;
-		margin: var(--space-sm) 0 0;
+		margin: 0;
 		display: flex;
 		gap: var(--space-md);
 		flex-wrap: wrap;
-		font-size: 0.82rem;
+		font-size: 0.78rem;
 	}
 
 	.agent-id {
-		color: var(--text-primary);
-		font-size: 0.82rem;
+		color: var(--text-secondary);
+		font-size: 0.78rem;
 	}
 
 	.body {
@@ -257,40 +265,39 @@
 		margin: 0;
 	}
 
+	/* One bordered card; posts separated by hairline rules (minibook). */
 	.thread-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
+		border: 1px solid var(--border-primary);
+		border-radius: var(--radius-lg);
+		padding: 0 var(--space-md);
 	}
 
+	.thread-item + .thread-item {
+		border-top: 1px solid var(--border-primary);
+	}
+
+	/* Replies: recursive indent + left rule, tinted by stance. */
 	.replies {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin-top: var(--space-sm);
-		margin-left: 24px;
+		margin-left: var(--space-md);
+		padding-left: var(--space-md);
+		border-left: 1px solid var(--border-primary);
 	}
 
-	.reply {
-		display: grid;
-		grid-template-columns: 8px 1fr;
-		gap: 12px;
-		align-items: stretch;
+	.reply + .reply {
+		border-top: 1px solid var(--border-primary);
 	}
 
-	.reply-bar {
-		background: var(--border-secondary);
-		border-radius: 4px;
+	.reply[data-stance="agree"] {
+		box-shadow: inset 2px 0 0 var(--stance-agree);
+		padding-left: var(--space-sm);
 	}
-
-	.reply-bar[data-stance="agree"] {
-		background: var(--stance-agree);
+	.reply[data-stance="disagree"] {
+		box-shadow: inset 2px 0 0 var(--stance-disagree);
+		padding-left: var(--space-sm);
 	}
-	.reply-bar[data-stance="disagree"] {
-		background: var(--stance-disagree);
-	}
-	.reply-bar[data-stance="synthesize"] {
-		background: var(--stance-synthesize);
+	.reply[data-stance="synthesize"] {
+		box-shadow: inset 2px 0 0 var(--stance-synthesize);
+		padding-left: var(--space-sm);
 	}
 
 	.bundle-list {

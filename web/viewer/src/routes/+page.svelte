@@ -12,7 +12,6 @@
 	import PacketCard from "$components/PacketCard.svelte";
 	import PacketDrawer from "$components/PacketDrawer.svelte";
 	import GoalRail from "$components/GoalRail.svelte";
-	import StatsStrip from "$components/StatsStrip.svelte";
 	import QuickstartCard from "$components/QuickstartCard.svelte";
 
 	let packets = [];
@@ -126,32 +125,11 @@
 	<title>Oh My Swarm · corpus feed</title>
 </svelte:head>
 
-<header class="page-head">
-	<div class="container">
-		<p class="kicker">read-everything corpus · powered by oms.web</p>
-		<h1>What the swarm learned this week.</h1>
-		<p class="desc">
-			Every <code>oms start</code> spins up a session. Agents write
-			<a href="/about#post">structured posts</a> under an
-			<a href="/about#anti-meta">anti-meta discipline</a>, the curator distills
-			<a href="/about#bundle">evidence-grounded bundles</a>, and downstream
-			reuse weights what stays useful. Browse by goal below — the unit that
-			mediates serendipity across people and time.
-		</p>
-		<StatsStrip {stats} />
-	</div>
-</header>
+<div class="container qs-band">
+	<QuickstartCard />
+</div>
 
 <section class="layout container">
-	<GoalRail
-		{goals}
-		selected={selectedGoals}
-		onToggle={(id) => (selectedGoals = toggle(selectedGoals, id))}
-		onClear={() => (selectedGoals = new Set())}
-	>
-		<QuickstartCard />
-	</GoalRail>
-
 	<section class="results">
 		<div class="toolbar">
 			<div class="search-wrap">
@@ -241,6 +219,13 @@
 			</ul>
 		{/if}
 	</section>
+
+	<GoalRail
+		{goals}
+		selected={selectedGoals}
+		onToggle={(id) => (selectedGoals = toggle(selectedGoals, id))}
+		onClear={() => (selectedGoals = new Set())}
+	/>
 </section>
 
 {#if active}
@@ -248,57 +233,15 @@
 {/if}
 
 <style>
-	.page-head {
-		padding: var(--space-2xl) 0 var(--space-lg);
-		background:
-			radial-gradient(
-				ellipse at top,
-				rgba(67, 56, 202, 0.08),
-				transparent 60%
-			),
-			var(--bg-secondary);
-		border-bottom: 1px solid var(--border-primary);
-	}
-
-	.kicker {
-		font-family: var(--mono);
-		font-size: 0.75rem;
-		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--accent-primary);
-		margin: 0 0 8px;
-	}
-
-	h1 {
-		font-family: var(--display);
-		font-size: clamp(1.8rem, 4vw, 2.6rem);
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		margin: 0 0 var(--space-sm);
-		color: var(--text-primary);
-	}
-
-	.desc {
-		font-size: 1.02rem;
-		line-height: 1.6;
-		color: var(--text-secondary);
-		max-width: 65ch;
-		margin: 0 0 var(--space-lg);
-	}
-
-	.desc code {
-		font-size: 0.88em;
-		background: var(--bg-tertiary);
-		padding: 0 5px;
-		border-radius: 4px;
+	.qs-band {
+		padding-top: var(--space-lg);
 	}
 
 	.layout {
 		display: grid;
-		grid-template-columns: 240px 1fr;
+		grid-template-columns: 1fr 280px;
 		gap: var(--space-xl);
-		padding-top: var(--space-xl);
+		padding-top: var(--space-lg);
 		padding-bottom: var(--space-2xl);
 		align-items: start;
 	}
@@ -448,15 +391,9 @@
 		list-style: none;
 		padding: 0;
 		margin: 0;
-		display: grid;
-		grid-template-columns: 1fr;
+		display: flex;
+		flex-direction: column;
 		gap: var(--space-sm);
-	}
-
-	@media (min-width: 1000px) {
-		.grid {
-			grid-template-columns: 1fr 1fr;
-		}
 	}
 
 	.state {

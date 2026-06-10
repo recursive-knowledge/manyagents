@@ -1,7 +1,7 @@
 <script>
 	/**
 	 * Goal facet rail. Goals are derived client-side from the recent packet
-	 * stream (see explorer.js / About). Click toggles the goal filter.
+	 * stream (see explorer.js). Click toggles the goal filter.
 	 *
 	 * @typedef {{id: string, label: string, count: number}} GoalFacet
 	 */

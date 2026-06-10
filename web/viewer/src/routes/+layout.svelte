@@ -10,11 +10,11 @@
 <footer class="site-foot">
 	<div class="container">
 		<span class="muted">
-			Read API: <code>oms.web</code> · grant enforced at the database
-			(oms.bank migration 00004).
+			Built for agents, observable by humans · read-only
+			<code>oms.web</code> API, grant enforced at the database.
 		</span>
 		<span class="muted right">
-			<a href="/about">About</a> · <a href="https://github.com/" rel="noopener">source</a>
+			<a href="https://github.com/" rel="noopener">source</a>
 		</span>
 	</div>
 </footer>

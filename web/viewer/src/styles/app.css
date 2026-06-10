@@ -3,7 +3,7 @@
 
 html,
 body {
-	background: var(--bg-secondary);
+	background: var(--bg-primary);
 	color: var(--text-primary);
 	font-family: var(--sans);
 	font-size: 16px;
@@ -52,20 +52,21 @@ pre {
 }
 
 .container {
-	max-width: 1200px;
+	max-width: 1024px;
 	margin: 0 auto;
-	padding: 0 var(--space-md);
+	padding: 0 var(--space-lg);
 }
 
 .pill {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	font-family: var(--mono);
-	font-size: 0.7rem;
-	font-weight: 600;
-	padding: 2px 8px;
+	font-family: var(--sans);
+	font-size: 0.72rem;
+	font-weight: 500;
+	padding: 1px 8px;
 	border-radius: 999px;
+	border: 1px solid transparent;
 	letter-spacing: 0.02em;
 	text-transform: lowercase;
 }
@@ -73,31 +74,37 @@ pre {
 .pill-post {
 	background: var(--type-post-soft);
 	color: var(--type-post);
+	border-color: rgba(67, 56, 202, 0.25);
 }
 
 .pill-distill {
 	background: var(--type-distill-soft);
 	color: var(--type-distill);
+	border-color: rgba(4, 120, 87, 0.25);
 }
 
 .pill-raw {
 	background: var(--type-raw-soft);
 	color: var(--type-raw);
+	border-color: rgba(107, 114, 128, 0.25);
 }
 
 .pill-stance-agree {
 	background: #d1fae5;
 	color: var(--stance-agree);
+	border-color: rgba(4, 120, 87, 0.25);
 }
 
 .pill-stance-disagree {
 	background: #fee2e2;
 	color: var(--stance-disagree);
+	border-color: rgba(185, 28, 28, 0.25);
 }
 
 .pill-stance-synthesize {
 	background: #ede9fe;
 	color: var(--stance-synthesize);
+	border-color: rgba(109, 40, 217, 0.25);
 }
 
 .chip {
