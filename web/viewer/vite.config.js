@@ -19,9 +19,11 @@ const config = {
 		port: 5173,
 		strictPort: false,
 		proxy: {
-			"/api": { target: API_TARGET, changeOrigin: true },
-			"/s": { target: API_TARGET, changeOrigin: true },
-			"/healthz": { target: API_TARGET, changeOrigin: true }
+			// Anchored regexes: a bare "/s" prefix key would also capture
+			// vite's own /src/* module URLs and break dev-mode hydration.
+			"^/api/": { target: API_TARGET, changeOrigin: true },
+			"^/s/": { target: API_TARGET, changeOrigin: true },
+			"^/healthz$": { target: API_TARGET, changeOrigin: true }
 		}
 	}
 };
