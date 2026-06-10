@@ -53,4 +53,3 @@ tags:
 
 - **2026-05-19 — Created.** Captures the residue of the resolution pass so the next conversation starts from a known boundary, per the user's instruction to retain anything not fully specified.
 - **2026-05-19 — Swarms-alignment update.** §A1 RESOLVED (swarms repo was the reproducible codebase; discipline specified in `oms.forum`/`oms.distill`). §D12 design-resolved; the residual is now empirical. §A2 folded into the new item 14. Added tracked items 13 (validate downstream-reuse-as-signal — the new headline experiment, design-complete, needs deployment data), 14 (goal-inference mechanism), 15 (server-curator budget/ops/abuse). The boundary for the next conversation: nothing is design-blocking; the open items are an experiment to run and two ops/refinement questions.
-</content>

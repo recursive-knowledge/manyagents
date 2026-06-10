@@ -116,4 +116,3 @@ Adapter contributions are PRs to `src/oms/adapters/` (or a `plugins/` dir) revie
 ## Decision log
 
 - **2026-05-19 — Created from the shipped datasmith scaffolding.** Adds Design Principles §10 ("the build/CLI/quality/docs scaffolding is a reusable artifact — inherit it"). Reconciled §4 vs. package-level PEP-562 `__getattr__` (different thing; explicitly allowed). Flagged datasmith's child-process SIGINT handling as mandatory for `oms` since `oms` wraps live agents.
-</content>

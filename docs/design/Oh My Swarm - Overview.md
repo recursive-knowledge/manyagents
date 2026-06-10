@@ -264,4 +264,3 @@ After preflight passes, run the suite with `pytest`. Every new piece of function
 - **2026-05-19 (pass 3) — Finalization.** Design-frozen the whole set; fixed the last cross-doc contradictions (Design Principles §6/§9 no longer call no-auth "Fragile"; `oms.web` `?include=raw` is trusted/admin-only, anon never gets raw; `oms.core.Packet` now carries `preference`/`parent_attempt`/`guidance`/`metadata` matching `KnowledgePacket` + migration `00005`); reconciled the REPL/hydration story; added the trusted-key note to the narrative. No open contradictions remain; the only design-blocker is Open-Q §A1.
 
 ----
-</content>
