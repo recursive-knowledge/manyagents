@@ -29,6 +29,10 @@ dependencies = [
     # the user's ~/.codex/config.toml during install.
     "mcp>=1.0",
     "tomlkit>=0.13",
+    # M11 UX pass: the CLI presentation layer (consent panel, colored diff,
+    # status/uninstall/preflight styling) renders via rich in oms.utils.ui;
+    # output degrades to plain text when piped (OMS_COLOR=auto|always|never).
+    "rich>=13.7",
 ]
 
 [project.scripts]

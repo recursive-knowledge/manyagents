@@ -26,9 +26,11 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
+
 from oms import __version__
 from oms.bank import Bank, get_bank
-from oms.utils import config, sid
+from oms.utils import config, sid, ui
 
 # --------------------------------------------------------------------------- #
 # pure helpers (unit-testable in isolation, no I/O)
@@ -97,7 +99,18 @@ def ask_rating(propose: int | None, *, input_fn: In, output_fn: Out, noninteract
     (a first-class valid state), a bare ``1``-``5`` overrides."""
     if noninteractive:
         return None
-    raw = input_fn(f"★ rating 1-5 [proposed={propose}] (Enter=accept, 'skip'=unrated): ").strip().lower()
+    prompt = (
+        ui.render(
+            Text.assemble(
+                ("★ ", "bold yellow"),
+                "rating 1-5 ",
+                (f"[proposed={propose}]", "cyan"),
+                (" (Enter=accept, 'skip'=unrated):", "dim"),
+            )
+        )
+        + " "
+    )
+    raw = input_fn(prompt).strip().lower()
     if raw in ("skip", "s"):
         return None
     if raw == "":
@@ -114,7 +127,8 @@ def ask_yn(prompt: str, *, input_fn: In, output_fn: Out, noninteractive: bool) -
     if noninteractive:
         output_fn(f"  (OMS_NONINTERACTIVE: '{prompt}' → denied)")
         return False
-    return input_fn(f"{prompt} [y/n]: ").strip().lower() in ("y", "yes")
+    styled = ui.render(Text.assemble((prompt, "bold"), (" [y/n]:", "dim"))) + " "
+    return input_fn(styled).strip().lower() in ("y", "yes")
 
 
 # --------------------------------------------------------------------------- #
@@ -172,8 +186,11 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
     session_id = args.id or sid.new()
     await bank.put_session(session_id, goal=args.goal)
     _write_active(session_id)
-    io[1](f"session {session_id}" + (f"  goal={args.goal!r}" if args.goal else ""))
-    io[1](f"open: {_session_url(session_id)}")
+    line = Text.assemble(("session ", "dim"), (session_id, "bold"))
+    if args.goal:
+        line.append(f"  goal={args.goal!r}", style="dim")
+    io[1](ui.render(line))
+    io[1](ui.render(Text.assemble(("open: ", "dim"), (_session_url(session_id), "underline cyan"))))
     return 0
 
 
@@ -182,8 +199,8 @@ async def _do_register(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Ou
 
     sid_ = _resolve_sid(args.session)
     agent_id = await _resolve_agent(sid_, args.name, bank=bank)
-    io[1](f"registered {agent_id}")
-    io[1](f"open: {_agent_url(agent_id)}")
+    io[1](ui.render(Text.assemble(("registered ", "green"), (agent_id, "bold"))))
+    io[1](ui.render(Text.assemble(("open: ", "dim"), (_agent_url(agent_id), "underline cyan"))))
     return 0
 
 
@@ -205,14 +222,18 @@ async def _do_run_agent(
     try:
         adapter.install_skills(session_id=sid_, oma_home=home, scope="user")
     except Exception as exc:
-        io[1](f"oms: skill install skipped ({type(exc).__name__}: {exc}) — see `oms status`")
+        io[1](
+            ui.render(
+                Text(f"oms: skill install skipped ({type(exc).__name__}: {exc}) — see `oms status`", style="yellow")
+            )
+        )
 
     # Thread OMS_SESSION into the child so the MCP server (spawned by the
     # agent) can resolve the active session even without ~/.oms/active.
     os.environ["OMS_SESSION"] = sid_
 
     argv = [adapter.binary, *agent_args]
-    io[1](f"oms: running {' '.join(argv)} (session {sid_})")
+    io[1](ui.render(Text.assemble(("oms: running ", "dim"), (" ".join(argv), "bold"), (f" (session {sid_})", "dim"))))
 
     # M11.6: tee the PTY master output to a tempfile, then build a
     # CanonicalTrace from it and run the M4 capture pipeline (validate →
@@ -245,9 +266,15 @@ async def _do_run_agent(
             bytes_in=len(tee_bytes),
         )
         pid = await persist(trace, bank=bank)
-        io[1](f"oms: captured raw packet {pid} ({len(tee_bytes):,} bytes)")
+        io[1](
+            ui.render(
+                Text.assemble(
+                    ("oms: captured raw packet ", "green"), (pid, "bold"), (f" ({len(tee_bytes):,} bytes)", "dim")
+                )
+            )
+        )
     except Exception as exc:
-        io[1](f"oms: trace capture failed ({type(exc).__name__}: {exc})")
+        io[1](ui.render(Text(f"oms: trace capture failed ({type(exc).__name__}: {exc})", style="red")))
     return 0
 
 
@@ -280,11 +307,20 @@ async def _do_status(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]
         io[1]("oms: no in-agent skills installed (run `oms <adapter>` to install)")
         return 0
     for m in manifests:
-        io[1](f"\n{m.adapter}  (scope={m.scope}, installed_at={m.installed_at})")
+        io[1]("")
+        io[1](
+            ui.render(
+                Text.assemble((m.adapter, "bold magenta"), (f"  scope {m.scope} · installed {m.installed_at}", "dim"))
+            )
+        )
         for e in m.entries:
-            tag = "CREATE" if e.kind == "create" else "MERGE "
-            extra = f"  keys={e.merge_keys}" if e.merge_keys else ""
-            io[1](f"  [{tag}] {e.path}{extra}")
+            # the verb word, not a bare sigil: `~ ~/.codex/config.toml` would
+            # read as two indistinguishable tildes, and status has no legend.
+            verb = ("+ create", "bold green") if e.kind == "create" else ("~ merge ", "bold yellow")
+            line = Text.assemble("  ", verb, " ", ui.tilde(e.path))
+            if e.merge_keys:
+                line.append(f"  keys={e.merge_keys}", style="dim")
+            io[1](ui.render(line))
     return 0
 
 
@@ -408,9 +444,11 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
             last["rating"] = rating
             last.pop("preference", None)  # C1
             await bank.put_packet(last)
-            io[1](f"rated {last['id']} ★{rating}")
+            io[1](
+                ui.render(Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow")))
+            )
     _clear_active()
-    io[1](f"session {sid_} ended")
+    io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
     return 0
 
 

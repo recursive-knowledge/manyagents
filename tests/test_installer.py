@@ -282,7 +282,10 @@ def test_consent_prompt_default_asks_once_then_silent(tmp_path: Path, monkeypatc
     out: list[str] = []
     # first call: no manifest yet → ask. Reply 'y'.
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "y", output_fn=out.append, manifest_exists=False)
-    assert ok is True and any("Proceed?" not in line and "MERGE" in line for line in out)
+    assert ok is True
+    blob = "\n".join(out)
+    assert "1 created · 1 merged" in blob  # the plan summary was rendered
+    assert "mcpServers.oms" in blob  # merge transparency: the keys we own are listed
     # second call: manifest exists → silent yes.
     out2: list[str] = []
     ok2 = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out2.append, manifest_exists=True)

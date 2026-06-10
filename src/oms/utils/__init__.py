@@ -5,7 +5,7 @@ Small, depended on by everything (the ``ds.utils`` analog).
 
 from __future__ import annotations
 
-from oms.utils import config, log, provider, sid
+from oms.utils import config, log, provider, sid, ui
 from oms.utils.log import get_logger
 from oms.utils.provider import (
     OpenAICompatibleProvider,
@@ -28,4 +28,5 @@ __all__ = [
     "rate_limit_signal",
     "resolve",
     "sid",
+    "ui",
 ]

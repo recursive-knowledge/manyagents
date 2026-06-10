@@ -39,6 +39,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from rich.console import Group, RenderableType
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from oms.utils import ui
+
 OpKind = Literal["create", "merge"]
 Scope = Literal["user", "project"]
 
@@ -278,21 +285,78 @@ def unmerge_toml_section(path: Path, section_path: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
+# Floor for the panel's layout width: below this, paths char-fold into
+# unreadable (and ungreppable) shreds, so we let the panel overflow a
+# pathologically narrow terminal instead.
+_PANEL_MIN_WIDTH = 60
+
+
+def _op_label(op: FileOp, budget: int) -> str:
+    """The human payoff of an op. The full description when it fits, else its
+    first ' — ' clause (the skill installers lead with the slash command
+    there), else a hard truncation — so the label column never wraps inside
+    the panel. The full text is always one `d` keypress away in the diff."""
+    full = " ".join(op.description.split())
+    if len(full) <= budget:
+        return full
+    head = full.split(" — ")[0].strip()
+    return head if len(head) <= budget else head[: budget - 1] + "…"
+
+
 def _format_plan(plan: InstallPlan) -> str:
-    lines = [
-        f"oms → install in-agent skills for {plan.adapter!r} (scope={plan.scope}):",
-        "",
-    ]
-    for op in plan.ops:
-        verb = "CREATE" if op.kind == "create" else "MERGE "
-        lines.append(f"  [{verb}] {op.path}")
-        lines.append(f"           {op.description}")
+    creates = sum(1 for op in plan.ops if op.kind == "create")
+    merges = len(plan.ops) - creates
+    paths = [ui.tilde(op.path) for op in plan.ops]
+    pad = max((len(p) for p in paths), default=0)
+    # Panel overhead: 2 border chars + (1, 2) padding = 6 columns; each op row
+    # spends 9 on the "+ create "/"~ merge  " block and 2 on the path→label
+    # gap. When the paths leave no room for an aligned label column, stack the
+    # full description under the path instead of letting it wrap mid-token.
+    inner = max(ui.console().width, _PANEL_MIN_WIDTH) - 6
+    label_budget = inner - 9 - pad - 2
+    stacked = label_budget < 16
+    lines: list[RenderableType] = []
+    for op, path in zip(plan.ops, paths, strict=True):
+        verb = ("+ create", "bold green") if op.kind == "create" else ("~ merge ", "bold yellow")
+        if stacked:
+            lines.append(Text.assemble(verb, " ", path))
+            lines.append(Text("    " + " ".join(op.description.split()), style="cyan"))
+        else:
+            lines.append(Text.assemble(verb, " ", path.ljust(pad), "  ", (_op_label(op, label_budget), "cyan")))
         if op.merge_keys:
-            lines.append(f"           keys we own: {', '.join(op.merge_keys)}")
-    lines.append("")
-    lines.append("MERGE means we read the existing file, upsert only our keys, and write back atomically.")
-    lines.append("CREATE writes a new file (oms owns it). `oms uninstall <adapter>` reverses cleanly.")
-    return "\n".join(lines)
+            lines.append(Text(f"    keys we own: {', '.join(op.merge_keys)}", style="dim"))
+    if plan.cli_actions:
+        lines.append(Text())
+        lines.append(Text("then runs:", style="dim"))
+        # A two-column grid gives the argv a hanging indent: a wrapped command
+        # continues under its own column, never at the panel edge where it
+        # would read as a separate entry.
+        runs = Table.grid(padding=(0, 1))
+        runs.add_column(no_wrap=True)
+        runs.add_column(overflow="fold")
+        for act in plan.cli_actions:
+            runs.add_row(Text("  $", style="bold magenta"), Text(" ".join(act.install_argv), style="magenta"))
+        lines.append(runs)
+    lines.append(Text())
+    lines.append(
+        Text(
+            f"{creates} created · {merges} merged · scope {plan.scope} · reversible: oms uninstall {plan.adapter}",
+            style="dim",
+        )
+    )
+    if merges:
+        lines.append(Text("~ merge upserts only the keys above; the rest of the file is preserved", style="dim"))
+    title = Text.assemble(
+        ("oms", "bold"),
+        " · install in-agent skills · ",
+        (plan.adapter, "bold magenta"),
+        (f" · scope {plan.scope}", "dim"),
+    )
+    return ui.render(
+        Panel(Group(*lines), title=title, title_align="left", border_style="cyan", expand=False, padding=(1, 2)),
+        soft_wrap=False,
+        min_width=_PANEL_MIN_WIDTH,
+    )
 
 
 def _diff_plan(plan: InstallPlan) -> str:
@@ -307,14 +371,19 @@ def _diff_plan(plan: InstallPlan) -> str:
         else:
             # for merges we render the merged text the same way apply_plan will
             after = _render_merge(op) or ""
+        # default lineterm ("\n"): the ---/+++/@@ header lines difflib
+        # synthesizes need their own terminators — the content lines already
+        # carry theirs via keepends. lineterm="" would glue the headers and
+        # the first hunk into one display line.
         d = difflib.unified_diff(
             before.splitlines(keepends=True),
             after.splitlines(keepends=True),
             fromfile=f"a/{op.path}",
             tofile=f"b/{op.path}",
-            lineterm="",
         )
-        chunks.append(f"=== {op.path} ===\n" + "".join(d))
+        # tilde'd separator matches the plan panel one keypress earlier; the
+        # a/ b/ labels stay absolute for patch fidelity.
+        chunks.append(f"=== {ui.tilde(op.path)} ===\n" + "".join(d))
     return "\n".join(chunks) or "(no changes)"
 
 
@@ -360,7 +429,7 @@ def consent_prompt(
     if mode == "auto":
         return True
     if mode == "deny":
-        output_fn("oms: OMS_INSTALL_SKILLS=deny — skipping skill install")
+        output_fn(ui.render(Text("oms: OMS_INSTALL_SKILLS=deny — skipping skill install", style="yellow")))
         return False
     if mode != "prompt" and manifest_exists:
         return True  # silent re-run after first consent
@@ -368,15 +437,31 @@ def consent_prompt(
         output_fn(f"oms: unknown OMS_INSTALL_SKILLS={mode!r}; treating as 'prompt'")
 
     output_fn(_format_plan(plan))
+    # Enter still declines (consent stays opt-in); the capital N says so.
+    prompt = (
+        ui.render(
+            Text.assemble(
+                ("Proceed?", "bold"),
+                " [",
+                ("y", "bold green"),
+                "]es / [",
+                ("N", "bold red"),
+                "]o / [",
+                ("d", "bold cyan"),
+                "]iff:",
+            )
+        )
+        + " "
+    )
     while True:
-        ans = input_fn("Proceed? [y]es / [n]o / [d]iff: ").strip().lower()
+        ans = input_fn(prompt).strip().lower()
         if ans in ("y", "yes"):
             return True
         if ans in ("n", "no", ""):
-            output_fn("oms: install declined")
+            output_fn(ui.render(Text("oms: install declined", style="yellow")))
             return False
         if ans in ("d", "diff"):
-            output_fn(_diff_plan(plan))
+            output_fn(ui.render(ui.style_diff(_diff_plan(plan))))
             continue
         output_fn("(unrecognized — type y, n, or d)")
 
@@ -508,6 +593,15 @@ def _run_cli(argv: list[str], *, description: str, stdin_input: str | None = Non
             print(f"oms: {description} — exit {proc.returncode}: {tail[-1]}")
 
 
+def _verb_line(verb: str, style: str, subject: str, note: str | None = None) -> str:
+    """One aligned, colored uninstall report line: ``  VERB     subject  (note)``.
+    The plain (non-TTY) rendering is byte-identical to the pre-rich format."""
+    t = Text.assemble("  ", (f"{verb:<8} ", style), subject)
+    if note:
+        t.append(f"  ({note})", style="dim")
+    return ui.render(t)
+
+
 def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files, merge files: flat or nested) in sequence; refactoring would just shuffle the same complexity
     adapter: str,
     oma_home: Path,
@@ -534,23 +628,23 @@ def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files
         argv = list(ce.uninstall_argv)
         bin_path = shutil.which(argv[0]) if argv else None
         if bin_path is None:
-            output_fn(f"  SKIPPED  {' '.join(argv)}  ({argv[0]} not on PATH; remove manually)")
+            output_fn(_verb_line("SKIPPED", "bold yellow", " ".join(argv), f"{argv[0]} not on PATH; remove manually"))
             continue
         _run_cli(argv, description=f"reverse: {ce.description}")
-        output_fn(f"  RAN      {' '.join(argv)}  (reverse: {ce.description})")
+        output_fn(_verb_line("RAN", "bold green", " ".join(argv), f"reverse: {ce.description}"))
 
     for entry in manifest.entries:
         path = Path(entry.path)
         cur = _read_text(path)
         if cur is None:
-            output_fn(f"  (gone)   {path}")
+            output_fn(_verb_line("(gone)", "dim", str(path)))
             continue
         if entry.kind == "create":
             if _sha256(cur) == entry.sha256_after:
                 path.unlink()
-                output_fn(f"  REMOVED  {path}")
+                output_fn(_verb_line("REMOVED", "bold green", str(path)))
             else:
-                output_fn(f"  KEPT     {path}  (user-edited since install — left in place)")
+                output_fn(_verb_line("KEPT", "bold yellow", str(path), "user-edited since install — left in place"))
         else:  # merge
             if path.suffix == ".json":
                 # Flat-key merges (e.g. ~/.gemini/trustedFolders.json) are tagged
@@ -562,29 +656,29 @@ def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files
                     new_text = unmerge_json_flat_keys(path, flat_keys)
                     if new_text is None:
                         path.unlink()
-                        output_fn(f"  REMOVED  {path}  (became empty after popping our keys)")
+                        output_fn(_verb_line("REMOVED", "bold green", str(path), "became empty after popping our keys"))
                     else:
                         _atomic_write(path, new_text)
-                        output_fn(f"  UNMERGED {path}  (popped {flat_keys})")
+                        output_fn(_verb_line("UNMERGED", "bold green", str(path), f"popped {flat_keys}"))
                 elif nested:
                     top_key = nested[0].split(".")[0]
                     our_keys = [k.split(".", 1)[1] for k in nested if "." in k]
                     new_text = unmerge_json_keys(path, top_key, our_keys)
                     if new_text is None:
                         path.unlink()
-                        output_fn(f"  REMOVED  {path}  (became empty after popping our keys)")
+                        output_fn(_verb_line("REMOVED", "bold green", str(path), "became empty after popping our keys"))
                     else:
                         _atomic_write(path, new_text)
-                        output_fn(f"  UNMERGED {path}  (popped {our_keys})")
+                        output_fn(_verb_line("UNMERGED", "bold green", str(path), f"popped {our_keys}"))
             elif path.suffix == ".toml":
                 for section in entry.merge_keys:
                     new_text = unmerge_toml_section(path, section)
                     if new_text is None:
                         path.unlink()
-                        output_fn(f"  REMOVED  {path}  (became empty)")
+                        output_fn(_verb_line("REMOVED", "bold green", str(path), "became empty"))
                         break
                     _atomic_write(path, new_text)
-                output_fn(f"  UNMERGED {path}  (removed {entry.merge_keys})")
+                output_fn(_verb_line("UNMERGED", "bold green", str(path), f"removed {entry.merge_keys}"))
     # Remove the manifest itself.
     _manifest_path(adapter, oma_home).unlink(missing_ok=True)
     # Best-effort: prune empty install-root subdirs (`~/.claude/skills/oms-*`).
@@ -593,7 +687,9 @@ def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files
         with __import__("contextlib").suppress(OSError):
             if parent.is_dir() and not any(parent.iterdir()):
                 shutil.rmtree(parent, ignore_errors=True)
-    output_fn(f"oms: uninstalled {adapter} (manifest cleared)")
+    output_fn(
+        ui.render(Text.assemble(("oms: uninstalled ", "green"), (adapter, "bold"), (" (manifest cleared)", "dim")))
+    )
     return 0
 
 

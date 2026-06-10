@@ -69,7 +69,7 @@ class _Adapter:
 from oms import _handlers as h  # noqa: E402
 
 h._adapter_for = lambda name, *, session_id, agent_id: _Adapter(name, session_id, agent_id)  # type: ignore[assignment]
-cli._pty_spawn = lambda argv: None  # type: ignore[assignment]
+cli._pty_spawn = lambda argv, tee=None: None  # type: ignore[assignment]  # M11.6 added tee=
 _resolve_mod._discover_local_model = lambda: _Model("bundle")  # type: ignore[attr-defined]
 
 

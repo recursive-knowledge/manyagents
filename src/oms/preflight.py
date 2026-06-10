@@ -89,24 +89,35 @@ def _live_schema_diff(url: str) -> str:
 def run_preflight() -> int:
     """Run preflight checks. Returns 0 when the environment is usable, 1 on the
     first failing check (with a specific stderr message)."""
+    from rich.text import Text
+
+    from oms.utils import ui
+
+    def fail(category: str, reason: str) -> None:
+        print(ui.render(Text.assemble(("[FAIL] ", "bold red"), f"{category}: {reason}"), stderr=True), file=sys.stderr)
+
     reason = _check_env()
     if reason is not None:
-        print(f"[FAIL] env: {reason}", file=sys.stderr)
+        fail("env", reason)
         return 1
 
     reason = _check_bank_reachable(os.environ["OMS_BANK_URL"])
     if reason is not None:
-        print(f"[FAIL] bank: {reason}", file=sys.stderr)
+        fail("bank", reason)
         return 1
 
     reason = _check_migrations()
     if reason is not None:
-        print(f"[FAIL] migrations: {reason}", file=sys.stderr)
+        fail("migrations", reason)
         return 1
 
     n = len(sorted(_MIGRATIONS_DIR.glob("*.sql")))
-    print(f"[OK] env + Bank reachable + {n} migration file(s) present.")
-    print(f"[INFO] schema diff: {_live_schema_diff(os.environ['OMS_BANK_URL'])}")
+    print(ui.render(Text.assemble(("[OK] ", "bold green"), f"env + Bank reachable + {n} migration file(s) present.")))
+    print(
+        ui.render(
+            Text.assemble(("[INFO] ", "bold cyan"), f"schema diff: {_live_schema_diff(os.environ['OMS_BANK_URL'])}")
+        )
+    )
     return 0
 
 

@@ -61,6 +61,7 @@ OMS_CURATOR_SERVER_URL: str = resolve("OMS_CURATOR_SERVER_URL", "")
 OMS_RATING_PROMPT: bool = resolve("OMS_RATING_PROMPT", True, cast=as_bool)
 OMS_REUSE_WEIGHT: float = resolve("OMS_REUSE_WEIGHT", 1.0, cast=float)
 OMS_NONINTERACTIVE: bool = resolve("OMS_NONINTERACTIVE", False, cast=as_bool)
+OMS_COLOR: str = resolve("OMS_COLOR", "auto")  # auto | always | never (oms.utils.ui)
 
 # oms.web read API (M9): default + max page size for cursor pagination, and
 # the `oms.web.server.serve()` bind address.

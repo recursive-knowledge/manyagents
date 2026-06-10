@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from oms.utils import config, provider, sid
+from oms.utils import config, provider, sid, ui
 from oms.utils.log import get_logger
 from oms.utils.provider import (
     OpenAICompatibleProvider,
@@ -251,3 +251,62 @@ def test_log_emits_bracketed_level_prefixes() -> None:
     for level, tag in ((logging.INFO, "[INFO]"), (logging.DEBUG, "[DEBUG]")):
         rec = logging.LogRecord("oms.x", level, __file__, 1, "hello", None, None)
         assert fmt.format(rec).startswith(f"{tag} hello")
+
+
+# --------------------------------------------------------------------------- #
+# ui (rich presentation layer)
+# --------------------------------------------------------------------------- #
+
+
+def test_ui_render_is_plain_text_when_color_never(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMS_COLOR", "never")
+    from rich.text import Text
+
+    assert ui.render(Text("hello", style="bold red")) == "hello"
+
+
+def test_ui_render_emits_ansi_when_color_always(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMS_COLOR", "always")
+    monkeypatch.delenv("NO_COLOR", raising=False)  # rich itself strips colors (not attributes) under NO_COLOR
+    monkeypatch.setenv("TERM", "xterm-256color")
+    from rich.text import Text
+
+    out = ui.render(Text("hello", style="bold red"))
+    assert "hello" in out and "\x1b[" in out
+
+
+def test_ui_no_color_env_downgrades_auto_to_never(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NO_COLOR (no-color.org) forces plain output in auto mode — even if the
+    stream were a TTY. An explicit OMS_COLOR=always wins over it (the spec's
+    software-level-config precedence)."""
+    monkeypatch.setenv("OMS_COLOR", "auto")
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert ui.console().is_terminal is False  # forced off, not auto-detected
+
+
+def test_ui_render_soft_wrap_keeps_long_lines_intact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A one-line message longer than the 80-col non-TTY width must not be
+    wrapped — `grep` and substring assertions over CLI output rely on it."""
+    monkeypatch.setenv("OMS_COLOR", "never")
+    from rich.text import Text
+
+    long_line = "x" * 300
+    assert ui.render(Text(long_line)) == long_line
+
+
+def test_ui_tilde_abbreviates_home_for_display_only() -> None:
+    from pathlib import Path
+
+    assert ui.tilde(Path.home() / ".claude" / "skills") == "~/.claude/skills"
+    assert ui.tilde(Path("/etc/hosts")) == "/etc/hosts"  # outside $HOME: unchanged
+    assert ui.tilde(Path.home()) == "~"  # $HOME itself, not "~/."
+
+
+def test_ui_style_diff_preserves_content_and_colors_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    diff = "=== f ===\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n context"
+    monkeypatch.setenv("OMS_COLOR", "never")
+    assert ui.render(ui.style_diff(diff)) == diff  # plain rendering is byte-identical
+    monkeypatch.setenv("OMS_COLOR", "always")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    assert "\x1b[" in ui.render(ui.style_diff(diff))
