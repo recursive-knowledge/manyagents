@@ -18,14 +18,17 @@ redirected stream takes effect on the next render, with no reset hook needed.
 from __future__ import annotations
 
 import os
+import select
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console, RenderableType
 from rich.text import Text
 
-from oms.utils import config
+from oms.utils import config, messages
 
-__all__ = ["console", "render", "style_diff", "tilde"]
+__all__ = ["console", "pick_star", "read_key", "render", "style_diff", "tilde"]
 
 
 def console(*, stderr: bool = False, min_width: int | None = None) -> Console:
@@ -71,6 +74,105 @@ def tilde(path: Path | str) -> str:
     except ValueError:
         return str(path)
     return "~" if rel == Path(".") else "~/" + rel.as_posix()
+
+
+# --------------------------------------------------------------------------- #
+# the ★ number-line picker (the single commit gate's interactive form)
+# --------------------------------------------------------------------------- #
+
+# Symbolic key names produced by read_key() and consumed by pick_star().
+_KEY_LEFT, _KEY_RIGHT, _KEY_ENTER, _KEY_ESC = "left", "right", "enter", "esc"
+
+
+def read_key() -> str:
+    """Read one keypress from a TTY stdin in cbreak mode and return a symbolic
+    name: ``left``/``right`` (arrows, also ``h``/``l``), ``enter``, ``esc``,
+    a literal digit ``1``-``5``, or the lowercased character. A lone ESC is
+    distinguished from an arrow escape-sequence by a short ``select`` poll
+    (an arrow's ``[X`` bytes arrive within the same keystroke)."""
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        ch = sys.stdin.read(1)
+        if ch in ("\r", "\n"):
+            return _KEY_ENTER
+        if ch == "\x1b":
+            if select.select([sys.stdin], [], [], 0.05)[0]:
+                seq = sys.stdin.read(1)
+                if seq == "[" and select.select([sys.stdin], [], [], 0.05)[0]:
+                    code = sys.stdin.read(1)
+                    if code == "D":
+                        return _KEY_LEFT
+                    if code == "C":
+                        return _KEY_RIGHT
+                return _KEY_ESC
+            return _KEY_ESC
+        return ch.lower()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def _star_line(question: str, current: int) -> Text:
+    """One redrawable line: the question, the 1★…5★ number line with the
+    current value bracketed, and the low/high anchors so the direction of
+    'better' is explicit (5★ = best)."""
+    t = Text()
+    t.append(question + "  ", style="bold")
+    for n in range(1, 6):
+        label = f"{n}★"
+        if n == current:
+            t.append(f"❰{label}❱", style="bold yellow")
+        else:
+            t.append(f" {label} ", style="dim")
+    t.append(f"  {messages.COMMIT_PICKER_SCALE_LOW} → {messages.COMMIT_PICKER_SCALE_HIGH}", style="dim")
+    return t
+
+
+def pick_star(
+    propose: int,
+    *,
+    question: str = messages.COMMIT_QUESTION,
+    key_fn: Callable[[], str] | None = None,
+    out: Callable[[str], None] | None = None,
+) -> tuple[bool, int | None]:
+    """Interactive ★ number-line for the single commit gate. Arrow keys (or
+    ``1``-``5``) move the selection, Enter commits with the selected ★,
+    ``s`` commits unrated, ``n``/Esc discards. Returns ``(commit, rating)``
+    exactly like :func:`oms.cli.ask_commit`'s typed fallback.
+
+    ``key_fn``/``out`` are injectable for tests; the default reads real
+    keystrokes via :func:`read_key` and redraws in place with ``\\r``."""
+    keys = key_fn or read_key
+    current = min(5, max(1, propose))
+
+    def _stdout_write(s: str) -> None:
+        sys.stdout.write(s)
+        sys.stdout.flush()
+
+    write = out or _stdout_write
+    write(render(Text(messages.COMMIT_PICKER_HINT, style="dim")) + "\n")
+    while True:
+        write("\r\x1b[2K" + render(_star_line(question, current)))
+        k = keys()
+        if k in (_KEY_LEFT, "h") and current > 1:
+            current -= 1
+        elif k in (_KEY_RIGHT, "l") and current < 5:
+            current += 1
+        elif k in ("1", "2", "3", "4", "5"):
+            current = int(k)
+        elif k == _KEY_ENTER:
+            write("\n")
+            return True, current
+        elif k == "s":
+            write("\n")
+            return True, None
+        elif k in ("n", _KEY_ESC):
+            write("\n")
+            return False, None
 
 
 def style_diff(diff_text: str) -> Text:

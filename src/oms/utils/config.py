@@ -54,6 +54,9 @@ def resolve(
 OMS_DISTILL_TIMEOUT_S: int = resolve("OMS_DISTILL_TIMEOUT_S", 600, cast=int)
 OMS_TRACE_MAX_BYTES: int = resolve("OMS_TRACE_MAX_BYTES", 2 * 1024 * 1024, cast=int)
 OMS_CROSSDISTILL_WINDOW_DAYS: int = resolve("OMS_CROSSDISTILL_WINDOW_DAYS", 30, cast=int)
+# Stale-goal nudge: offer /cross-distill at `oms start` once this many
+# reflections accumulated under the goal SINCE its newest bundle (oms.cli).
+OMS_CROSS_NUDGE_MIN: int = resolve("OMS_CROSS_NUDGE_MIN", 3, cast=int)
 OMS_INJECT_PREVIEW_HEAD_TOKENS: int = resolve("OMS_INJECT_PREVIEW_HEAD_TOKENS", 100, cast=int)
 OMS_INJECT_PREVIEW_TAIL_TOKENS: int = resolve("OMS_INJECT_PREVIEW_TAIL_TOKENS", 100, cast=int)
 OMS_CURATOR_MODE: str = resolve("OMS_CURATOR_MODE", "auto")  # local | server | auto
@@ -61,6 +64,9 @@ OMS_CURATOR_SERVER_URL: str = resolve("OMS_CURATOR_SERVER_URL", "")
 OMS_RATING_PROMPT: bool = resolve("OMS_RATING_PROMPT", True, cast=as_bool)
 OMS_REUSE_WEIGHT: float = resolve("OMS_REUSE_WEIGHT", 1.0, cast=float)
 OMS_NONINTERACTIVE: bool = resolve("OMS_NONINTERACTIVE", False, cast=as_bool)
+# Goal bucket assigned by `oms start` when no goal is given and the
+# continuity offer is declined — every session carries a goal (oms.cli).
+OMS_DEFAULT_GOAL: str = resolve("OMS_DEFAULT_GOAL", "misc")
 OMS_COLOR: str = resolve("OMS_COLOR", "auto")  # auto | always | never (oms.utils.ui)
 
 # oms.web read API (M9): default + max page size for cursor pagination, and
@@ -69,6 +75,10 @@ OMS_WEB_PAGE_LIMIT: int = resolve("OMS_WEB_PAGE_LIMIT", 50, cast=int)
 OMS_WEB_MAX_PAGE_LIMIT: int = resolve("OMS_WEB_MAX_PAGE_LIMIT", 200, cast=int)
 OMS_WEB_HOST: str = resolve("OMS_WEB_HOST", "127.0.0.1")
 OMS_WEB_PORT: int = resolve("OMS_WEB_PORT", 8000, cast=int)
+# The hosted viewer's base URL — what the CLI prints in `open:` links. The
+# deployment may move, so it is a tunable, not a constant; set it empty to
+# fall back to the local bind (`OMS_WEB_HOST`/`OMS_WEB_PORT`) for local dev.
+OMS_WEB_PUBLIC_URL: str = resolve("OMS_WEB_PUBLIC_URL", "https://swarms.formulacode.org")
 
 # Local-LLM fallback (OpenAI-compatible); oms ships no keys.
 OMS_LLM_BASE_URL: str = resolve("OMS_LLM_BASE_URL", "")

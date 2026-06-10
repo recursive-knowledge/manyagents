@@ -69,6 +69,7 @@ class _Adapter:
 from oms import _handlers as h  # noqa: E402
 
 h._adapter_for = lambda name, *, session_id, agent_id: _Adapter(name, session_id, agent_id)  # type: ignore[assignment]
+h._validate_adapter = lambda name: None  # type: ignore[assignment]  # doubles, not PATH binaries — skip the register gate
 cli._pty_spawn = lambda argv, tee=None: None  # type: ignore[assignment]  # M11.6 added tee=
 _resolve_mod._discover_local_model = lambda: _Model("bundle")  # type: ignore[attr-defined]
 
@@ -81,7 +82,10 @@ class _IO:
         self.out: list[str] = []
 
     def __call__(self, _prompt: str = "") -> str:
-        return self._r.pop(0) if self._r else "skip"
+        # Fallback for UNSCRIPTED prompts must be "n": allowance gates are
+        # affirmative-by-default (2026-06-10), so anything else silently
+        # ACCEPTS e.g. the agent-exit "end session?" offer mid-story.
+        return self._r.pop(0) if self._r else "n"
 
     def pair(self) -> tuple[Any, Any]:
         return (self, self.out.append)
@@ -181,7 +185,7 @@ async def story_a(bank: FakeBank) -> None:
     _hr("STORY A — goal-mediated serendipity (Alice → Bob, goal 'cfd-solver')")
 
     # --- Alice (Claude), session ALIC-E001 -------------------------------
-    await verb(bank, "start", "ALIC-E001", "--goal", "cfd-solver")
+    await verb(bank, "start", "cfd-solver", "--id", "ALIC-E001")
     await verb(bank, "register", "claude")
     await verb(bank, "run", "claude")  # a day of solver work → a raw packet
     await verb(
@@ -198,7 +202,7 @@ async def story_a(bank: FakeBank) -> None:
             "the checkerboard mode disappears; KSP iterations per step roughly double",
             "medium",
         ),
-        inputs=("y", "4"),  # accept the post, ★4
+        inputs=("4",),  # single commit gate: bare 4 commits with ★4
     )
     await verb(bank, "end")
     alice_post = next(
@@ -208,7 +212,7 @@ async def story_a(bank: FakeBank) -> None:
     print("  She told no one. The goal — not a session id — is the only key.")
 
     # --- Bob (Codex), a different org, SAME goal, new session ------------
-    await verb(bank, "start", "BOBB-2K7Q", "--goal", "cfd-solver")
+    await verb(bank, "start", "cfd-solver", "--id", "BOBB-2K7Q")
     await verb(bank, "register", "codex")
 
     # The curator is goal-scoped *across sessions* — it reaches Alice's post.
@@ -255,7 +259,7 @@ async def story_a(bank: FakeBank) -> None:
             "stable velocity field; about 2x KSP iterations per step versus the loose tolerance",
             "high",
         ),
-        inputs=("y", "5"),  # Bob's session went well: ★5
+        inputs=("5",),  # Bob's session went well: ★5
     )
     # /discuss engages the in-session thread (retrieval-before-post is enforced).
     await verb(
@@ -288,7 +292,7 @@ async def story_b(bank: FakeBank) -> None:
     _hr("STORY B — pruning a dead end (Carol → Dave → Erin, goal 'rust-async-runtime')")
 
     # Carol (Gemini): a confident reflection that is *wrong above a threshold*.
-    await verb(bank, "start", "CARO-L001", "--goal", "rust-async-runtime")
+    await verb(bank, "start", "rust-async-runtime", "--id", "CARO-L001")
     await verb(bank, "register", "gemini")
     await verb(bank, "run", "gemini")
     await verb(
@@ -303,7 +307,7 @@ async def story_b(bank: FakeBank) -> None:
             "latency stays flat as load grows",
             "high",
         ),
-        inputs=("y", "4"),
+        inputs=("4",),
     )
     await verb(bank, "end")
     carol_post = next(
@@ -314,7 +318,7 @@ async def story_b(bank: FakeBank) -> None:
     print(f"  Carol posted a confident claim ({carol_post}, ★4): per-task spawn 'is fine'.")
 
     # Dave (Claude), same goal: his session *refutes* it, with a flamegraph.
-    await verb(bank, "start", "DAVE-3X09", "--goal", "rust-async-runtime")
+    await verb(bank, "start", "rust-async-runtime", "--id", "DAVE-3X09")
     await verb(bank, "register", "claude")
     await verb(bank, "run", "claude")
     await verb(
@@ -331,7 +335,7 @@ async def story_b(bank: FakeBank) -> None:
             "tail latency drops sharply above 10k tasks per second",
             "high",
         ),
-        inputs=("y", "5"),
+        inputs=("5",),
     )
     dave_post = next(
         p["id"]
@@ -363,7 +367,7 @@ async def story_b(bank: FakeBank) -> None:
 
     # Erin, a week later, same goal. Same posts ⇒ the curator is *idempotent*
     # (no re-spend); she inherits the corrected bundle and is warned off.
-    await verb(bank, "start", "ERIN-4Z42", "--goal", "rust-async-runtime")
+    await verb(bank, "start", "rust-async-runtime", "--id", "ERIN-4Z42")
     await verb(bank, "register", "codex")
     out = await verb(bank, "cross-distill")
     erin_bundle = sorted(
@@ -402,7 +406,7 @@ async def story_c(bank: FakeBank) -> None:
     )
     posts: list[tuple[str, str]] = []
     for sid_, goal, claim in primitive:
-        await verb(bank, "start", sid_, "--goal", goal)
+        await verb(bank, "start", goal, "--id", sid_)
         await verb(bank, "register", "claude")
         await verb(bank, "run", "claude")
         await verb(
@@ -417,7 +421,7 @@ async def story_c(bank: FakeBank) -> None:
                 "the lost low-order digits are recovered",
                 "low",
             ),
-            inputs=("y", "skip"),  # unrated is a first-class valid state
+            inputs=("skip",),  # unrated is a first-class valid state
         )
         await verb(bank, "end")
         pid = sorted(
@@ -428,10 +432,11 @@ async def story_c(bank: FakeBank) -> None:
     print("  Three practitioners, three unrelated goals, the same primitive — each said")
     print("  it with 'low' confidence; none would generalise it alone.")
 
-    # A newcomer to *anything* numerically heavy: a session with NO goal ⇒ the
-    # CLI selects scope=cross_goal. The (canned) curator emits ONE insight with
-    # confidence 'low'; the **real** parser sees evidence from ≥2 distinct
-    # sessions and mechanically promotes it to high (recurrence promotion).
+    # A newcomer to *anything* numerically heavy: a session with NO goal lands
+    # in the default bucket (OMS_DEFAULT_GOAL) ⇒ the CLI selects
+    # scope=cross_goal. The (canned) curator emits ONE insight with confidence
+    # 'low'; the **real** parser sees evidence from ≥2 distinct sessions and
+    # mechanically promotes it to high (recurrence promotion).
     STATE["bundle"] = json.dumps({
         "transferable_insights": [
             {
@@ -447,7 +452,7 @@ async def story_c(bank: FakeBank) -> None:
             }
         ],
     })
-    await verb(bank, "start", "NEWB-5Q00")  # no --goal ⇒ cross_goal
+    await verb(bank, "start", "--id", "NEWB-5Q00")  # no goal ⇒ default bucket ⇒ cross_goal
     await verb(bank, "register", "gemini")
     out = await verb(bank, "cross-distill")
     xbundle = sorted(

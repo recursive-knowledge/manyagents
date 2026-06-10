@@ -128,7 +128,7 @@ async def test_self_distill_accept_stores_post_with_star_no_preference(
 ) -> None:
     await _seed_session(fake_bank)
     _patch_adapter(monkeypatch, FakeAdapter(json.dumps(_GOOD)))
-    s = Scripted("y", "4")
+    s = Scripted("4")  # single commit gate: a bare 1-5 commits WITH that star
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=s.io())
     assert rc == 0
     [p] = await fake_bank.list_packets(type="post")
@@ -227,7 +227,7 @@ async def test_discuss_happy_path_stores_reply_no_preference(
     await _seed_session(fake_bank)
     _patch_adapter(monkeypatch, FakeAdapter(json.dumps(_GOOD)))
     # First a reflection (so /discuss has something to engage).
-    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("y", "4").io())
+    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     # Then the reply.
     rc = await h.do_discuss(adapter="claude", stance="agree", bank=fake_bank, io=Scripted("y").io())
     assert rc == 0
@@ -258,7 +258,7 @@ async def test_discuss_packet_not_in_retrieved_refused(
     await _seed_session(fake_bank)
     _patch_adapter(monkeypatch, FakeAdapter(json.dumps(_GOOD)))
     # Seed a reflection so retrieve is non-empty.
-    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("y", "4").io())
+    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     # Reference a packet id NOT in the retrieved set.
     s = Scripted()
     rc = await h.do_discuss(
@@ -270,3 +270,56 @@ async def test_discuss_packet_not_in_retrieved_refused(
     )
     assert rc == 1
     assert any("not among the retrieved posts" in line for line in s.out)
+
+
+# --------------------------------------------------------------------------- #
+# register gate: minting an agent row requires a real, runnable adapter
+# (decision 2026-06-10 — `oms register agent` used to persist a Bank row +
+# viewer URL for a name that resolves to nothing and isn't on PATH)
+# --------------------------------------------------------------------------- #
+
+
+async def test_resolve_agent_unknown_adapter_persists_nothing(
+    fake_bank: FakeBank,
+    adapter_gate: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setattr(h, "_validate_adapter", adapter_gate)  # the real gate
+    await _seed_session(fake_bank)
+    with pytest.raises(SystemExit, match="unknown adapter 'agent'"):
+        await h._resolve_agent("S1", "agent", bank=fake_bank)
+    assert await fake_bank.list_agents("S1") == []  # no phantom row
+
+
+async def test_validate_adapter_binary_off_path_exits(
+    adapter_gate: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    import oms.adapters.base as base
+
+    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setattr(base.shutil, "which", lambda _b: None)
+    with pytest.raises(SystemExit, match="not on PATH"):
+        adapter_gate("claude")
+
+
+async def test_validate_adapter_ok_when_binary_present(
+    adapter_gate: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    import oms.adapters.base as base
+
+    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setattr(base.shutil, "which", lambda _b: "/usr/bin/claude")
+    adapter_gate("claude")  # builtin + binary on PATH: no raise
+
+
+async def test_resolve_agent_existing_row_skips_gate(
+    fake_bank: FakeBank, adapter_gate: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An already-registered agent resolves without re-validating — the gate
+    guards minting only, so an ended-CLI session can still be inspected."""
+    monkeypatch.setattr(h, "_validate_adapter", adapter_gate)
+    await _seed_session(fake_bank)
+    await fake_bank.put_agent("S1/agent-001-claude", session_id="S1", adapter="claude", seq=1)
+    assert await h._resolve_agent("S1", "claude", bank=fake_bank) == "S1/agent-001-claude"

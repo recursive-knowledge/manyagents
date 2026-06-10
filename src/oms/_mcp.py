@@ -9,8 +9,10 @@ the agent we're wrapping) to:
   1. call ``self_distill_draft`` / ``discuss_draft`` to get the goal, prior
      posts, the retrieval gate (for /discuss) and the anti-meta rules;
   2. fill in the structured schema from the live conversation;
-  3. show the structured payload to the user verbatim and ask "accept + ★?";
-  4. call ``commit_post`` iff accepted.
+  3. show the structured payload to the user verbatim;
+  4. call ``commit_post`` directly — the host UI's permission prompt on
+     that call is the single accept gate (no separate accept question;
+     user decision 2026-06-10).
 
 This split preserves **C1** (a rejected post is *never* persisted — the host
 LLM simply doesn't call ``commit_post``) without state on the server: the
@@ -48,7 +50,7 @@ def _session_id() -> str:
     sid = os.environ.get("OMS_SESSION", "").strip()
     if sid:
         return sid
-    home = Path(os.environ.get("OMS_HOME", str(Path.home() / ".oms")))
+    home = Path(os.environ.get("OMS_HOME", str(Path.home() / ".oms"))).expanduser()
     p = home / "active"
     if p.is_file():
         s = p.read_text(encoding="utf-8").strip()
@@ -71,11 +73,12 @@ async def self_distill_draft(guidance: str = "") -> dict[str, Any]:
     session. **Does not persist.** Returns the goal, prior in-session posts,
     the anti-meta rules + structured schema the host LLM must fill in, and a
     recommended ★ (based on the conversation's apparent confidence). The host
-    LLM then shows the filled-in structured payload to the user verbatim,
-    asks "accept this post + ★?", and only on accept calls `commit_post`.
+    LLM then shows the filled-in structured payload to the user verbatim and
+    calls `commit_post` directly — the host UI's permission prompt on that
+    call is the single accept gate.
 
-    A rejected post is **never persisted** because `commit_post` is never
-    invoked (C1: oms.cli.md:48; oms.core.md:147)."""
+    A denied post is **never persisted** because an unapproved
+    `commit_post` never runs (C1: oms.cli.md:48; oms.core.md:147)."""
     from oms.bank import get_bank
     from oms.forum.prompt import render_post_prompt
 
@@ -101,8 +104,9 @@ async def discuss_draft(stance: str, packet: str | None = None) -> dict[str, Any
     retrieval-before-post (the mechanical gate `oms.forum` enforces). Returns
     the ranked prior in-session posts under the current goal and the chosen
     ``reply_to`` (the `@packet` arg if given, else the most-under-engaged
-    post). The host LLM drafts the reply, shows it to the user, asks for
-    accept, then calls ``commit_post(kind='reply', ..., reply_to=..., stance=...)``.
+    post). The host LLM drafts the reply, shows it to the user, then calls
+    ``commit_post(kind='reply', ..., reply_to=..., stance=...)`` directly —
+    the permission prompt on that call is the single accept gate.
 
     Refuses up-front if no in-session posts exist under this goal (retrieve
     would be empty) — the host should call `self_distill_draft` first."""

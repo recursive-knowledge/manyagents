@@ -21,7 +21,7 @@ import json
 from typing import Any
 
 from oms.bank import Bank
-from oms.utils import sid
+from oms.utils import config, messages, sid
 
 # These three helpers stay in oms.cli (CLI-state and prompt helpers); import
 # them lazily inside handlers to avoid circular import at module load.
@@ -56,14 +56,30 @@ async def _agent_json(adapter: Any, prompt: str) -> Any:
     return None
 
 
-def _adapter_for(name: str, *, session_id: str, agent_id: str) -> Any:
+def _adapter_cls(name: str) -> Any:
     from oms.adapters import resolve as resolve_adapter
 
     try:
-        cls = resolve_adapter(name)
+        return resolve_adapter(name)
     except Exception as exc:  # registry: local → builtin → hub; not found
         raise SystemExit(f"unknown adapter {name!r}: {exc}") from exc
-    return cls(session_id=session_id, agent_id=agent_id)
+
+
+def _adapter_for(name: str, *, session_id: str, agent_id: str) -> Any:
+    return _adapter_cls(name)(session_id=session_id, agent_id=agent_id)
+
+
+def _validate_adapter(name: str) -> None:
+    """Gate before minting a new agent row: ``name`` must resolve in the
+    registry AND its wrapped binary must be on PATH — otherwise ``register``
+    happily persists agents for CLIs that can never run (decision
+    2026-06-10). ``oms.testing.Simulation`` patches this seam alongside
+    ``_adapter_for``."""
+    cls = _adapter_cls(name)
+    if not cls.is_available():
+        raise SystemExit(
+            f"adapter {name!r} resolved but its CLI {cls.binary or name!r} is not on PATH — install it first"
+        )
 
 
 async def _resolve_agent(sid_: str, name: str, *, bank: Bank) -> str:
@@ -72,6 +88,7 @@ async def _resolve_agent(sid_: str, name: str, *, bank: Bank) -> str:
     agents = [a for a in await bank.list_agents(sid_) if a.get("adapter") == name]
     if agents:
         return str(agents[-1]["id"])
+    _validate_adapter(name)
     seq = await bank.next_agent_seq(sid_)
     agent_id = f"{sid_}/agent-{seq:03d}-{name}"
     await bank.put_agent(agent_id, session_id=sid_, adapter=name, seq=seq)
@@ -91,10 +108,12 @@ async def _emit_post(
     io: tuple[Any, Any],
     ask_star: bool,
 ) -> int:
-    """Shared accept/reject + ★ flow for a ``reflection``/``reply`` post.
-    **C1**: a rejected or parser-refused post is NOT persisted (the record
+    """Shared single-gate commit flow for a ``reflection``/``reply`` post:
+    one allowance prompt carries both the commit decision and the ★ (user
+    decision 2026-06-10 — no separate accept/reject question).
+    **C1**: a declined or parser-refused post is NOT persisted (the record
     never carries ``preference``); the caller re-prompts."""
-    from oms.cli import _noninteractive, ask_rating, ask_yn
+    from oms.cli import _noninteractive, ask_allow, ask_commit
 
     record: dict[str, Any] = {
         "id": f"{sid_}/{sid.new().replace('-', '').lower()[:8]}",
@@ -111,36 +130,34 @@ async def _emit_post(
 
     ok, res = await parse_post_safely(record, bank=bank)
     if not ok or not isinstance(res, dict):  # narrows res → dict for the rest
-        io[1](f"post rejected by the discipline (not stored): {res}")
+        io[1](messages.POST_REJECTED_BY_DISCIPLINE.format(reason=res))
         return 1  # caller re-prompts (C1: nothing persisted)
 
-    io[1]("--- proposed post ---")
+    io[1](messages.POST_PROPOSED_HEADER)
     io[1](json.dumps(res.get("structured", {}), indent=2))
-    # The accept gate is NOT deny-by-default: the mechanical parser already
-    # gated quality, so an unattended (OMS_NONINTERACTIVE) run auto-accepts —
+    # The commit gate is NOT deny-by-default: the mechanical parser already
+    # gated quality, so an unattended (OMS_NONINTERACTIVE) run auto-commits —
     # the open-ended loop must keep running with no human present. Deny-by-
     # default (Open-Q §B5) is scoped to /inject + destructive confirms, not to
     # the agent's own parser-validated post (oms.cli.md: noninteractive →
     # unrated + no inject; it does not gate /self-distill).
-    accepted = (
-        True
-        if _noninteractive()
-        else ask_yn("accept this post?", input_fn=io[0], output_fn=io[1], noninteractive=False)
-    )
-    if not accepted:
-        io[1]("rejected — re-prompt the agent (not stored; C1)")
-        return 1  # C1: NOT stored, no preference key
-
     if ask_star:
         proposed = res.get("structured", {}).get("confidence")
         prop = {"high": 5, "medium": 3, "low": 2}.get(str(proposed), 3)
-        rating = ask_rating(prop, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive())
-        if rating is not None:
+        accepted, rating = ask_commit(prop, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive())
+        if accepted and rating is not None:
             res["rating"] = rating
+    else:
+        accepted = _noninteractive() or ask_allow(
+            messages.REPLY_COMMIT_OFFER, input_fn=io[0], output_fn=io[1], noninteractive=False
+        )
+    if not accepted:
+        io[1](messages.POST_DISCARDED)
+        return 1  # C1: NOT stored, no preference key
 
     res.pop("preference", None)  # C1 belt-and-suspenders: a post never carries it
     await bank.put_packet(res)
-    io[1](f"stored post {res['id']}")
+    io[1](messages.POST_STORED.format(post_id=res["id"]))
     return 0
 
 
@@ -168,7 +185,7 @@ async def do_self_distill(
     prompt = render_post_prompt(kind="reflection", goal=goal, guidance=guidance)
     structured = await _agent_json(adapter_obj, prompt)
     if structured is None:
-        io[1]("agent produced no parseable JSON post (not stored)")
+        io[1](messages.NO_PARSEABLE_POST)
         return 1
     return await _emit_post(
         kind="reflection",
@@ -204,17 +221,17 @@ async def do_discuss(
 
     ranked = await retrieve(sid_, agent_id=agent_id, goal=goal, bank=bank)  # retrieval-before-post
     if not ranked:
-        io[1]("no related posts to engage — run /self-distill first")
+        io[1](messages.DISCUSS_NO_POSTS)
         return 1
     reply_to = packet.lstrip("@") if packet else str(ranked[0]["id"])
     reason = enforce_retrieved_before_reply(sid_, agent_id, reply_to)
     if reason is not None:
-        io[1](f"/discuss refused: {reason}")
+        io[1](messages.DISCUSS_REFUSED.format(reason=reason))
         return 1  # not persisted (C1)
     prompt = render_post_prompt(kind="reply", goal=goal, prior_posts=ranked)
     structured = await _agent_json(adapter_obj, prompt)
     if structured is None:
-        io[1]("agent produced no parseable JSON reply (not stored)")
+        io[1](messages.NO_PARSEABLE_REPLY)
         return 1
     return await _emit_post(
         kind="reply",
@@ -243,6 +260,8 @@ async def do_cross_distill(
     sid_ = _resolve_sid(session)
     session_row = await bank.get_session(sid_)
     goal = (session_row or {}).get("goal")
+    if goal == config.resolve("OMS_DEFAULT_GOAL", config.OMS_DEFAULT_GOAL):
+        goal = None  # the default bucket is the catch-all, not a curated goal
     scope = "per_goal" if goal else "cross_goal"
     mode = "server" if server else None
     try:
@@ -251,9 +270,9 @@ async def do_cross_distill(
         io[1](str(exc))  # exact "Run /self-distill first!"
         return 1
     except CurationError as exc:
-        io[1](f"curation failed (nothing stored, resumable): {exc}")
+        io[1](messages.CURATION_FAILED.format(reason=exc))
         return 1
-    io[1](f"curated {pkt.scope} bundle {pkt.id} (curator={pkt.curator}) — /inject @{pkt.id} to seed")
+    io[1](messages.CURATED_BUNDLE.format(scope=pkt.scope, bundle_id=pkt.id, curator=pkt.curator))
     return 0
 
 
@@ -264,8 +283,7 @@ async def do_inject(
     bank: Bank,
     io: tuple[Any, Any],
 ) -> int:
-    from oms.cli import _noninteractive, _resolve_sid, ask_yn, preview_tokens
-    from oms.utils import config
+    from oms.cli import _noninteractive, _resolve_sid, ask_allow, preview_tokens
 
     sid_ = _resolve_sid(session)
     if packet:
@@ -273,18 +291,18 @@ async def do_inject(
     else:
         distills = await bank.list_packets(type="distill", include_quarantined=False)
         if not distills:
-            io[1]("no distill bundle to inject — run /cross-distill first")
+            io[1](messages.INJECT_NOTHING)
             return 1
         pid = str(distills[-1]["id"])
     rec = await bank.get_packet(pid)
     if rec is None:
-        io[1](f"no packet {pid!r}")
+        io[1](messages.INJECT_UNKNOWN_PACKET.format(packet_id=pid))
         return 1
     if rec.get("quarantined"):
-        io[1](f"refused: {pid} is quarantined (excluded from /inject)")
+        io[1](messages.INJECT_QUARANTINED.format(packet_id=pid))
         return 1  # refused BEFORE preview
     bundle_text = json.dumps(rec.get("bundle", {}), indent=2)
-    io[1]("--- inject preview ---")
+    io[1](messages.INJECT_PREVIEW_HEADER)
     io[1](
         preview_tokens(
             bundle_text,
@@ -292,11 +310,14 @@ async def do_inject(
             tail=config.OMS_INJECT_PREVIEW_TAIL_TOKENS,
         )
     )
-    if not ask_yn(
-        f"inject {pid} into session {sid_}?", input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive()
+    if not ask_allow(
+        messages.INJECT_OFFER.format(packet_id=pid, session_id=sid_),
+        input_fn=io[0],
+        output_fn=io[1],
+        noninteractive=_noninteractive(),
     ):
-        io[1]("inject declined")
+        io[1](messages.INJECT_DECLINED)
         return 1
     await bank.record_injection(pid, sid_)
-    io[1](f"injected {pid} → session {sid_} (injections row written)")
+    io[1](messages.INJECT_RECORDED.format(packet_id=pid, session_id=sid_))
     return 0

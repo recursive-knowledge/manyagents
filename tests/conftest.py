@@ -10,7 +10,7 @@ conversation harness (``sim`` / ``trial_bank``) wraps ``oms.testing``.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -43,6 +43,19 @@ async def trial_bank() -> FakeBank:
     bank = FakeBank()
     await seed_trial_story(bank)
     return bank
+
+
+@pytest.fixture(autouse=True)
+def adapter_gate(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], None]]:
+    """The agent-mint gate (``oms._handlers._validate_adapter``) requires the
+    adapter's real CLI on PATH — never true offline/CI, where most tests mint
+    ``claude`` agents freely. Default it to a no-op; gate tests request this
+    fixture by name to get the REAL function back."""
+    import oms._handlers as h
+
+    real = h._validate_adapter
+    monkeypatch.setattr(h, "_validate_adapter", lambda name: None)
+    yield real
 
 
 @pytest.fixture(autouse=True)

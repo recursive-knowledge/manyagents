@@ -310,3 +310,66 @@ def test_ui_style_diff_preserves_content_and_colors_lines(monkeypatch: pytest.Mo
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm-256color")
     assert "\x1b[" in ui.render(ui.style_diff(diff))
+
+
+# --------------------------------------------------------------------------- #
+# ui.pick_star — the ★ number-line commit gate (2026-06-10)
+# --------------------------------------------------------------------------- #
+
+
+def _run_picker(propose: int, *keys: str) -> tuple[tuple[bool, int | None], str]:
+    from oms.utils import ui
+
+    feed = list(keys)
+    frames: list[str] = []
+    result = ui.pick_star(propose, key_fn=lambda: feed.pop(0), out=frames.append)
+    return result, "".join(frames)
+
+
+def test_pick_star_arrows_move_and_enter_commits() -> None:
+    (commit, rating), screen = _run_picker(3, "right", "right", "enter")
+    assert (commit, rating) == (True, 5)
+    assert "❰5★❱" in screen  # the selection rendered at 5 before commit
+
+
+def test_pick_star_bounds_clamp() -> None:
+    (commit, rating), _ = _run_picker(5, "right", "right", "enter")
+    assert (commit, rating) == (True, 5)  # cannot move past 5★
+    (commit, rating), _ = _run_picker(1, "left", "enter")
+    assert (commit, rating) == (True, 1)  # cannot move below 1★
+
+
+def test_pick_star_digit_jump_skip_and_discard() -> None:
+    (commit, rating), _ = _run_picker(3, "2", "enter")
+    assert (commit, rating) == (True, 2)
+    (commit, rating), _ = _run_picker(3, "s")
+    assert (commit, rating) == (True, None)  # unrated is first-class
+    for discard in ("n", "esc"):
+        (commit, rating), _ = _run_picker(3, discard)
+        assert (commit, rating) == (False, None)
+
+
+def test_pick_star_legend_says_which_end_is_best() -> None:
+    from oms.utils import messages
+
+    _, screen = _run_picker(3, "enter")
+    assert messages.COMMIT_PICKER_SCALE_LOW in screen and messages.COMMIT_PICKER_SCALE_HIGH in screen
+
+
+# --------------------------------------------------------------------------- #
+# messages — the user-facing text catalog (2026-06-10)
+# --------------------------------------------------------------------------- #
+
+
+def test_messages_catalog_is_pure_text() -> None:
+    """Every public constant is a plain string; every template formats with
+    its documented fields (a rename in the catalog must fail loudly here)."""
+    from oms.utils import messages
+
+    consts = {k: v for k, v in vars(messages).items() if k.isupper()}
+    assert consts and all(isinstance(v, str) for v in consts.values())
+    # spot-format the field-bearing templates
+    messages.START_CROSS_NUDGE_OFFER.format(goal="g", n=3, n_s="s")
+    messages.END_INJECT_FOLLOWUP_GUIDANCE.format(packet_id="curator/x")
+    messages.START_QUARANTINE_NOTE.format(n=1, n_s="", goal="g")
+    messages.COMMIT_TYPED_HINT.format(propose=3)
