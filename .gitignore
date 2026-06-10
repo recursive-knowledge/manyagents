@@ -87,6 +87,12 @@ cython_debug/
 supabase/.temp/
 supabase/.branches/
 
+# Cloudflare Tunnel — rendered ingress configs + credentials are machine-specific
+# / secret; only infra/cloudflared/README.md is committed (see Makefile *-tunnel-*).
+infra/cloudflared/*.yml
+infra/cloudflared/*.json
+infra/cloudflared/cert.pem
+
 # MkDocs build output
 site/
 

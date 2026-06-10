@@ -84,4 +84,5 @@ nav:
       - Quickstart: guide/quickstart.md
       - Curation: guide/curation.md
       - Viewer & read API: guide/viewer.md
+      - Remote access (tunnels): guide/remote-access.md
       - Authoring an installer: guide/authoring-an-installer.md
