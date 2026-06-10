@@ -3,7 +3,7 @@
 Targets per scope:
 
 - ``user``: ``~/.codex/skills/oms-<verb>/SKILL.md`` (four files, invokable as
-  ``$self-distill`` etc. — Codex reserves the ``/`` namespace for built-ins,
+  ``$oms-self-distill`` etc. — Codex reserves the ``/`` namespace for built-ins,
   so the seamless surface is ``$prefix`` invocation, plus natural-language
   auto-trigger via the skill's ``description`` field) + idempotent MERGE of
   the ``[mcp_servers.oms]`` block (with per-tool ``approval_mode = "prompt"``
@@ -32,6 +32,7 @@ from oms._installer import (
     consent_prompt,
     load_manifest,
 )
+from oms.adapters.skills import USAGE
 
 _VERBS: tuple[tuple[str, str], ...] = (
     ("self-distill", "draft and (on accept) commit ONE evidence-grounded reflection post to the active oms session"),
@@ -66,9 +67,8 @@ Procedure (follow exactly):
    - `predicted_outcome` — a falsifiable prediction
    - `confidence` — "low" | "medium" | "high"
 3. Show the draft verbatim with a recommended ★ (high=5, medium=3, low=2).
-4. Ask: "Accept this post + ★? [y/n]"
-5. **Only on accept**, call `oms.commit_post(kind='reflection', structured={...}, rating=N)`. Codex's per-tool approval prompt will fire (`approval_mode='prompt'`) — the user must approve before the post is persisted.
-6. On reject, do NOT call commit_post (C1: no persistence without consent).
+4. Then call `oms.commit_post(kind='reflection', structured={...}, rating=N)` directly with the recommended rating. Do NOT ask a separate "accept?" question — Codex's per-tool approval prompt (`approval_mode='prompt'`) IS the user's single gate; nothing persists unless they approve.
+5. If the user denies the approval or asks for changes, revise the draft and repeat (C1: no persistence without consent).
 """
         )
     if verb == "discuss":
@@ -85,9 +85,8 @@ Procedure:
 2. Call `oms.discuss_draft(stance=..., packet=...)`.
 3. If the tool returns an error ("no related posts"), tell the user to run $oms-self-distill first and STOP.
 4. Using the returned `instruction_for_host_llm` (which includes the ranked prior posts), draft a reply with the same 5 fields as $oms-self-distill, engaging the post named in `reply_to`.
-5. Show the draft verbatim. Ask: "Accept this reply? [y/n]"
-6. **Only on accept**, call `oms.commit_post(kind='reply', structured={...}, reply_to=..., stance=...)`. The approval prompt fires.
-7. On reject, do NOT call commit_post (C1).
+5. Show the draft verbatim, then call `oms.commit_post(kind='reply', structured={...}, reply_to=..., stance=...)` directly. Do NOT ask a separate "accept?" question — the per-tool approval prompt IS the single gate.
+6. If the user denies the approval or asks for changes, revise and repeat (C1).
 """
         )
     if verb == "cross-distill":
@@ -118,9 +117,8 @@ Procedure:
 1. Call `oms.inject_preview(packet=...)`.
 2. If the tool returns an error (no bundle / quarantined), report it and STOP.
 3. Show the preview verbatim.
-4. Ask: "Inject this bundle into your session? [y/n]"
-5. **Only on accept**, call `oms.inject_commit(packet=<id>)`. Codex's `approval_mode='prompt'` for `inject_commit` fires the per-call confirmation — user approves before the ledger row is written.
-6. On reject, do NOT call inject_commit.
+4. Then call `oms.inject_commit(packet=<id>)` directly. Do NOT ask a separate "inject? [y/n]" question — Codex's per-call confirmation on `inject_commit` IS the user's single gate; the ledger row is only written if they approve.
+5. If the user denies the confirmation, STOP — nothing is recorded.
 """
         )
     raise ValueError(f"unknown verb {verb!r}")
@@ -163,7 +161,7 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
                 kind="create",
                 path=root / "skills" / f"oms-{verb}" / "SKILL.md",
                 payload=_skill_body(verb, description),
-                description=f"`$oms-{verb}` skill — host-LLM procedure (draft → show → ask → commit).",
+                description=f"`$oms-{verb}` skill — {description}",
             )
         )
 
@@ -190,7 +188,13 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
                 merge_keys=(f"mcp_servers.oms.tools.{tool}",),
             )
         )
-    return InstallPlan(adapter="codex", scope=cast("Scope", scope), ops=ops, session_id=session_id)
+    return InstallPlan(
+        adapter="codex",
+        scope=cast("Scope", scope),
+        ops=ops,
+        session_id=session_id,
+        commands=[(f"$oms-{verb}", blurb) for verb, blurb in USAGE],
+    )
 
 
 def install(
@@ -209,6 +213,8 @@ def install(
         input_fn=input_fn,  # type: ignore[arg-type]
         output_fn=output_fn,  # type: ignore[arg-type]
         manifest_exists=existing,
+        oma_home=oma_home,
+        dry_run=dry_run,
     ):
         return None
     return apply_plan(plan, oma_home=oma_home, dry_run=dry_run)

@@ -58,7 +58,7 @@ def captured_cli(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     monkeypatch.setattr(
         inst_mod,
         "_run_cli",
-        lambda argv, *, description, stdin_input=None: _run(argv),
+        lambda argv, *, description, stdin_input=None, failure_ok=False: _run(argv),
     )
     return invocations
 
@@ -79,8 +79,38 @@ def test_plan_creates_four_bare_verb_skill_dirs(fake_home: Path) -> None:
     assert {Path(op.path).name for op in creates} == {"SKILL.md"}
     skill_dirs = {Path(op.path).parent.name for op in creates}
     assert skill_dirs == {"self-distill", "discuss", "cross-distill", "inject"}
-    # And NO ``settings.json`` merge — we used to mistakenly write the wrong file.
-    assert [op for op in plan.ops if op.kind == "merge"] == []
+
+
+def test_plan_declares_advisory_commands(fake_home: Path) -> None:
+    """The consent prompt leads with what the user GETS — the plan carries
+    the four slash invocations + usage blurbs (`InstallPlan.commands`); the
+    file ops stay behind the [d]etails keypress."""
+    plan = build_plan(session_id="S1", scope="user")
+    assert [inv for inv, _ in plan.commands] == ["/self-distill", "/discuss", "/cross-distill", "/inject"]
+    assert all(blurb for _, blurb in plan.commands)
+
+
+def test_plan_merges_lifecycle_hooks_into_settings_json(fake_home: Path) -> None:
+    """M12 groundwork: exactly two shared-array merges into
+    ``~/.claude/settings.json`` — SessionStart + SessionEnd hooks running
+    ``python -m oms._hook``. List-item merges (``list:`` keys), NOT key
+    upserts: the user's own hooks under the same events must survive.
+    settings.json is the documented home for hooks; MCP registration stays
+    on the ``claude mcp`` CLI (``~/.claude.json`` — the M11.2 lesson)."""
+    plan = build_plan(session_id="S1", scope="user")
+    merges = [op for op in plan.ops if op.kind == "merge"]
+    assert len(merges) == 2
+    assert {str(op.path) for op in merges} == {str(fake_home / ".claude" / "settings.json")}
+    events = set()
+    for op in merges:
+        assert isinstance(op.payload, dict)
+        assert op.payload["__top_key__"] == "hooks"
+        events.add(op.payload["__our_key__"])
+        item = op.payload["__list_item__"]
+        command = item["hooks"][0]["command"]
+        assert "-m oms._hook" in command and sys.executable.rsplit("/", 1)[-1] in command
+        assert op.merge_keys == (f"list:hooks.{op.payload['__our_key__']}",)
+    assert events == {"SessionStart", "SessionEnd"}
 
 
 def test_plan_includes_claude_mcp_add_cli_actions(fake_home: Path) -> None:
@@ -107,9 +137,13 @@ def test_plan_project_scope_writes_to_cwd_with_project_scope(
     project.mkdir()
     monkeypatch.chdir(project)
     plan = build_plan(session_id="S1", scope="project")
-    # File ops point at the project's .claude/skills/<verb>/SKILL.md
+    # Creates point at the project's .claude/skills/<verb>/SKILL.md; the hook
+    # merges at the project's .claude/settings.json.
     for op in plan.ops:
-        assert str(op.path).startswith(str(project / ".claude" / "skills"))
+        if op.kind == "create":
+            assert str(op.path).startswith(str(project / ".claude" / "skills"))
+        else:
+            assert op.path == project / ".claude" / "settings.json"
     # CLI scope flips to project too.
     add = next(a for a in plan.cli_actions if a.install_argv[2] == "add")
     assert add.install_argv[3:5] == ("--scope", "project")
@@ -120,10 +154,13 @@ def test_plan_project_scope_writes_to_cwd_with_project_scope(
 # --------------------------------------------------------------------------- #
 
 
-def test_install_writes_bare_verb_skills_no_settings_json_touch(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    """The fixed install must NOT touch ~/.claude/settings.json. The
-    user-scope MCP file is managed by Claude Code itself; we go through its
-    CLI."""
+def test_install_writes_skills_and_hooks_but_never_mcp_into_settings_json(
+    fake_home: Path, captured_cli: list[list[str]]
+) -> None:
+    """settings.json gains ONLY our two lifecycle hook entries (M12
+    groundwork) — never an ``mcpServers`` key: the user-scope MCP file is
+    ``~/.claude.json``, managed by Claude Code itself via its CLI (the
+    M11.2-first-pass bug was writing MCP config into settings.json)."""
     oma_home = fake_home / ".oms"
     m = install(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
@@ -134,8 +171,62 @@ def test_install_writes_bare_verb_skills_no_settings_json_touch(fake_home: Path,
         body = skill.read_text()
         assert f"name: {verb}" in body
         assert "mcp__oms__" in body
-    # NEVER write settings.json (the M11.2-first-pass bug).
-    assert not (fake_home / ".claude" / "settings.json").exists()
+    import json as _json
+
+    settings = _json.loads((fake_home / ".claude" / "settings.json").read_text())
+    assert set(settings) == {"hooks"}  # hooks only — no mcpServers, ever
+    assert set(settings["hooks"]) == {"SessionStart", "SessionEnd"}
+    for event in ("SessionStart", "SessionEnd"):
+        (entry,) = settings["hooks"][event]
+        assert "-m oms._hook" in entry["hooks"][0]["command"]
+
+
+def test_install_purges_stale_oms_hook_from_previous_venv(fake_home: Path, captured_cli: list[list[str]]) -> None:
+    """A reinstall from a different interpreter (moved/recreated venv) must
+    replace the old oms hook entry, not accumulate a second one that fires —
+    and possibly errors — on every one of the user's sessions."""
+    import json as _json
+
+    settings_path = fake_home / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    stale = {"hooks": [{"type": "command", "command": "/dead/venv/bin/python -m oms._hook"}]}
+    user = {"hooks": [{"type": "command", "command": "echo mine"}]}
+    settings_path.write_text(_json.dumps({"hooks": {"SessionStart": [user, stale], "SessionEnd": [stale]}}, indent=2))
+    install(session_id="S1", oma_home=fake_home / ".oms", scope="user")
+    data = _json.loads(settings_path.read_text())
+    for event in ("SessionStart", "SessionEnd"):
+        cmds = [h["hooks"][0]["command"] for h in data["hooks"][event]]
+        assert not any("/dead/venv" in c for c in cmds), event
+        assert sum("-m oms._hook" in c for c in cmds) == 1, event
+    assert data["hooks"]["SessionStart"][0] == user  # user's hook untouched
+
+
+def test_install_hooks_preserve_user_hooks_through_round_trip(fake_home: Path, captured_cli: list[list[str]]) -> None:
+    """A user hook already under SessionStart survives install AND
+    uninstall; uninstall leaves settings.json byte-identical."""
+    import json as _json
+
+    settings_path = fake_home / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    original = (
+        _json.dumps(
+            {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}},
+            indent=2,
+        )
+        + "\n"
+    )
+    settings_path.write_text(original)
+
+    oma_home = fake_home / ".oms"
+    install(session_id="S1", oma_home=oma_home, scope="user")
+    merged = _json.loads(settings_path.read_text())
+    commands = [h["hooks"][0]["command"] for h in merged["hooks"]["SessionStart"]]
+    assert commands[0] == "echo mine"  # user's hook untouched, first
+    assert any("-m oms._hook" in c for c in commands[1:])
+
+    rc = uninstall("claude", oma_home, output_fn=lambda _s: None)
+    assert rc == 0
+    assert settings_path.read_text() == original  # byte-identical round trip
 
 
 def test_install_invokes_claude_mcp_add_with_right_argv(fake_home: Path, captured_cli: list[list[str]]) -> None:
@@ -156,10 +247,13 @@ def test_install_idempotent_twice_equals_once(fake_home: Path, captured_cli: lis
     oma_home = fake_home / ".oms"
     install(session_id="S1", oma_home=oma_home, scope="user")
     skill = fake_home / ".claude" / "skills" / "self-distill" / "SKILL.md"
+    settings = fake_home / ".claude" / "settings.json"
     once = skill.read_bytes()
+    settings_once = settings.read_bytes()
 
     install(session_id="S1", oma_home=oma_home, scope="user")
     assert skill.read_bytes() == once  # files byte-identical
+    assert settings.read_bytes() == settings_once  # no duplicate hook entries
     assert len(captured_cli) == 4  # two CLI actions per install * 2 runs
 
 
@@ -171,6 +265,7 @@ def test_install_declined_writes_nothing(
     m = install(session_id="S1", oma_home=oma_home, scope="user", output_fn=lambda _s: None)
     assert m is None
     assert not (fake_home / ".claude" / "skills").exists()
+    assert not (fake_home / ".claude" / "settings.json").exists()  # no hook merge either
     assert captured_cli == []  # no CLI invocation either
     assert load_manifest("claude", oma_home) is None
 
@@ -183,7 +278,7 @@ def test_install_dry_run_writes_nothing_runs_no_cli(fake_home: Path, captured_cl
 
 
 # --------------------------------------------------------------------------- #
-# uninstall: removes files, runs the inverse CLI, settings.json untouched
+# uninstall: removes files, runs the inverse CLI, pops only our hook entries
 # --------------------------------------------------------------------------- #
 
 
@@ -200,6 +295,8 @@ def test_uninstall_removes_skills_and_runs_claude_mcp_remove(fake_home: Path, ca
     # Files removed.
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
         assert not (skills_root / verb / "SKILL.md").exists()
+    # settings.json held only our hook entries, so it's gone too.
+    assert not (fake_home / ".claude" / "settings.json").exists()
 
     # The inverse CLI ran. The pre-clear remove's inverse is `true` (no-op),
     # so only the real `add`'s inverse — `claude mcp remove` — should appear.

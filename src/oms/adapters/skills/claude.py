@@ -1,22 +1,27 @@
-"""Claude Code skill + MCP installer (M11).
+"""Claude Code skill + MCP + hooks installer (M11; hooks: M12 groundwork).
 
 Targets per scope:
 
-- ``user``: ``~/.claude/skills/oms-<verb>/SKILL.md`` (4 files) + MERGE the
-  ``mcpServers.oms`` entry into ``~/.claude/settings.json``. The user types
-  ``/self-distill`` natively inside Claude Code.
-- ``project``: ``<cwd>/.claude/skills/oms-<verb>/SKILL.md`` + MERGE
-  ``<cwd>/.mcp.json``. Scoped to the repo the wrapper was launched in.
+- ``user``: ``~/.claude/skills/<verb>/SKILL.md`` (4 files, bare-verb dirs) +
+  the oms MCP server registered via ``claude mcp add --scope user`` (the
+  user-scope MCP file is ``~/.claude.json``, an internal of Claude Code we
+  never write directly — the M11.2 lesson) + MERGE two lifecycle hook
+  entries into the shared ``hooks`` arrays of ``~/.claude/settings.json``
+  (the documented home for hooks). The user types ``/self-distill``
+  natively inside Claude Code.
+- ``project``: same shapes under ``<cwd>/.claude/`` with
+  ``claude mcp add --scope project``.
 
-The MCP server command uses ``sys.executable`` (the python `oms` itself is
-running under) so the agent's spawned server matches the install, even
-inside a uv-managed venv. ``OMS_SESSION`` is **not** baked into the config
-(it changes per session) — the wrapper exports it in the parent env at
-PTY-spawn time, and the MCP server inherits it.
+The MCP server and hook commands use ``sys.executable`` (the python `oms`
+itself is running under) so the agent's spawned processes match the
+install, even inside a uv-managed venv. ``OMS_SESSION`` is **not** baked
+into any config (it changes per session) — the wrapper exports it in the
+parent env at PTY-spawn time; the MCP server and hooks inherit it.
 """
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import cast
@@ -31,6 +36,7 @@ from oms._installer import (
     consent_prompt,
     load_manifest,
 )
+from oms.adapters.skills import USAGE
 
 # Skill name → slash command. Claude Code unifies skills + commands, so the
 # `name:` frontmatter is what the user types after `/`.
@@ -73,9 +79,8 @@ Follow this procedure exactly:
    - `predicted_outcome` — a falsifiable prediction
    - `confidence` — "low" / "medium" / "high"
 3. Show the draft verbatim to the user with a recommended ★ (high=5, medium=3, low=2).
-4. Ask: "Accept this post + ★? [y/n, or a rating 1-5]"
-5. **Only on accept**, call `mcp__oms__commit_post` with `kind="reflection"`, the structured payload, and the chosen rating. Claude Code's permission prompt will fire — the user must explicitly approve before the post is persisted.
-6. On reject, **do NOT call commit_post** — the Bank stays untouched (C1).
+4. Then call `mcp__oms__commit_post` directly with `kind="reflection"`, the structured payload, and the recommended rating. Do NOT ask a separate "accept?" question — Claude Code's permission prompt on `commit_post` IS the user's single gate; nothing persists unless they approve it.
+5. If the user denies the permission prompt or asks for changes, revise the draft and repeat — the Bank stays untouched until an approved commit (C1).
 
 The active oms session is auto-detected from `$OMS_SESSION` or `~/.oms/active`; if neither is set the MCP tool errors and you should tell the user to run `oms start` first.
 """
@@ -99,9 +104,8 @@ Procedure:
 2. Call `mcp__oms__discuss_draft` with `stance=...` and `packet=...` (the @-stripped id, or null).
 3. If the tool returns an error ("no related posts"), tell the user to run `/self-distill` first and STOP.
 4. Using the returned `instruction_for_host_llm` (which includes the ranked prior posts) and the conversation, draft a reply with the same 5 fields as `/self-distill`, engaging the post named in `reply_to`.
-5. Show the draft verbatim to the user. Ask: "Accept this reply? [y/n]"
-6. **Only on accept**, call `mcp__oms__commit_post` with `kind="reply"`, the structured payload, `reply_to=<from draft>`, `stance=<from draft>`. The permission prompt will fire.
-7. On reject, **do NOT call commit_post** (C1).
+5. Show the draft verbatim to the user, then call `mcp__oms__commit_post` directly with `kind="reply"`, the structured payload, `reply_to=<from draft>`, `stance=<from draft>`. Do NOT ask a separate "accept?" question — the permission prompt on `commit_post` IS the single gate.
+6. If the user denies the permission prompt or asks for changes, revise and repeat (C1: nothing persisted until an approved commit).
 """
     if verb == "cross-distill":
         return f"""\
@@ -141,10 +145,8 @@ Procedure:
 
 1. Call `mcp__oms__inject_preview` with `packet=$ARGUMENTS` (or null).
 2. If the tool returns an error (no bundle / quarantined), report it and STOP.
-3. Show the preview verbatim to the user.
-4. Ask: "Inject this bundle into your session? [y/n]"
-5. **Only on accept**, call `mcp__oms__inject_commit` with the same packet id. Claude Code's permission prompt will fire — the user must approve again before the ledger row is written.
-6. On reject, **do NOT call inject_commit**.
+3. Show the preview verbatim to the user, then call `mcp__oms__inject_commit` with the same packet id. Do NOT ask a separate "inject? [y/n]" question — Claude Code's permission prompt on `inject_commit` IS the user's single gate; the ledger row is only written if they approve.
+4. If the user denies the permission prompt, STOP — nothing is recorded.
 """
     raise ValueError(f"unknown verb {verb!r}")
 
@@ -174,12 +176,67 @@ def _mcp_cli_actions(scope: str) -> list[CLIAction]:
             install_argv=remove,
             uninstall_argv=("true",),
             description=f"pre-clear any existing oms MCP server (--scope {cli_scope})",
+            failure_ok=True,  # exit 1 ("no server named oms") IS the fresh install
         ),
         CLIAction(
             install_argv=add,
             uninstall_argv=remove,
             description=f"register the oms MCP server with Claude Code (--scope {cli_scope})",
         ),
+    ]
+
+
+# Lifecycle hooks (M12 groundwork). Claude Code invokes the command with a
+# JSON payload on stdin ({session_id, transcript_path, cwd, hook_event_name,
+# …}) at session start and end. ``oms._hook`` appends that payload to
+# ``$OMS_HOME/bindings/<session>.jsonl`` when OMS_SESSION is set (i.e. only
+# for oms-wrapped runs; it exits silently otherwise) — the binding that lets
+# ``Adapter.mine()`` (M13) find the harness's transcript files, including the
+# extra session ids a mid-run ``/clear`` rolls over to. SessionStart and
+# SessionEnd are deliberately the only events: per-tool events would put a
+# subprocess spawn on the host's hot path for no binding gain.
+_HOOK_EVENTS: tuple[str, ...] = ("SessionStart", "SessionEnd")
+
+
+# The staleness marker for the hook entries: any settings.json hook item
+# containing this substring is recognizably ours, so reinstalls purge stale
+# variants (a moved/recreated venv changes the baked interpreter path) and
+# uninstall can clean an entry even after the user/host tool edited it.
+_HOOK_MARKER = "-m oms._hook"
+
+
+def _hook_ops(scope: str) -> list[FileOp]:
+    """Two shared-array merges into ``settings.json``. Hook arrays are user
+    territory (their own hooks may live under the same event), so these go
+    through the list-item merge: install appends exactly one entry per
+    event (purging stale oms variants via ``_HOOK_MARKER``), uninstall
+    removes exactly our entries, neighbors survive.
+
+    The command is wrapped so a dead interpreter path (deleted/moved venv)
+    degrades to a silent no-op instead of a visible "hook error" notice at
+    the start and end of every one of the user's Claude Code sessions —
+    ``oms._hook``'s never-fail guarantee can't apply when the python that
+    hosts it is gone."""
+    settings = _target_root(scope) / "settings.json"
+    command = f"{shlex.quote(sys.executable)} {_HOOK_MARKER} 2>/dev/null || true"
+    item = {"hooks": [{"type": "command", "command": command}]}
+    return [
+        FileOp(
+            kind="merge",
+            path=settings,
+            payload={
+                "__top_key__": "hooks",
+                "__our_key__": event,
+                "__list_item__": item,
+                "__list_purge__": _HOOK_MARKER,
+            },
+            description=(
+                f"{event} hook — records the harness session id + transcript path to "
+                f"$OMS_HOME/bindings/ for oms-wrapped runs (exits silently when OMS_SESSION is unset)"
+            ),
+            merge_keys=(f"list:hooks.{event}",),
+        )
+        for event in _HOOK_EVENTS
     ]
 
 
@@ -193,25 +250,24 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
     needs the path; we keep the signature uniform anyway (M11 follow-up P3)."""
     root = _target_root(scope)
     ops: list[FileOp] = []
-    for verb, _desc, draft_tool in _VERBS:
+    for verb, desc, draft_tool in _VERBS:
         body = _skill_body(verb, draft_tool)
         ops.append(
             FileOp(
                 kind="create",
                 path=root / "skills" / verb / "SKILL.md",
                 payload=body,
-                description=(
-                    f"`/{verb}` skill — host-LLM procedure (draft → show → ask → commit). "
-                    f"The directory name `{verb}` becomes the slash command."
-                ),
+                description=f"`/{verb}` skill — {desc}",
             )
         )
+    ops.extend(_hook_ops(scope))
     return InstallPlan(
         adapter="claude",
         scope=cast("Scope", scope),
         ops=ops,
         cli_actions=_mcp_cli_actions(scope),
         session_id=session_id,
+        commands=[(f"/{verb}", blurb) for verb, blurb in USAGE],
     )
 
 
@@ -233,6 +289,8 @@ def install(
         input_fn=input_fn,  # type: ignore[arg-type]
         output_fn=output_fn,  # type: ignore[arg-type]
         manifest_exists=existing,
+        oma_home=oma_home,
+        dry_run=dry_run,
     ):
         return None
     return apply_plan(plan, oma_home=oma_home, dry_run=dry_run)

@@ -8,9 +8,12 @@ adapter:
   1. **Plan first.** Each installer builds an :class:`InstallPlan` of
      :class:`FileOp` records — absolute paths, create-vs-merge semantics, the
      keys we add to a merged file, and a human-readable description.
-  2. **Consent.** First run: print the plan and ask `[y/n/diff]`
-     (``OMS_INSTALL_SKILLS=auto|prompt|deny`` overrides). Once recorded in the
-     manifest, subsequent runs are silent and idempotent.
+  2. **Consent.** First run: lead with the advisory welcome panel (the
+     commands the user gets + the undo) and ask `[y/N/d]`; `[d]` reveals the
+     full file-by-file plan and diff before deciding
+     (``OMS_INSTALL_SKILLS=auto|prompt|deny`` overrides). A yes is recorded
+     in the manifest, a no in a ``<adapter>.declined`` marker — either way
+     subsequent runs are quiet and idempotent.
   3. **Apply atomically.** Every write is temp-file + ``os.replace``; JSON
      merges preserve the third-party keys already present; TOML merges go
      through ``tomlkit`` so comments and key order survive.
@@ -77,12 +80,20 @@ class CLIAction:
     ``stdin_input`` (optional) is piped to the install command's stdin. Use
     this for CLIs whose only non-interactive escape is an interactive prompt
     we can answer (e.g. gemini's workspace-trust prompt — see the M11.3
-    Gemini installer where ``"1\\n"`` selects "Trust folder")."""
+    Gemini installer where ``"1\\n"`` selects "Trust folder").
+
+    ``failure_ok`` marks an action whose nonzero exit is expected in the
+    common case (e.g. pre-clearing a server that was never registered) — the
+    exit note is suppressed so a routine install doesn't print scary noise.
+    Reserve it for actions whose *only* job is clearing prior state; the
+    M11.3 lesson (silent nonzero exits hide real bugs) still holds for
+    everything else."""
 
     install_argv: tuple[str, ...]
     uninstall_argv: tuple[str, ...]
     description: str
     stdin_input: str | None = None
+    failure_ok: bool = False
 
 
 @dataclass
@@ -92,6 +103,11 @@ class InstallPlan:
     ops: list[FileOp]
     cli_actions: list[CLIAction] = field(default_factory=list)
     session_id: str | None = None
+    # (invocation, blurb) pairs — what the user GETS, e.g.
+    # ("/self-distill", "post one reflection about the current session").
+    # When non-empty, the consent prompt leads with these (advisory panel)
+    # and demotes the file-by-file plan to the [d]etails keypress.
+    commands: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +116,14 @@ class ManifestEntry:
     path: str
     description: str
     merge_keys: list[str] = field(default_factory=list)
+    # For list merges (``list:<top>.<key>`` in merge_keys): the exact items we
+    # appended, so uninstall can remove them by equality and leave the user's
+    # own entries in the same array untouched. Empty for key/section merges.
+    merge_items: list[Any] = field(default_factory=list)
+    # Staleness marker for list merges (``__list_purge__`` in the payload):
+    # uninstall also removes items containing this substring, so an entry the
+    # user/host tool edited since install (equality broken) is still cleaned.
+    purge_contains: str | None = None
     # sha256 of the file when we last wrote it; on uninstall we refuse to
     # delete/restore if the user has edited it since.
     sha256_after: str = ""
@@ -180,6 +204,72 @@ def merge_json_keys(path: Path, top_key: str, our_key: str, our_value: Any) -> t
         raise TypeError(f"{path} {top_key!r} is not a JSON object")
     bucket[our_key] = our_value
     return json.dumps(data, indent=2) + _trailing_nl(prev), prev
+
+
+def merge_json_list_item(
+    path: Path, top_key: str, our_key: str, item: Any, *, purge_contains: str | None = None
+) -> tuple[str, str | None]:
+    """Idempotent append of ``item`` to the JSON array at
+    ``data[top_key][our_key]`` (creating the object/array as needed). If a
+    structurally identical item is already present the append is skipped
+    (twice == once). Unlike :func:`merge_json_keys` — which upserts a key *we
+    own outright* — this is for arrays that are **shared territory** (e.g.
+    Claude Code's ``hooks.SessionStart``): the user's own entries in the same
+    array must survive both install and uninstall, so we only ever append our
+    item and only ever remove what's recognizably ours.
+
+    ``purge_contains`` is the staleness marker: before appending, any
+    *different* item whose JSON text contains the marker is dropped — a
+    reinstall from a moved/recreated venv changes the interpreter path baked
+    into our item, and without the purge the old entry would accumulate
+    forever (and keep firing in the user's sessions)."""
+    prev = _read_text(path)
+    data: dict[str, Any] = json.loads(prev) if prev else {}
+    bucket = data.setdefault(top_key, {})
+    if not isinstance(bucket, dict):
+        raise TypeError(f"{path} {top_key!r} is not a JSON object")
+    arr = bucket.setdefault(our_key, [])
+    if not isinstance(arr, list):
+        raise TypeError(f"{path} {top_key}.{our_key} is not a JSON array")
+    if purge_contains:
+        arr[:] = [e for e in arr if e == item or purge_contains not in json.dumps(e)]
+    if item not in arr:
+        arr.append(item)
+    return json.dumps(data, indent=2) + _trailing_nl(prev), prev
+
+
+def unmerge_json_list_items(
+    path: Path, top_key: str, our_key: str, items: list[Any], *, purge_contains: str | None = None
+) -> str | None:
+    """Remove ``items`` (by structural equality) — plus, when
+    ``purge_contains`` is given, any item whose JSON text contains the marker
+    (catches entries the user or the host tool edited since install) — from
+    the JSON array at ``data[top_key][our_key]``. Third-party entries in the
+    same array survive. Prunes the array and ``top_key`` if they end up
+    empty. Returns the new file text, or ``None`` if the whole document
+    became empty (the caller deletes the file)."""
+    prev = _read_text(path)
+    if prev is None:
+        return None
+    data: dict[str, Any] = json.loads(prev)
+    bucket = data.get(top_key)
+    if isinstance(bucket, dict):
+        arr = bucket.get(our_key)
+        if isinstance(arr, list):
+            kept = [
+                entry
+                for entry in arr
+                if entry not in items and not (purge_contains and purge_contains in json.dumps(entry))
+            ]
+            if kept:
+                bucket[our_key] = kept
+            else:
+                bucket.pop(our_key, None)
+        if not bucket:
+            data.pop(top_key, None)
+    if not data:
+        return None
+    return json.dumps(data, indent=2) + _trailing_nl_unmerge(prev)
 
 
 def merge_json_flat_key(path: Path, key: str, value: Any) -> tuple[str, str | None]:
@@ -324,7 +414,10 @@ def _format_plan(plan: InstallPlan) -> str:
         else:
             lines.append(Text.assemble(verb, " ", path.ljust(pad), "  ", (_op_label(op, label_budget), "cyan")))
         if op.merge_keys:
-            lines.append(Text(f"    keys we own: {', '.join(op.merge_keys)}", style="dim"))
+            # The list:/flat: prefixes are the manifest's reversal encoding,
+            # not user information — strip them for display.
+            shown = [k.removeprefix("list:").removeprefix("flat:") for k in op.merge_keys]
+            lines.append(Text(f"    keys we own: {', '.join(shown)}", style="dim"))
     if plan.cli_actions:
         lines.append(Text())
         lines.append(Text("then runs:", style="dim"))
@@ -352,6 +445,74 @@ def _format_plan(plan: InstallPlan) -> str:
         (plan.adapter, "bold magenta"),
         (f" · scope {plan.scope}", "dim"),
     )
+    return ui.render(
+        Panel(Group(*lines), title=title, title_align="left", border_style="cyan", expand=False, padding=(1, 2)),
+        soft_wrap=False,
+        min_width=_PANEL_MIN_WIDTH,
+    )
+
+
+def _op_root(path: Path) -> str:
+    """The config root an op writes under, for the welcome panel's one-line
+    disclosure: the path up to its last dot-directory (``~/.claude``,
+    ``~/.oms``, ``<cwd>/.claude`` — last, not first, so a cwd that itself
+    lives under a hidden dir still names the adapter-owned root), falling
+    back to the parent dir."""
+    t = ui.tilde(path)
+    parts = t.split("/")
+    root: str | None = None
+    for i, part in enumerate(parts[:-1]):  # directories only — skip the file
+        if part.startswith(".") and part not in (".", ".."):
+            root = "/".join(parts[: i + 1])
+    return root if root is not None else "/".join(parts[:-1])
+
+
+def _plan_roots(plan: InstallPlan) -> list[str]:
+    """Distinct config roots, with children of another root collapsed into it
+    (a non-dot ``OMS_HOME`` makes ``_op_root`` fall back to parent dirs, which
+    would otherwise list redundant nested paths)."""
+    roots = sorted({_op_root(op.path) for op in plan.ops})
+    return [r for r in roots if not any(r != other and r.startswith(other + "/") for other in roots)]
+
+
+def _format_welcome(plan: InstallPlan) -> str:
+    """The advisory first screen (plans that declare ``commands``): what the
+    user gets and how to call it, one honest line on what setup touches, and
+    the undo. The file-by-file plan, merge keys, and exact CLI argvs stay one
+    `d` keypress away — the first impression explains the tools, not the
+    plumbing (2026-06-09 user direction; see oms.cli.md Decision log)."""
+    pad = max((len(inv) for inv, _ in plan.commands), default=0)
+    n = len(plan.commands)
+    lines: list[RenderableType] = [
+        Text.assemble(
+            "oms will add ",
+            (str(n), "bold"),
+            f" command{'s' if n != 1 else ''} to your ",
+            (plan.adapter, "bold magenta"),
+            " sessions:",
+        ),
+        Text(),
+    ]
+    for inv, blurb in plan.commands:
+        lines.append(Text.assemble("  ", (inv.ljust(pad), "bold cyan"), "   ", blurb))
+    lines.append(Text())
+    lines.append(Text("posts and injections are drafted, shown to you first, and committed only on your accept"))
+    lines.append(Text())
+    clauses: list[str] = []
+    roots = _plan_roots(plan)
+    if roots:
+        clauses.append(f"writes to {', '.join(roots)}")
+    if plan.cli_actions:
+        clauses.append(f"registers the oms backend via the {plan.adapter} CLI")
+    if clauses:
+        lines.append(Text(" · ".join(clauses), style="dim"))
+    lines.append(
+        Text(
+            f"run `oms uninstall {plan.adapter}` to revert changes · press [d] to preview the exact changes",
+            style="dim",
+        )
+    )
+    title = Text.assemble(("oms", "bold"), " · ", (plan.adapter, "bold magenta"), " · first-run setup")
     return ui.render(
         Panel(Group(*lines), title=title, title_align="left", border_style="cyan", expand=False, padding=(1, 2)),
         soft_wrap=False,
@@ -402,6 +563,15 @@ def _render_merge(op: FileOp) -> str | None:
                 payload["__value__"],
             )
             return new_text
+        if "__list_item__" in payload:  # shared-array append (e.g. hooks)
+            new_text, _prev = merge_json_list_item(
+                op.path,
+                payload["__top_key__"],
+                payload["__our_key__"],
+                payload["__list_item__"],
+                purge_contains=payload.get("__list_purge__"),
+            )
+            return new_text
         top_key = payload["__top_key__"]
         our_key = payload["__our_key__"]
         our_value = payload["__value__"]
@@ -415,17 +585,23 @@ def _render_merge(op: FileOp) -> str | None:
     return None
 
 
-def consent_prompt(
+def _declined_marker(adapter: str, oma_home: Path) -> Path:
+    """Sibling of the install manifest: records a first-run "no" so the panel
+    never re-walls the user. ``OMS_INSTALL_SKILLS=prompt`` re-offers; a later
+    yes deletes it (the manifest takes over as the consent record)."""
+    return oma_home / "installed" / f"{adapter}.declined"
+
+
+def _consent_precheck(
     plan: InstallPlan,
     *,
-    input_fn: Callable[[str], str] = input,
-    output_fn: Callable[[str], None] = print,
-    manifest_exists: bool = False,
-) -> bool:
-    """First-run consent gate. ``OMS_INSTALL_SKILLS`` env overrides:
-    ``auto`` ⇒ silent yes; ``deny`` ⇒ silent no; ``prompt`` ⇒ always ask.
-    Default: ask once (no manifest yet), then act like ``auto``."""
-    mode = os.environ.get("OMS_INSTALL_SKILLS", "").strip().lower()
+    mode: str,
+    manifest_exists: bool,
+    marker: Path | None,
+    output_fn: Callable[[str], None],
+) -> bool | None:
+    """The no-prompt fast paths: env override, prior yes (manifest), prior no
+    (declined marker). Returns the verdict, or ``None`` ⇒ ask the user."""
     if mode == "auto":
         return True
     if mode == "deny":
@@ -433,10 +609,86 @@ def consent_prompt(
         return False
     if mode != "prompt" and manifest_exists:
         return True  # silent re-run after first consent
+    if mode != "prompt" and marker is not None and marker.is_file():
+        output_fn(
+            ui.render(
+                Text(
+                    f"oms: {plan.adapter} in-agent skills not installed (declined earlier) — "
+                    "OMS_INSTALL_SKILLS=prompt re-offers",
+                    style="dim",
+                )
+            )
+        )
+        return False
+    return None
+
+
+def _record_decline(
+    marker: Path | None,
+    output_fn: Callable[[str], None],
+    *,
+    adapter: str,
+    manifest_exists: bool,
+    dry_run: bool,
+) -> None:
+    """Report (and, on a real first run, persist) a "no". Declining a re-offer
+    while installed is not an uninstall — no marker, point at the real verb.
+    Dry runs report without persisting (the no-disk-writes contract)."""
+    if manifest_exists:
+        output_fn(
+            ui.render(
+                Text(
+                    f"oms: install declined (already installed — `oms uninstall {adapter}` removes it)", style="yellow"
+                )
+            )
+        )
+        return
+    if marker is not None and not dry_run:
+        _atomic_write(marker, datetime.now().astimezone().isoformat() + "\n")
+        output_fn(
+            ui.render(
+                Text(
+                    "oms: install declined — won't ask again (OMS_INSTALL_SKILLS=prompt re-offers)",
+                    style="yellow",
+                )
+            )
+        )
+        return
+    output_fn(ui.render(Text("oms: install declined", style="yellow")))
+
+
+def consent_prompt(
+    plan: InstallPlan,
+    *,
+    input_fn: Callable[[str], str] = input,
+    output_fn: Callable[[str], None] = print,
+    manifest_exists: bool = False,
+    oma_home: Path | None = None,
+    dry_run: bool = False,
+) -> bool:
+    """First-run consent gate. ``OMS_INSTALL_SKILLS`` env overrides:
+    ``auto`` ⇒ silent yes; ``deny`` ⇒ silent no; ``prompt`` ⇒ always ask
+    (unknown values are warned about and treated as ``prompt``).
+    Default: ask once — a yes is remembered via the manifest, a no via the
+    declined marker (when ``oma_home`` is given), so the panel is a genuine
+    first-run-only surface either way. Any affirmative outcome supersedes an
+    old decline (the marker is cleared); ``dry_run`` consent never touches
+    the marker (the no-disk-writes contract). Plans that declare ``commands``
+    lead with the advisory welcome panel and demote the file-by-file plan +
+    diff to the [d]etails keypress."""
+    mode = os.environ.get("OMS_INSTALL_SKILLS", "").strip().lower()
     if mode and mode not in _PROMPT_MODES:
         output_fn(f"oms: unknown OMS_INSTALL_SKILLS={mode!r}; treating as 'prompt'")
+        mode = "prompt"
+    marker = _declined_marker(plan.adapter, oma_home) if oma_home is not None else None
+    verdict = _consent_precheck(plan, mode=mode, manifest_exists=manifest_exists, marker=marker, output_fn=output_fn)
+    if verdict is not None:
+        if verdict and marker is not None and not dry_run:
+            marker.unlink(missing_ok=True)  # auto/manifest yes supersedes an old decline
+        return verdict
 
-    output_fn(_format_plan(plan))
+    advisory = bool(plan.commands)
+    output_fn(_format_welcome(plan) if advisory else _format_plan(plan))
     # Enter still declines (consent stays opt-in); the capital N says so.
     prompt = (
         ui.render(
@@ -448,7 +700,7 @@ def consent_prompt(
                 ("N", "bold red"),
                 "]o / [",
                 ("d", "bold cyan"),
-                "]iff:",
+                "]etails:" if advisory else "]iff:",
             )
         )
         + " "
@@ -456,11 +708,18 @@ def consent_prompt(
     while True:
         ans = input_fn(prompt).strip().lower()
         if ans in ("y", "yes"):
+            if marker is not None and not dry_run:
+                marker.unlink(missing_ok=True)
             return True
         if ans in ("n", "no", ""):
-            output_fn(ui.render(Text("oms: install declined", style="yellow")))
+            _record_decline(marker, output_fn, adapter=plan.adapter, manifest_exists=manifest_exists, dry_run=dry_run)
             return False
-        if ans in ("d", "diff"):
+        if ans in ("d", "diff", "details"):
+            # Advisory plans reveal the full implementation here: the
+            # file-by-file panel (paths, keys, CLI argvs) THEN the diff —
+            # one keypress covers everything the old first screen showed.
+            if advisory:
+                output_fn(_format_plan(plan))
             output_fn(ui.render(ui.style_diff(_diff_plan(plan))))
             continue
         output_fn("(unrecognized — type y, n, or d)")
@@ -494,8 +753,41 @@ def save_manifest(manifest: Manifest, oma_home: Path) -> None:
 
 def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> Manifest:
     """Execute the plan. Returns the manifest of what was (or would be)
-    written. ``dry_run=True`` skips disk writes and skips the manifest save."""
+    written. ``dry_run=True`` skips disk writes and skips the manifest save.
+
+    Not transactional — but a mid-apply failure (e.g. a user-shaped
+    ``settings.json`` a merge can't parse) saves a **partial manifest** of
+    everything already written before re-raising, so ``oms uninstall`` can
+    reverse the stranded files and a re-run after the user fixes the file is
+    silent (the manifest exists)."""
     entries: list[ManifestEntry] = []
+    cli_entries: list[ManifestCLIEntry] = []
+    try:
+        _apply_ops(plan, entries=entries, cli_entries=cli_entries, dry_run=dry_run)
+    except Exception:
+        if not dry_run and entries:
+            save_manifest(_manifest_of(plan, entries, cli_entries), oma_home)
+        raise
+    manifest = _manifest_of(plan, entries, cli_entries)
+    if not dry_run:
+        save_manifest(manifest, oma_home)
+    return manifest
+
+
+def _manifest_of(plan: InstallPlan, entries: list[ManifestEntry], cli_entries: list[ManifestCLIEntry]) -> Manifest:
+    return Manifest(
+        adapter=plan.adapter,
+        scope=plan.scope,
+        installed_at=datetime.now().astimezone().isoformat(),
+        session_id=plan.session_id,
+        entries=entries,
+        cli_entries=cli_entries,
+    )
+
+
+def _apply_ops(
+    plan: InstallPlan, *, entries: list[ManifestEntry], cli_entries: list[ManifestCLIEntry], dry_run: bool
+) -> None:
     for op in plan.ops:
         if op.kind == "create":
             content = op.payload if isinstance(op.payload, str) else json.dumps(op.payload, indent=2) + "\n"
@@ -522,11 +814,12 @@ def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> M
                     path=str(op.path),
                     description=op.description,
                     merge_keys=list(op.merge_keys),
+                    merge_items=[op.payload["__list_item__"]] if "__list_item__" in op.payload else [],
+                    purge_contains=op.payload.get("__list_purge__"),
                     sha256_before=_sha256(prev) if prev else None,
                     sha256_after=_sha256(new_text),
                 )
             )
-    cli_entries: list[ManifestCLIEntry] = []
     for action in plan.cli_actions:
         argv = list(action.install_argv)
         bin_path = shutil.which(argv[0]) if argv else None
@@ -541,7 +834,12 @@ def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> M
             )
             continue
         if not dry_run:
-            _run_cli(argv, description=action.description, stdin_input=action.stdin_input)
+            _run_cli(
+                argv,
+                description=action.description,
+                stdin_input=action.stdin_input,
+                failure_ok=action.failure_ok,
+            )
         cli_entries.append(
             ManifestCLIEntry(
                 install_argv=argv,
@@ -551,26 +849,15 @@ def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> M
             )
         )
 
-    manifest = Manifest(
-        adapter=plan.adapter,
-        scope=plan.scope,
-        installed_at=datetime.now().astimezone().isoformat(),
-        session_id=plan.session_id,
-        entries=entries,
-        cli_entries=cli_entries,
-    )
-    if not dry_run:
-        save_manifest(manifest, oma_home)
-    return manifest
 
-
-def _run_cli(argv: list[str], *, description: str, stdin_input: str | None = None) -> None:
+def _run_cli(argv: list[str], *, description: str, stdin_input: str | None = None, failure_ok: bool = False) -> None:
     """Run an external command, swallowing benign nonzero exits (e.g. "remove
     a server that isn't there") with a printed note rather than raising.
     Generous 120s timeout since some agent CLIs (``gemini extensions install``)
     do non-trivial setup; surface stderr on failure so the user can diagnose.
     ``stdin_input`` is piped to the child for CLIs whose only non-interactive
-    escape is answering a prompt."""
+    escape is answering a prompt. ``failure_ok`` suppresses the exit note for
+    pre-clear actions whose nonzero exit is the expected fresh-install case."""
     import subprocess
 
     try:
@@ -585,7 +872,7 @@ def _run_cli(argv: list[str], *, description: str, stdin_input: str | None = Non
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"oms: {description} — command failed ({type(exc).__name__}: {exc})")
         return
-    if proc.returncode != 0:
+    if proc.returncode != 0 and not failure_ok:
         # Print stderr (truncated) so the user can act on the real cause —
         # silent nonzero exits hide real bugs (the M11.3 `--consent` lesson).
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()
@@ -602,7 +889,7 @@ def _verb_line(verb: str, style: str, subject: str, note: str | None = None) -> 
     return ui.render(t)
 
 
-def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files, merge files: flat or nested) in sequence; refactoring would just shuffle the same complexity
+def uninstall(  # noqa: C901 — four reversal paths (CLI actions, create files, merge files: flat, list, or nested) in sequence; refactoring would just shuffle the same complexity
     adapter: str,
     oma_home: Path,
     *,
@@ -648,11 +935,43 @@ def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files
         else:  # merge
             if path.suffix == ".json":
                 # Flat-key merges (e.g. ~/.gemini/trustedFolders.json) are tagged
-                # ``flat:<abs-path>`` in merge_keys; 2-level merges encode as
-                # ``<top_key>.<our_key>``. Dispatch on the prefix.
+                # ``flat:<abs-path>`` in merge_keys; shared-array merges (e.g.
+                # Claude Code hooks) as ``list:<top_key>.<our_key>`` with the
+                # appended items recorded in ``merge_items``; 2-level merges
+                # encode as ``<top_key>.<our_key>``. Dispatch on the prefix.
                 flat_keys = [k.removeprefix("flat:") for k in entry.merge_keys if k.startswith("flat:")]
-                nested = [k for k in entry.merge_keys if not k.startswith("flat:")]
-                if flat_keys:
+                list_keys = [k.removeprefix("list:") for k in entry.merge_keys if k.startswith("list:")]
+                nested = [k for k in entry.merge_keys if not k.startswith(("flat:", "list:"))]
+                if list_keys:
+                    for lk in list_keys:
+                        top_key, _, our_key = lk.partition(".")
+                        prev_text = _read_text(path)
+                        new_text = unmerge_json_list_items(
+                            path, top_key, our_key, entry.merge_items, purge_contains=entry.purge_contains
+                        )
+                        if new_text is None:
+                            path.unlink()
+                            output_fn(
+                                _verb_line(
+                                    "REMOVED", "bold green", str(path), "became empty after removing our entries"
+                                )
+                            )
+                            break
+                        if new_text == prev_text:
+                            # Nothing matched — the entry was edited beyond even
+                            # the staleness marker. Say so; don't claim success.
+                            output_fn(
+                                _verb_line(
+                                    "KEPT",
+                                    "bold yellow",
+                                    str(path),
+                                    f"no entries under {lk} matched what we installed — remove manually",
+                                )
+                            )
+                            continue
+                        _atomic_write(path, new_text)
+                        output_fn(_verb_line("UNMERGED", "bold green", str(path), f"removed our entries under {lk}"))
+                elif flat_keys:
                     new_text = unmerge_json_flat_keys(path, flat_keys)
                     if new_text is None:
                         path.unlink()
@@ -679,8 +998,10 @@ def uninstall(  # noqa: C901 — three reversal paths (CLI actions, create files
                         break
                     _atomic_write(path, new_text)
                 output_fn(_verb_line("UNMERGED", "bold green", str(path), f"removed {entry.merge_keys}"))
-    # Remove the manifest itself.
+    # Remove the manifest itself, plus any stale declined marker — after an
+    # uninstall the next `oms <adapter>` is a genuine first run again.
     _manifest_path(adapter, oma_home).unlink(missing_ok=True)
+    _declined_marker(adapter, oma_home).unlink(missing_ok=True)
     # Best-effort: prune empty install-root subdirs (`~/.claude/skills/oms-*`).
     for entry in manifest.entries:
         parent = Path(entry.path).parent

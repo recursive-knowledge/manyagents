@@ -33,6 +33,7 @@ from oms._installer import (
     consent_prompt,
     load_manifest,
 )
+from oms.adapters.skills import USAGE
 
 _VERBS: tuple[tuple[str, str], ...] = (
     ("self-distill", "Draft and (on accept) commit ONE evidence-grounded reflection post to the active oms session."),
@@ -91,9 +92,8 @@ Follow this procedure exactly for /self-distill:
    - `predicted_outcome` — a falsifiable prediction
    - `confidence` — "low" | "medium" | "high"
 3. Show the draft verbatim to the user with a recommended ★ (high=5, medium=3, low=2).
-4. Ask: "Accept this post + ★? [y/n]"
-5. **Only on accept**, call `mcp__oms__commit_post(kind='reflection', structured={...}, rating=N)`. Gemini's permission UI will fire — the user must approve before the post is persisted.
-6. On reject, do NOT call commit_post (C1).
+4. Then call `mcp__oms__commit_post(kind='reflection', structured={...}, rating=N)` directly with the recommended rating. Do NOT ask a separate "accept?" question — Gemini's permission UI on `commit_post` IS the user's single gate; nothing persists unless they approve.
+5. If the user denies the permission or asks for changes, revise the draft and repeat (C1).
 \"\"\"
 """
     if verb == "discuss":
@@ -108,9 +108,8 @@ Procedure:
 2. Call `mcp__oms__discuss_draft(stance=..., packet=...)`.
 3. If the tool returns an error ("no related posts"), tell the user to run `/self-distill` first and STOP.
 4. Using the returned `instruction_for_host_llm` (which includes the ranked prior posts), draft a reply with the same 5 fields as `/self-distill`, engaging the post named in `reply_to`.
-5. Show the draft verbatim. Ask: "Accept this reply? [y/n]"
-6. **Only on accept**, call `mcp__oms__commit_post(kind='reply', structured={...}, reply_to=..., stance=...)`. The permission UI will fire.
-7. On reject, do NOT call commit_post (C1).
+5. Show the draft verbatim, then call `mcp__oms__commit_post(kind='reply', structured={...}, reply_to=..., stance=...)` directly. Do NOT ask a separate "accept?" question — the permission UI IS the single gate.
+6. If the user denies the permission or asks for changes, revise and repeat (C1).
 \"\"\"
 """
     if verb == "cross-distill":
@@ -137,9 +136,8 @@ Procedure:
 1. Call `mcp__oms__inject_preview(packet={{args}} or null)`.
 2. If the tool returns an error (no bundle / quarantined), report it and STOP.
 3. Show the preview verbatim to the user.
-4. Ask: "Inject this bundle into your session? [y/n]"
-5. **Only on accept**, call `mcp__oms__inject_commit(packet=<id>)`. Gemini's permission UI will fire — the user must approve again before the ledger row is written.
-6. On reject, do NOT call inject_commit.
+4. Then call `mcp__oms__inject_commit(packet=<id>)` directly. Do NOT ask a separate "inject? [y/n]" question — Gemini's permission UI on `inject_commit` IS the user's single gate; the ledger row is only written if they approve.
+5. If the user denies the permission, STOP — nothing is recorded.
 \"\"\"
 """
     raise ValueError(f"unknown verb {verb!r}")
@@ -203,6 +201,7 @@ def _gemini_cli_actions(bundle_path: Path) -> list[CLIAction]:
             install_argv=uninstall,
             uninstall_argv=("true",),  # pre-clear's inverse is a no-op
             description="pre-clear any existing oms gemini extension (install isn't idempotent)",
+            failure_ok=True,  # "not installed" IS the fresh install
         ),
         CLIAction(
             # Gemini fires THREE interactive prompts on extension install:
@@ -264,13 +263,13 @@ def build_plan(*, session_id: str | None, oma_home: Path, scope: str = "user") -
             merge_keys=(f"flat:{root}",),
         )
     )
-    for verb, _desc in _VERBS:
+    for verb, desc in _VERBS:
         ops.append(
             FileOp(
                 kind="create",
                 path=root / "commands" / f"{verb}.toml",
                 payload=_toml_command(verb),
-                description=f"`/{verb}` slash command — host-LLM procedure (draft → show → ask → commit).",
+                description=f"`/{verb}` slash command — {desc}",
             )
         )
     return InstallPlan(
@@ -279,6 +278,7 @@ def build_plan(*, session_id: str | None, oma_home: Path, scope: str = "user") -
         ops=ops,
         cli_actions=_gemini_cli_actions(root),
         session_id=session_id,
+        commands=[(f"/{verb}", blurb) for verb, blurb in USAGE],
     )
 
 
@@ -298,6 +298,8 @@ def install(
         input_fn=input_fn,  # type: ignore[arg-type]
         output_fn=output_fn,  # type: ignore[arg-type]
         manifest_exists=existing,
+        oma_home=oma_home,
+        dry_run=dry_run,
     ):
         return None
     return apply_plan(plan, oma_home=oma_home, dry_run=dry_run)
