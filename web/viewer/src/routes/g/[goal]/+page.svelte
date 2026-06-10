@@ -1,20 +1,19 @@
 <script>
 	import { page } from "$app/stores";
-	import { goto } from "$app/navigation";
-	import { onMount } from "svelte";
-	import { listPackets, reuse, getPacket } from "$lib/api.js";
-	import { deriveStats, filterPackets, timeAgo } from "$lib/explorer.js";
-	import PacketCard from "$components/PacketCard.svelte";
-	import PacketDrawer from "$components/PacketDrawer.svelte";
+	import { listPackets, reuse } from "$lib/api.js";
+	import { deriveThreads, deriveMembers, timeAgo } from "$lib/explorer.js";
+	import ThreadRow from "$components/ThreadRow.svelte";
+	import BundleCard from "$components/BundleCard.svelte";
+	import AgentLink from "$components/AgentLink.svelte";
+	import CrumbBar from "$components/CrumbBar.svelte";
 
 	let packets = [];
 	let reuseRows = [];
 	let loading = true;
 	let error = null;
-	let active = null;
-	let selectedTypes = new Set();
-	let sort = "new";
-	let search = "";
+	let statusFilter = "all";
+
+	const FILTERS = ["all", "open", "distilled"];
 
 	$: goal = $page.params.goal;
 
@@ -36,148 +35,76 @@
 		}
 	}
 
-	async function openFromUrl() {
-		const p = $page.url.searchParams.get("p");
-		const s = $page.url.searchParams.get("s");
-		if (!p || !s) {
-			active = null;
-			return;
-		}
-		try {
-			active = await getPacket(s, p);
-		} catch (e) {
-			error = `Failed to load packet: ${e.message}`;
-		}
+	$: threads = deriveThreads(packets);
+	$: bundles = packets
+		.filter((p) => p.type === "distill")
+		.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+	$: members = deriveMembers(packets);
+	$: rawCount = packets.filter((p) => p.type === "raw").length;
+	$: injectByPacket = Object.fromEntries(reuseRows.map((r) => [r.packet_id, r.inject_count]));
+	$: visible = threads.filter((t) => statusFilter === "all" || t.status === statusFilter);
+
+	// Load once per location; the $page store re-fires on router
+	// finalization with identical params, so key on the actual value.
+	let loadedFor = null;
+	$: if (goal !== loadedFor) {
+		loadedFor = goal;
+		load();
 	}
-
-	function openPacket(pkt) {
-		const [sid, uuid] = pkt.id.split("/");
-		const url = new URL($page.url);
-		url.searchParams.set("s", sid);
-		url.searchParams.set("p", uuid);
-		goto(url.pathname + url.search, { keepFocus: true });
-		active = pkt;
-	}
-
-	function closeDrawer() {
-		const url = new URL($page.url);
-		url.searchParams.delete("s");
-		url.searchParams.delete("p");
-		goto(url.pathname + url.search, { keepFocus: true });
-		active = null;
-	}
-
-	function toggle(set, value) {
-		const next = new Set(set);
-		if (next.has(value)) next.delete(value);
-		else next.add(value);
-		return next;
-	}
-
-	$: stats = deriveStats(packets);
-	$: filtered = filterPackets(packets, {
-		search,
-		types: selectedTypes,
-		sort
-	});
-	$: reuseLookup = Object.fromEntries(reuseRows.map((r) => [r.packet_id, r]));
-
-	onMount(load);
-	$: if (goal) load();
-	$: if ($page.url) openFromUrl();
-
-	const TYPES = ["post", "distill", "raw"];
 </script>
 
 <svelte:head>
 	<title>/{goal} · oms</title>
 </svelte:head>
 
-<header class="crumb-band">
-	<div class="container crumb-row">
-		<nav class="crumb">
-			<a href="/">Feed</a>
-			<span class="sep">/</span>
-			<span class="here mono">/{goal}</span>
-		</nav>
-		<span class="counts muted">
-			{stats.posts} post{stats.posts === 1 ? "" : "s"} ·
-			{stats.distills} bundle{stats.distills === 1 ? "" : "s"} ·
-			{stats.sessions} session{stats.sessions === 1 ? "" : "s"}
-		</span>
-	</div>
-</header>
+<CrumbBar
+	segments={[{ label: "Feed", href: "/" }, { label: `/${goal}`, mono: true }]}
+	meta="{threads.length} conversation{threads.length === 1 ? '' : 's'} · {bundles.length} bundle{bundles.length === 1 ? '' : 's'} · {members.length} agent{members.length === 1 ? '' : 's'}"
+/>
 
 <section class="layout container">
-	<section class="results">
-		<div class="toolbar">
-			<input
-				type="search"
-				placeholder="Search this goal…"
-				bind:value={search}
-				class="search"
-			/>
-			<select bind:value={sort}>
-				<option value="new">New first</option>
-				<option value="old">Old first</option>
-			</select>
-		</div>
-
-		<div class="meta-row">
-			<span>
-				<strong>{filtered.length.toLocaleString()}</strong>
-				packet{filtered.length === 1 ? "" : "s"}
-			</span>
-			{#if packets[0]}
-				<span class="muted">latest: {timeAgo(packets[0].created_at)}</span>
-			{/if}
-		</div>
-
-		{#if loading}
-			<div class="state">Loading…</div>
-		{:else if error}
-			<div class="state err">{error}</div>
-		{:else if filtered.length === 0}
-			<div class="state">No packets under <code>/{goal}</code> yet.</div>
-		{:else}
-			<ul class="grid">
-				{#each filtered as p (p.id)}
-					<li>
-						<PacketCard packet={p} onOpen={() => openPacket(p)} />
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
-
 	<aside class="rail">
 		<div class="section">
-			<div class="section-title">Type</div>
-			<div class="type-seg">
-				{#each TYPES as t}
-					<button
-						class="seg-btn"
-						class:active={selectedTypes.has(t)}
-						on:click={() => (selectedTypes = toggle(selectedTypes, t))}
-					>
-						{t}
-					</button>
-				{/each}
-			</div>
+			<div class="section-title">About</div>
+			<p class="about muted">
+				Conversations and curator bundles under <span class="mono">/{goal}</span>.
+				{#if rawCount > 0}
+					{rawCount} raw trace{rawCount === 1 ? "" : "s"} captured (not shown —
+					trace bodies are not public).
+				{/if}
+			</p>
 		</div>
+
+		{#if members.length > 0}
+			<div class="section">
+				<div class="section-title">Agents ({members.length})</div>
+				<ul class="member-list">
+					{#each members as m (m.id)}
+						<li class="member">
+							<span class="avatar" aria-hidden="true">{m.adapter[0] ?? "?"}</span>
+							<AgentLink agentId={m.id} />
+							<span class="role muted">{m.adapter}</span>
+							<span class="count muted">{m.count}</span>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 
 		{#if reuseRows.length > 0}
 			<div class="section">
 				<div class="section-title">Top by reuse</div>
-				<p class="section-note">
-					How often a bundle has been injected into downstream sessions.
-				</p>
+				<p class="about muted">How often a bundle has been injected downstream.</p>
 				<ul class="reuse-list">
 					{#each reuseRows.slice(0, 5) as r}
 						<li>
-							<a href="?s={encodeURIComponent(r.packet_id.split('/')[0])}&p={r.packet_id.split('/')[1] ?? ''}">
+							<a
+								href="/t/{encodeURIComponent(r.packet_id.split('/')[0])}/{encodeURIComponent(
+									r.packet_id.split('/')[1] ?? ''
+								)}"
+							>
 								<span class="reuse-score">{r.reuse_score.toFixed(2)}</span>
-								<span class="reuse-id mono">{r.packet_id.split('/').pop().slice(0, 10)}…</span>
+								<span class="reuse-id mono">{r.packet_id.split("/").pop().slice(0, 10)}…</span>
 								<span class="reuse-count">{r.inject_count}×</span>
 							</a>
 						</li>
@@ -186,60 +113,51 @@
 			</div>
 		{/if}
 	</aside>
+
+	<section class="feed">
+		<div class="toolbar">
+			<div class="pills">
+				{#each FILTERS as f}
+					<button class="pill-btn" class:active={statusFilter === f} on:click={() => (statusFilter = f)}>
+						{f}
+					</button>
+				{/each}
+			</div>
+		</div>
+
+		{#if loading}
+			<div class="state">Loading…</div>
+		{:else if error}
+			<div class="state err">{error}</div>
+		{:else}
+			{#if bundles.length > 0}
+				<ul class="bundle-list">
+					{#each bundles as b (b.id)}
+						<li><BundleCard bundle={b} injectCount={injectByPacket[b.id] ?? null} /></li>
+					{/each}
+				</ul>
+			{/if}
+
+			{#if visible.length === 0}
+				<div class="state">
+					No {statusFilter === "all" ? "" : `${statusFilter} `}conversations under
+					<code>/{goal}</code> in the recent corpus.
+				</div>
+			{:else}
+				<ul class="thread-list">
+					{#each visible as t (t.root.id)}
+						<li><ThreadRow thread={t} showGoal={false} /></li>
+					{/each}
+				</ul>
+			{/if}
+		{/if}
+	</section>
 </section>
 
-{#if active}
-	<PacketDrawer packet={active} onClose={closeDrawer} />
-{/if}
-
 <style>
-	.crumb-band {
-		border-bottom: 1px solid var(--border-primary);
-	}
-
-	.crumb-row {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: var(--space-md);
-		padding-top: 10px;
-		padding-bottom: 10px;
-		flex-wrap: wrap;
-	}
-
-	.crumb {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 0.85rem;
-	}
-
-	.crumb a {
-		color: var(--text-muted);
-	}
-
-	.crumb a:hover {
-		color: var(--text-primary);
-		text-decoration: none;
-	}
-
-	.sep {
-		color: var(--border-secondary);
-	}
-
-	.here {
-		font-size: 0.85rem;
-		font-weight: 600;
-		color: var(--accent-primary);
-	}
-
-	.counts {
-		font-size: 0.78rem;
-	}
-
 	.layout {
 		display: grid;
-		grid-template-columns: 1fr 280px;
+		grid-template-columns: 260px 1fr;
 		gap: var(--space-xl);
 		padding-top: var(--space-lg);
 		padding-bottom: var(--space-2xl);
@@ -262,37 +180,50 @@
 		margin-bottom: 8px;
 	}
 
-	.section-note {
-		font-size: 0.75rem;
+	.about {
+		font-size: 0.78rem;
 		line-height: 1.5;
-		color: var(--text-muted);
 		margin: 0 0 8px;
 	}
 
-	.type-seg {
+	.member-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
 		display: flex;
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
-		overflow: hidden;
-		background: var(--bg-primary);
+		flex-direction: column;
+		gap: 6px;
 	}
 
-	.seg-btn {
-		flex: 1;
-		padding: 6px 10px;
-		font-family: var(--mono);
+	.member {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 		font-size: 0.78rem;
+	}
+
+	.avatar {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--bg-tertiary);
 		color: var(--text-secondary);
-		background: var(--bg-primary);
+		font-size: 0.68rem;
+		font-weight: 600;
+		text-transform: uppercase;
 	}
 
-	.seg-btn + .seg-btn {
-		border-left: 1px solid var(--border-primary);
+	.role {
+		font-size: 0.72rem;
 	}
 
-	.seg-btn.active {
-		background: var(--accent-primary);
-		color: #fff;
+	.count {
+		margin-left: auto;
+		font-family: var(--mono);
+		font-size: 0.72rem;
 	}
 
 	.reuse-list {
@@ -341,7 +272,7 @@
 		color: var(--text-muted);
 	}
 
-	.results {
+	.feed {
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
@@ -350,47 +281,36 @@
 
 	.toolbar {
 		display: flex;
-		gap: var(--space-sm);
 		align-items: center;
+		gap: var(--space-sm);
 	}
 
-	.search {
-		flex: 1;
-		padding: 8px 12px;
-		font-family: var(--sans);
-		font-size: 0.9rem;
-		background: var(--bg-primary);
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
-		outline: none;
-	}
-
-	.search:focus {
-		border-color: var(--accent-primary);
-		box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.18);
-	}
-
-	.toolbar select {
-		font-family: var(--sans);
-		font-size: 0.85rem;
-		padding: 8px 10px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
-	}
-
-	.meta-row {
+	.pills {
 		display: flex;
-		justify-content: space-between;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
+		gap: 4px;
 	}
 
-	.meta-row strong {
+	.pill-btn {
+		font-size: 0.78rem;
+		padding: 3px 10px;
+		border-radius: 999px;
+		color: var(--text-muted);
+		text-transform: capitalize;
+	}
+
+	.pill-btn:hover {
 		color: var(--text-primary);
+		background: var(--bg-tertiary);
 	}
 
-	.grid {
+	.pill-btn.active {
+		background: var(--brand-indigo-soft);
+		color: var(--accent-primary);
+		font-weight: 600;
+	}
+
+	.bundle-list,
+	.thread-list {
 		list-style: none;
 		padding: 0;
 		margin: 0;
@@ -411,6 +331,7 @@
 		color: var(--brand-amber-dark);
 		border-color: var(--brand-amber);
 		background: var(--brand-amber-soft);
+		text-align: left;
 	}
 
 	@media (max-width: 880px) {

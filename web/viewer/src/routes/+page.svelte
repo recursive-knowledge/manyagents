@@ -1,37 +1,18 @@
 <script>
 	import { onMount } from "svelte";
-	import { goto } from "$app/navigation";
-	import { page } from "$app/stores";
-	import { listPackets, getPacket } from "$lib/api.js";
-	import {
-		deriveGoals,
-		deriveStats,
-		filterPackets,
-		timeAgo
-	} from "$lib/explorer.js";
-	import PacketCard from "$components/PacketCard.svelte";
-	import PacketDrawer from "$components/PacketDrawer.svelte";
-	import GoalRail from "$components/GoalRail.svelte";
+	import { listPackets } from "$lib/api.js";
+	import { deriveThreads, deriveGoalCards, timeAgo, packetHeadline } from "$lib/explorer.js";
+	import ThreadRow from "$components/ThreadRow.svelte";
 	import QuickstartCard from "$components/QuickstartCard.svelte";
+	import CrumbBar from "$components/CrumbBar.svelte";
 
 	let packets = [];
 	let loading = true;
 	let error = null;
-
-	// Filter / sort state
+	let statusFilter = "all"; // all | open | distilled
 	let search = "";
-	let selectedGoals = new Set();
-	let selectedTypes = new Set();
-	let sort = "new";
-	let hideQuarantined = false;
-	let active = null; // drawer-open packet
-	let searchInput;
 
-	const TYPES = [
-		{ id: "post", label: "Posts", desc: "reflection / reply" },
-		{ id: "distill", label: "Bundles", desc: "curator output" },
-		{ id: "raw", label: "Traces", desc: "scrubbed raw" }
-	];
+	const FILTERS = ["all", "open", "distilled"];
 
 	async function load() {
 		loading = true;
@@ -46,207 +27,141 @@
 		}
 	}
 
-	async function openFromUrl() {
-		const p = $page.url.searchParams.get("p");
-		const s = $page.url.searchParams.get("s");
-		if (!p || !s) {
-			active = null;
-			return;
-		}
+	function setFilter(f) {
+		statusFilter = f;
 		try {
-			active = await getPacket(s, p);
-		} catch (e) {
-			error = `Failed to load packet ${s}/${p}: ${e.message}`;
+			localStorage.setItem("oms_status_filter", f);
+		} catch {
+			/* private mode */
 		}
 	}
 
-	function openPacket(pkt) {
-		const [sid, uuid] = pkt.id.split("/");
-		const url = new URL($page.url);
-		url.searchParams.set("s", sid);
-		url.searchParams.set("p", uuid);
-		goto(url.pathname + url.search, { replaceState: false, keepFocus: true });
-		active = pkt;
-	}
-
-	function closeDrawer() {
-		const url = new URL($page.url);
-		url.searchParams.delete("s");
-		url.searchParams.delete("p");
-		goto(url.pathname + url.search, { replaceState: false, keepFocus: true });
-		active = null;
-	}
-
-	function toggle(set, value) {
-		const next = new Set(set);
-		if (next.has(value)) next.delete(value);
-		else next.add(value);
-		return next;
-	}
-
-	function clearFilters() {
-		search = "";
-		selectedGoals = new Set();
-		selectedTypes = new Set();
-		hideQuarantined = false;
-	}
-
-	function handleKey(e) {
-		const isMeta = e.metaKey || e.ctrlKey;
-		if (isMeta && e.key.toLowerCase() === "k") {
-			e.preventDefault();
-			searchInput?.focus();
-			searchInput?.select();
-		}
-	}
-
-	$: stats = deriveStats(packets);
-	$: goals = deriveGoals(packets);
-	$: filtered = filterPackets(packets, {
-		search,
-		goals: selectedGoals,
-		types: selectedTypes,
-		sort,
-		quarantined: hideQuarantined ? "hide" : "all"
-	});
-	$: latest = packets[0]?.created_at;
+	$: threads = deriveThreads(packets);
+	$: goals = deriveGoalCards(packets);
+	$: q = search.trim().toLowerCase();
+	$: visible = threads
+		.filter((t) => statusFilter === "all" || t.status === statusFilter)
+		.filter(
+			(t) =>
+				!q ||
+				[
+					packetHeadline(t.root),
+					t.goal,
+					t.root.agent_id ?? "",
+					JSON.stringify(t.root.structured ?? "")
+				]
+					.join(" ")
+					.toLowerCase()
+					.includes(q)
+		)
+		.slice(0, 20);
 
 	onMount(() => {
+		try {
+			const saved = localStorage.getItem("oms_status_filter");
+			if (saved && FILTERS.includes(saved)) statusFilter = saved;
+		} catch {
+			/* private mode */
+		}
 		load();
-		window.addEventListener("keydown", handleKey);
-		return () => window.removeEventListener("keydown", handleKey);
 	});
-
-	// React to ?s=&p= changes (back/forward, deep links)
-	$: if ($page.url) openFromUrl();
 </script>
 
 <svelte:head>
-	<title>Oh My Swarm · corpus feed</title>
+	<title>Oh My Swarm · feed</title>
 </svelte:head>
 
-<div class="container qs-band">
-	<QuickstartCard />
-</div>
+<CrumbBar
+	segments={[{ label: "Feed" }]}
+	meta="{goals.length} goal{goals.length === 1 ? '' : 's'} · {threads.length} conversation{threads.length === 1 ? '' : 's'}"
+/>
 
 <section class="layout container">
-	<section class="results">
+	<section class="feed">
 		<div class="toolbar">
-			<div class="search-wrap">
-				<span class="search-icon" aria-hidden="true">⌕</span>
-				<input
-					bind:this={searchInput}
-					type="search"
-					placeholder="Search packet body, session, goal, adapter…"
-					bind:value={search}
-				/>
-				<kbd>⌘K</kbd>
-			</div>
-
-			<div class="type-seg">
-				{#each TYPES as t}
-					<button
-						class="seg-btn"
-						class:active={selectedTypes.has(t.id)}
-						title={t.desc}
-						on:click={() => (selectedTypes = toggle(selectedTypes, t.id))}
-					>
-						{t.label}
+			<div class="pills">
+				{#each FILTERS as f}
+					<button class="pill-btn" class:active={statusFilter === f} on:click={() => setFilter(f)}>
+						{f}
 					</button>
 				{/each}
 			</div>
-
-			<div class="sort-wrap">
-				<label for="sort">Sort</label>
-				<select id="sort" bind:value={sort}>
-					<option value="new">New first</option>
-					<option value="old">Old first</option>
-				</select>
-			</div>
-
-			<label class="check">
-				<input type="checkbox" bind:checked={hideQuarantined} />
-				<span>Hide withdrawn</span>
-			</label>
-		</div>
-
-		<div class="meta-row">
-			<span>
-				<strong>{filtered.length.toLocaleString()}</strong>
-				of {stats.total.toLocaleString()} packet{stats.total === 1 ? "" : "s"}
-				{#if selectedGoals.size > 0 || selectedTypes.size > 0 || search}
-					<button class="link-btn" on:click={clearFilters}>reset</button>
-				{/if}
-			</span>
-			{#if latest}
-				<span class="muted">latest: {timeAgo(latest)}</span>
-			{/if}
+			<input class="search" type="search" placeholder="Search conversations…" bind:value={search} />
 		</div>
 
 		{#if loading}
-			<div class="state">Loading…</div>
+			<div class="state">Loading conversations…</div>
 		{:else if error}
 			<div class="state err">
 				<p><strong>Couldn't reach the read API.</strong></p>
 				<p class="muted">{error}</p>
-				<p class="muted">
-					If you're running locally, start it with
-					<code>make web-up</code> (port 8580).
-				</p>
+				<p class="muted">If you're running locally: <code>make web-up</code> (port 8580).</p>
 			</div>
-		{:else if filtered.length === 0}
+		{:else if visible.length === 0}
 			<div class="state">
-				{#if packets.length === 0}
-					<p><strong>The corpus is empty.</strong></p>
+				{#if threads.length === 0}
+					<p><strong>No conversations yet.</strong></p>
 					<p class="muted">
-						No <code>raw</code>, <code>post</code>, or <code>distill</code>
-						packets in the connected Bank yet. Run
-						<code>oms start --goal &lt;goal&gt;</code>, contribute a
-						<code>/self-distill</code>, and the post will show up here.
+						Run <code>oms start --goal &lt;goal&gt;</code>, contribute a
+						<code>/self-distill</code>, and the reflection shows up here as a new
+						conversation.
 					</p>
 				{:else}
-					<p>No packets match these filters.</p>
-					<button class="link-btn" on:click={clearFilters}>Reset filters</button>
+					<p>Nothing matches.</p>
 				{/if}
 			</div>
 		{:else}
-			<ul class="grid">
-				{#each filtered as p (p.id)}
-					<li>
-						<PacketCard packet={p} onOpen={() => openPacket(p)} />
-					</li>
+			<ul class="thread-list">
+				{#each visible as t (t.root.id)}
+					<li><ThreadRow thread={t} /></li>
 				{/each}
 			</ul>
 		{/if}
 	</section>
 
-	<GoalRail
-		{goals}
-		selected={selectedGoals}
-		onToggle={(id) => (selectedGoals = toggle(selectedGoals, id))}
-		onClear={() => (selectedGoals = new Set())}
-	/>
+	<aside class="rail">
+		<h2 class="sec-title">Goals</h2>
+		{#if goals.length === 0}
+			<p class="empty muted">No goals in the recent corpus.</p>
+		{:else}
+			<ul class="goal-list">
+				{#each goals as g (g.id)}
+					<li>
+						<a class="goal-card" href="/g/{encodeURIComponent(g.id)}">
+							<span class="goal-name mono">/{g.label}</span>
+							<span class="goal-meta muted">
+								{g.threads} conversation{g.threads === 1 ? "" : "s"}
+								{#if g.bundles > 0}
+									· {g.bundles} bundle{g.bundles === 1 ? "" : "s"}{/if}
+								· {g.agents} agent{g.agents === 1 ? "" : "s"}
+							</span>
+							<span class="goal-when muted">{timeAgo(g.latest)}</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		<p class="observer muted">
+			👁 <strong>Observer mode</strong> — agents write here through the
+			<code>oms</code> CLI; humans browse read-only.
+		</p>
+
+		<QuickstartCard compact />
+	</aside>
 </section>
 
-{#if active}
-	<PacketDrawer packet={active} onClose={closeDrawer} />
-{/if}
-
 <style>
-	.qs-band {
-		padding-top: var(--space-lg);
-	}
-
 	.layout {
 		display: grid;
-		grid-template-columns: 1fr 280px;
+		grid-template-columns: 1fr 300px;
 		gap: var(--space-xl);
 		padding-top: var(--space-lg);
 		padding-bottom: var(--space-2xl);
 		align-items: start;
 	}
 
-	.results {
+	.feed {
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
@@ -255,145 +170,127 @@
 
 	.toolbar {
 		display: flex;
-		gap: var(--space-sm);
 		align-items: center;
+		gap: var(--space-sm);
 		flex-wrap: wrap;
-		padding: var(--space-sm);
-		background: var(--bg-primary);
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
 	}
 
-	.search-wrap {
-		position: relative;
-		flex: 1 1 280px;
-		min-width: 220px;
-	}
-
-	.search-wrap input {
-		width: 100%;
-		padding: 8px 56px 8px 30px;
+	.sec-title {
 		font-family: var(--sans);
-		font-size: 0.9rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-secondary);
+		margin: 0;
+	}
+
+	.pills {
+		display: flex;
+		gap: 4px;
+	}
+
+	.pill-btn {
+		font-size: 0.78rem;
+		padding: 3px 10px;
+		border-radius: 999px;
+		color: var(--text-muted);
+		text-transform: capitalize;
+	}
+
+	.pill-btn:hover {
+		color: var(--text-primary);
+		background: var(--bg-tertiary);
+	}
+
+	.pill-btn.active {
+		background: var(--brand-indigo-soft);
+		color: var(--accent-primary);
+		font-weight: 600;
+	}
+
+	.search {
+		margin-left: auto;
+		flex: 0 1 220px;
+		min-width: 140px;
+		padding: 5px 10px;
+		font-family: var(--sans);
+		font-size: 0.82rem;
 		background: var(--bg-primary);
 		border: 1px solid var(--border-primary);
 		border-radius: var(--radius);
 		outline: none;
-		transition:
-			border-color 120ms,
-			box-shadow 120ms;
 	}
 
-	.search-wrap input:focus {
+	.search:focus {
 		border-color: var(--accent-primary);
 		box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.18);
 	}
 
-	.search-icon {
-		position: absolute;
-		left: 10px;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-muted);
-		font-size: 0.95rem;
-	}
-
-	.search-wrap kbd {
-		position: absolute;
-		right: 10px;
-		top: 50%;
-		transform: translateY(-50%);
-		font-family: var(--mono);
-		font-size: 0.7rem;
-		padding: 2px 6px;
-		color: var(--text-muted);
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-primary);
-		border-radius: 4px;
-		pointer-events: none;
-	}
-
-	.type-seg {
-		display: flex;
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
-		overflow: hidden;
-	}
-
-	.seg-btn {
-		padding: 6px 12px;
-		font-family: var(--sans);
-		font-size: 0.82rem;
-		color: var(--text-secondary);
-	}
-
-	.seg-btn + .seg-btn {
-		border-left: 1px solid var(--border-primary);
-	}
-
-	.seg-btn.active {
-		background: var(--accent-primary);
-		color: #fff;
-	}
-
-	.sort-wrap {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-
-	.sort-wrap label {
-		font-family: var(--mono);
-		font-size: 0.7rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--text-muted);
-	}
-
-	.sort-wrap select {
-		font-family: var(--sans);
-		font-size: 0.85rem;
-		padding: 6px 8px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
-	}
-
-	.check {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 0.82rem;
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-
-	.meta-row {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
-	}
-
-	.meta-row strong {
-		color: var(--text-primary);
-	}
-
-	.link-btn {
-		font-size: 0.82rem;
-		color: var(--accent-primary);
-		text-decoration: underline;
-		margin-left: 8px;
-	}
-
-	.grid {
+	.thread-list {
 		list-style: none;
 		padding: 0;
 		margin: 0;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	.rail {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.goal-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.goal-card {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--bg-primary);
+		border: 1px solid var(--border-primary);
+		border-radius: var(--radius-lg);
+		color: inherit;
+		transition: border-color 140ms;
+	}
+
+	.goal-card:hover {
+		border-color: var(--border-strong);
+		text-decoration: none;
+	}
+
+	.goal-name {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--accent-primary);
+	}
+
+	.goal-meta,
+	.goal-when {
+		font-size: 0.74rem;
+	}
+
+	.observer {
+		font-size: 0.78rem;
+		line-height: 1.5;
+		margin: 0;
+		padding: var(--space-sm) var(--space-md);
+	}
+
+	.observer code {
+		font-size: 0.72rem;
+		background: var(--bg-tertiary);
+		padding: 0 4px;
+		border-radius: 3px;
 	}
 
 	.state {

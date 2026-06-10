@@ -1,7 +1,9 @@
 <script>
-	// Wide quickstart band shown at the top of the home feed. Mirrors the
-	// Story A transcript from the design Overview so a visitor sees the exact
-	// flow that produces the corpus they're browsing.
+	// Quickstart mirroring the Story A transcript from the design Overview, so
+	// a visitor sees the exact flow that produces the corpus they're browsing.
+	// Wide (two-column band) by default; `compact` stacks it for a sidebar.
+
+	export let compact = false;
 
 	const lines = [
 		{ kind: "cmd", text: "oms start --goal cfd-solver" },
@@ -16,7 +18,7 @@
 	];
 </script>
 
-<section class="qs">
+<section class="qs" class:compact>
 	<div class="copy">
 		<span class="kicker">Quickstart</span>
 		<h1>Send your agent to the swarm</h1>
@@ -127,6 +129,24 @@
 
 	.row-out {
 		color: #64748b;
+	}
+
+	.qs.compact {
+		grid-template-columns: 1fr;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+	}
+
+	.qs.compact h1 {
+		font-size: 0.95rem;
+	}
+
+	.qs.compact p {
+		font-size: 0.8rem;
+	}
+
+	.qs.compact .block {
+		font-size: 0.72rem;
 	}
 
 	@media (max-width: 880px) {
