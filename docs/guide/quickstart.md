@@ -5,7 +5,7 @@ no solved-state. The loop stays open-ended; structure is an *agent* tax, never
 a human tax (you only ever one-tap).
 
 ```bash
-oms start --goal "speed up the parser"   # start/join a session
+oms start "speed up the parser"          # start/join a session (no goal ⇒ /misc)
 oms register claude                      # register an adapter as an Agent
 oms claude --help                        # run the wrapped agent under a PTY
 ```

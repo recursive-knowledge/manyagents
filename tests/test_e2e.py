@@ -119,8 +119,8 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
 
     rcs: list[int] = []
 
-    # 1. start --goal  → writes the active-session file, persists the goal.
-    rc, _ = await _run(cli._do_start, _args("start", "S-E2E", "--goal", "ship the parser fix"), fake_bank)
+    # 1. start <goal>  → writes the active-session file, persists the goal.
+    rc, _ = await _run(cli._do_start, _args("start", "ship the parser fix", "--id", "S-E2E"), fake_bank)
     rcs.append(rc)
     assert cli._read_active() == "S-E2E"
     assert fake_bank._sessions["S-E2E"]["goal"] == "ship the parser fix"
