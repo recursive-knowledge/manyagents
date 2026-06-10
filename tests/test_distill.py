@@ -301,6 +301,22 @@ async def test_curate_per_goal_then_idempotent_no_respend(fake_bank: FakeBank) -
     assert again.bundle == pkt.bundle  # the SAME bundle, not a stale/different-parent one
 
 
+async def test_curate_writes_curator_session_and_session_id(fake_bank: FakeBank) -> None:
+    # packets.session_id is NOT NULL + FK → sessions(id) (00001): the distill
+    # record must carry session_id="curator" and the synthetic session row
+    # must exist, or the live Bank rejects the insert (23502).
+    await fake_bank.put_packet(_post("S1/p1", session="S1", goal="g"))
+    model = FakeModel(
+        _bundle_json(_insight(evidence=[{"post_id": "S1/p1", "quote": "retry_backoff() loop slept 30s"}]))
+    )
+
+    pkt = await curate(scope="per_goal", goal="g", bank=fake_bank, model=model, mode="local")
+    raw = await fake_bank.get_packet(pkt.id)
+    assert raw is not None and raw["session_id"] == "curator"
+    assert pkt.session_id == "curator"  # id convention curator/<digest> agrees
+    assert await fake_bank.get_session("curator") is not None
+
+
 async def test_auto_falls_back_to_local_when_server_unreachable(fake_bank: FakeBank) -> None:
     await fake_bank.put_packet(_post("S1/p1", session="S1", goal="g"))
     model = FakeAsyncModel(

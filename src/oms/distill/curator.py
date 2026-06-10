@@ -157,6 +157,7 @@ async def curate(
 
     record: dict[str, Any] = {
         "id": pid,
+        "session_id": "curator",
         "type": "distill",
         "agent_id": "curator",
         "goal": stored_goal,
@@ -165,5 +166,8 @@ async def curate(
         "parents": parent_ids,
         "curator": getattr(curator, "mode", "local"),
     }
+    # packets.session_id is NOT NULL + FK → sessions(id); distill packets live
+    # under the synthetic "curator" session (id convention curator/<digest>).
+    await bank.put_session("curator")
     await bank.put_packet(record)
     return await Packet.fetch(pid, bank=bank, force=True)
