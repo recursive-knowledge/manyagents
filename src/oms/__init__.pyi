@@ -6,6 +6,7 @@ from oms import capture as capture
 from oms import core as core
 from oms import distill as distill
 from oms import forum as forum
+from oms import testing as testing
 from oms import utils as utils
 from oms import web as web
 from oms.adapters import Adapter as Adapter

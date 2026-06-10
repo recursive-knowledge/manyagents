@@ -75,6 +75,14 @@ entrypoint `oms.cli:main`, two-stage SIGINT, writes `~/.oms/active`) →
 `oms.web` (read-only FastAPI + SvelteKit viewer under `web/viewer/`) →
 `oms._mcp` (M11 in-agent MCP server for Claude Code / Codex / Gemini).
 
+`oms.testing` sits atop the stack (it imports cli/_handlers): the dummy
+Bank / model / adapter / IO doubles plus the `Simulation` driver for
+simulated-conversation tests, seeded with the real "trial story" fixture
+(`trial_reflection()` / `trial_bundle()` / `seed_trial_story()`). Prefer the
+`sim` / `trial_bank` fixtures from `tests/conftest.py` when a test should
+replay a conversation through the real verbs; `tests/test_testing.py` is the
+pattern reference.
+
 Package-level lazy loading lives in `src/oms/__init__.py` (`_SUBMODULES` +
 `_LAZY_IMPORTS`); add new public symbols there with a `TYPE_CHECKING` import
 mirror so static analysis still sees them. Build M0–M10 is complete (per

@@ -153,7 +153,8 @@ class DummyAdapter:
 
 
 # --------------------------------------------------------------------------- #
-# the trial story — a real captured session, verbatim (Bank dump 2026-06-09)
+# the trial story (Bank dump 2026-06-09): reflection + bundle are the live
+# records verbatim; the transcript and reply are documented reconstructions
 # --------------------------------------------------------------------------- #
 
 _TRIAL_CORRECTION = (
@@ -308,7 +309,9 @@ def trial_reflection() -> dict[str, Any]:
 
 
 def trial_reply() -> dict[str, Any]:
-    """A disagree-stance reply engaging the reflection (for the /discuss leg)."""
+    """A disagree-stance reply engaging the reflection (for the /discuss leg).
+    Composed for the harness — the live session stopped at the reflection; no
+    reply exists in the Bank."""
     return deepcopy(_TRIAL_REPLY)
 
 
@@ -326,11 +329,18 @@ def trial_bundle(post_id: str) -> dict[str, Any]:
 
 
 async def seed_trial_story(bank: FakeBank) -> dict[str, str]:
-    """Plant the whole trial story in ``bank`` exactly as the live Bank holds
-    it — ended session, registered agent, raw packet + scrubbed trace, the ★2
-    reflection, and the cross-goal distill bundle citing it. For read-side
-    tests (inject, retrieval, quarantine, oms.web) that start from existing
-    knowledge rather than replaying the conversation. Returns the ids."""
+    """Plant the whole trial story in ``bank``: ended session, registered
+    agent, raw packet + trace, the ★2 reflection, and the cross-goal distill
+    bundle citing it. The reflection and bundle payloads are the live Bank's
+    records verbatim; the trace body is the serialized ``CanonicalTrace``
+    envelope (the only shape the real ``persist()`` ever writes) wrapped
+    around the *reconstructed* transcript. For read-side tests (inject,
+    retrieval, quarantine, oms.web) that start from existing knowledge rather
+    than replaying the conversation. Returns the ids."""
+    # first-party import of the capture serializer: the seeded trace body must
+    # have the same envelope shape a real pipeline run would produce.
+    from oms.capture import _serialize
+
     ids = {
         "session": "trial",
         "agent": "trial/agent-001-claude",
@@ -341,7 +351,16 @@ async def seed_trial_story(bank: FakeBank) -> dict[str, str]:
     await bank.put_session(ids["session"], status="ended")
     await bank.put_agent(ids["agent"], session_id=ids["session"], adapter="claude", seq=1)
     await bank.put_packet({"id": ids["raw"], "session_id": ids["session"], "type": "raw", "agent_id": ids["agent"]})
-    await bank.put_trace(ids["raw"], trial_transcript(), scrub_version=SCRUB_VERSION, complete=True)
+    transcript = trial_transcript()
+    trace = CanonicalTrace(
+        session_id=ids["session"],
+        agent_id=ids["agent"],
+        adapter="claude",
+        events=[TraceEvent(ts=0.0, kind="system", text=transcript)],  # the M11.6 PTY-tee shape
+        source_fidelity="pty",
+        bytes_in=len(transcript.encode("utf-8")),
+    )
+    await bank.put_trace(ids["raw"], _serialize(trace), scrub_version=SCRUB_VERSION, complete=True)
     await bank.put_packet({
         "id": ids["post"],
         "session_id": ids["session"],
@@ -420,13 +439,24 @@ class Simulation:
         from oms.core import clear_packet_cache
         from oms.forum import clear_discuss_gate
 
+        if self._saved_attrs or self._saved_env:
+            raise RuntimeError("Simulation is not re-entrant — use one `with` block per instance")
+
         # `oms.distill.resolve` the *name* is the re-exported function; the
         # submodule must come from the import system (the test_e2e trap).
         resolve_mod = importlib.import_module("oms.distill.resolve")
 
         if self._home is None:
             self._home = Path(tempfile.mkdtemp(prefix="oms-sim-"))
-        for key, value in (("OMS_HOME", str(self._home)), ("OMS_INSTALL_SKILLS", "deny")):
+        # OMS_CURATOR_MODE=local: resolve() re-reads it from env at call time,
+        # so a dev's oms.env setting `server`/`auto` would otherwise route
+        # cross_distill around the patched local-model seam to a REAL server.
+        env_pins = (
+            ("OMS_HOME", str(self._home)),
+            ("OMS_INSTALL_SKILLS", "deny"),
+            ("OMS_CURATOR_MODE", "local"),
+        )
+        for key, value in env_pins:
             self._saved_env[key] = os.environ.get(key)
             os.environ[key] = value
         for key in ("OMS_SESSION", "OMS_NONINTERACTIVE"):
@@ -440,6 +470,8 @@ class Simulation:
             return self.adapter.bind(session_id=session_id, agent_id=agent_id)
 
         patch(handlers_mod, "_adapter_for", adapter_for)
+        # the dummy adapter has no PATH binary; skip the registry/PATH gate
+        patch(handlers_mod, "_validate_adapter", lambda name: None)
         patch(cli_mod, "_pty_spawn", self._play_transcript_through_pty)
         patch(resolve_mod, "_discover_local_model", lambda: self.curator_model)
         clear_discuss_gate()
@@ -447,6 +479,9 @@ class Simulation:
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        from oms.core import clear_packet_cache
+        from oms.forum import clear_discuss_gate
+
         for obj, name, value in reversed(self._saved_attrs):
             setattr(obj, name, value)
         self._saved_attrs.clear()
@@ -456,6 +491,11 @@ class Simulation:
             else:
                 os.environ[key] = value
         self._saved_env.clear()
+        # The sim's session/agent ids are deterministic (the trial story), so
+        # leaked gate/cache entries would silently satisfy retrieval-before-
+        # reply for the NEXT test — clear on the way out, not just in.
+        clear_discuss_gate()
+        clear_packet_cache()
 
     def _play_transcript_through_pty(self, argv: list[str], *, tee: Path | None = None) -> None:
         """The PTY stub: 'plays' the scripted conversation by writing it to the
@@ -469,7 +509,7 @@ class Simulation:
     async def start(self, session: str | None = None, *, goal: str | None = None) -> StepResult:
         from oms import cli
 
-        argv = ["start", *([session] if session else []), *(["--goal", goal] if goal else [])]
+        argv = ["start", *([goal] if goal else []), *(["--id", session] if session else [])]
         io = ScriptedIO()
         rc = await cli._do_start(cli._build_parser().parse_args(argv), bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
@@ -506,7 +546,9 @@ class Simulation:
         from oms import _handlers as h
 
         self.adapter.model.push(post)
-        inputs = ("y", "skip" if rating is None else str(rating)) if accept else ("n",)
+        # Single commit gate (2026-06-10): one prompt carries commit + ★ —
+        # a bare 1-5 commits with that ★, "skip" commits unrated, "n" discards.
+        inputs = ("skip" if rating is None else str(rating),) if accept else ("n",)
         io = ScriptedIO(*inputs)
         rc = await h.do_self_distill(adapter=self.adapter.name, guidance=guidance, bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
@@ -529,9 +571,17 @@ class Simulation:
     async def cross_distill(self, bundle: dict[str, Any] | str, *, server: bool = False) -> StepResult:
         from oms import _handlers as h
 
+        depth = len(self.curator_model.responses)
         self.curator_model.push(bundle)
         io = ScriptedIO()
         rc = await h.do_cross_distill(server=server, bank=self.bank, io=io.pair())
+        # If curate() never invoked the curator — the content-addressed
+        # idempotency short-circuit, or a NoPostsError before the model —
+        # OUR pushed bundle is still queued. Remove it: each call owns its
+        # script, and a leftover would silently feed the NEXT call a stale
+        # bundle (exactly the masking DummyModel's raise-on-empty prevents).
+        if len(self.curator_model.responses) > depth:
+            self.curator_model.responses.pop()
         return StepResult(rc, io.out)
 
     async def inject(self, packet: str | None = None, *, accept: bool = True) -> StepResult:
