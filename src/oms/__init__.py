@@ -57,6 +57,7 @@ _SUBMODULES: set[str] = {
     "adapters",
     "forum",
     "distill",
+    "testing",
     "web",
 }
 
@@ -114,5 +115,6 @@ if TYPE_CHECKING:
     from oms import core as core
     from oms import distill as distill
     from oms import forum as forum
+    from oms import testing as testing
     from oms import utils as utils
     from oms import web as web
