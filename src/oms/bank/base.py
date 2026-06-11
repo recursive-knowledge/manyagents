@@ -49,11 +49,19 @@ class Bank(Protocol):
         include_quarantined: bool = True,
     ) -> list[dict[str, Any]]: ...
 
-    # --- traces (raw scrubbed; never public) ---
+    # --- traces (raw scrubbed; public per the 2026-06-10 pre-alpha switch) ---
     async def put_trace(
         self, packet_id: str, body: str, *, scrub_version: str | None = None, complete: bool = True
     ) -> None: ...
     async def get_trace(self, packet_id: str) -> dict[str, Any] | None: ...
+
+    # --- trace renditions (derived projections, keyed (packet_id, format);
+    #     M13: 'harness' = the conversation mined from the agent harness's
+    #     own local transcript. Upsert on the PK — re-mining is idempotent) ---
+    async def put_rendition(
+        self, packet_id: str, fmt: str, body: str, *, miner_version: str | None = None, complete: bool = True
+    ) -> None: ...
+    async def get_rendition(self, packet_id: str, fmt: str) -> dict[str, Any] | None: ...
 
     # --- injection ledger + reuse signal ---
     async def record_injection(self, packet_id: str, target_session_id: str) -> None: ...

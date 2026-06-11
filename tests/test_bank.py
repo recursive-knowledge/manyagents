@@ -161,10 +161,29 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_files_are_contiguous_00001_to_00007() -> None:
+def test_migration_files_are_contiguous_00001_to_00009() -> None:
     files = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
     prefixes = [f[:5] for f in files]
-    assert prefixes == [f"{i:05d}" for i in range(1, 8)], files
+    assert prefixes == [f"{i:05d}" for i in range(1, 10)], files
+
+
+async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
+    """M13.0: renditions key on (packet_id, format); put is an upsert so
+    re-mining the same run is idempotent (no row pile-up); get returns the
+    full row or None."""
+    await fake_bank.put_session("S")
+    await fake_bank.put_packet({"id": "S/r1", "session_id": "S", "type": "raw"})
+    assert await fake_bank.get_rendition("S/r1", "harness") is None
+
+    await fake_bank.put_rendition("S/r1", "harness", '{"v": 1}', miner_version="claude-v1")
+    row = await fake_bank.get_rendition("S/r1", "harness")
+    assert row is not None
+    assert row["body"] == '{"v": 1}' and row["miner_version"] == "claude-v1" and row["complete"] is True
+
+    await fake_bank.put_rendition("S/r1", "harness", '{"v": 2}', miner_version="claude-v2")
+    row2 = await fake_bank.get_rendition("S/r1", "harness")
+    assert row2 is not None and row2["body"] == '{"v": 2}'  # upsert, not append
+    assert row2["created_at"] == row["created_at"]  # first-write timestamp survives
 
 
 @pytest.mark.parametrize(

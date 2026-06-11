@@ -61,6 +61,7 @@ def _purge(cur: Any) -> None:
     cur.execute("reset role")  # a failed test may have left SET ROLE active
     like = f"{_TEST_PREFIX}%"
     cur.execute("delete from injections where packet_id like %s or target_session_id like %s", (like, like))
+    cur.execute("delete from trace_renditions where packet_id like %s", (like,))
     cur.execute("delete from traces where packet_id like %s", (like,))
     cur.execute("delete from packets where id like %s or session_id like %s", (like, like))
     cur.execute("delete from agent_seq_counter where session_id like %s", (like,))
@@ -99,19 +100,36 @@ def _supabase_env() -> dict[str, str] | None:
     return env
 
 
-def test_anon_reads_public_set_but_never_traces_and_cannot_write(conn: Any, denied: type[Exception]) -> None:
+def test_anon_reads_public_set_and_unquarantined_traces_but_cannot_write(conn: Any, denied: type[Exception]) -> None:
+    """Updated for 00008/00009 (pre-alpha public traces): anon now reads
+    trace bodies and renditions of NON-quarantined packets; retro-quarantine
+    pulls both from the public surface at the DB layer; writes stay denied."""
     sid = f"it-{uuid.uuid4().hex[:8]}"
     with conn.cursor() as cur:
         _seed(cur, sid)
+        cur.execute("insert into trace_renditions(packet_id, format, body) values (%s,'harness','{}')", (f"{sid}/raw",))
         cur.execute("set role anon")
         cur.execute("select count(*) from packets where session_id=%s", (sid,))
         assert cur.fetchone()[0] == 2  # anon sees the public packet set
-        with pytest.raises(denied):  # permission denied on traces
-            cur.execute("select body from traces")
+        cur.execute("select body from traces where packet_id=%s", (f"{sid}/raw",))
+        assert cur.fetchone()[0] == "SECRET RAW BODY"  # 00008: public while unquarantined
+        cur.execute("select body from trace_renditions where packet_id=%s", (f"{sid}/raw",))
+        assert cur.fetchone()[0] == "{}"  # 00009: same stance
+        cur.execute("reset role")
+        cur.execute("update packets set quarantined = true where id = %s", (f"{sid}/raw",))
+        cur.execute("set role anon")
+        cur.execute("select count(*) from traces where packet_id=%s", (f"{sid}/raw",))
+        assert cur.fetchone()[0] == 0  # retro-quarantine pulls the body
+        cur.execute("select count(*) from trace_renditions where packet_id=%s", (f"{sid}/raw",))
+        assert cur.fetchone()[0] == 0  # ...and every projection of it
+        with pytest.raises(denied):  # anon still cannot write
+            cur.execute("insert into packets(id,session_id,type) values (%s,%s,'post')", (f"{sid}/x", sid))
         cur.execute("reset role")
         cur.execute("set role anon")
-        with pytest.raises(denied):  # anon cannot write
-            cur.execute("insert into packets(id,session_id,type) values (%s,%s,'post')", (f"{sid}/x", sid))
+        with pytest.raises(denied):  # nor write renditions
+            cur.execute(
+                "insert into trace_renditions(packet_id, format, body) values (%s,'harness','{}')", (f"{sid}/post",)
+            )
 
 
 def test_curator_reads_posts_inserts_distill_not_raw_no_delete(conn: Any, denied: type[Exception]) -> None:

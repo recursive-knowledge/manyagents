@@ -32,6 +32,7 @@ class FakeBank:
         self._agents: dict[str, dict[str, Any]] = {}
         self._packets: dict[str, dict[str, Any]] = {}
         self._traces: dict[str, dict[str, Any]] = {}
+        self._renditions: dict[tuple[str, str], dict[str, Any]] = {}
         self._injections: dict[tuple[str, str], dict[str, Any]] = {}
         self._seq: dict[str, int] = {}
         self._seq_lock = asyncio.Lock()
@@ -139,6 +140,24 @@ class FakeBank:
     async def get_trace(self, packet_id: str) -> dict[str, Any] | None:
         t = self._traces.get(packet_id)
         return dict(t) if t else None
+
+    # --- trace renditions ---
+    async def put_rendition(
+        self, packet_id: str, fmt: str, body: str, *, miner_version: str | None = None, complete: bool = True
+    ) -> None:
+        prev = self._renditions.get((packet_id, fmt), {})
+        self._renditions[(packet_id, fmt)] = {
+            "packet_id": packet_id,
+            "format": fmt,
+            "body": body,
+            "miner_version": miner_version,
+            "complete": complete,
+            "created_at": prev.get("created_at", _now()),
+        }
+
+    async def get_rendition(self, packet_id: str, fmt: str) -> dict[str, Any] | None:
+        r = self._renditions.get((packet_id, fmt))
+        return dict(r) if r else None
 
     # --- injection ledger ---
     async def record_injection(self, packet_id: str, target_session_id: str) -> None:

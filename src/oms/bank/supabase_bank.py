@@ -164,6 +164,34 @@ class SupabaseBank:
         rows = resp.data or []
         return dict(rows[0]) if rows else None
 
+    # --- trace renditions ---
+    @with_backoff()
+    async def put_rendition(
+        self, packet_id: str, fmt: str, body: str, *, miner_version: str | None = None, complete: bool = True
+    ) -> None:
+        cli = await self._client()
+        await (
+            cli.table("trace_renditions")
+            .upsert(
+                {
+                    "packet_id": packet_id,
+                    "format": fmt,
+                    "body": body,
+                    "miner_version": miner_version,
+                    "complete": complete,
+                },
+                on_conflict="packet_id,format",
+            )
+            .execute()
+        )
+
+    @with_backoff()
+    async def get_rendition(self, packet_id: str, fmt: str) -> dict[str, Any] | None:
+        cli = await self._client()
+        resp = await cli.table("trace_renditions").select("*").eq("packet_id", packet_id).eq("format", fmt).execute()
+        rows = resp.data or []
+        return dict(rows[0]) if rows else None
+
     # --- injection ledger ---
     @with_backoff()
     async def record_injection(self, packet_id: str, target_session_id: str) -> None:
