@@ -1,4 +1,12 @@
-name: Deploy Docs
+name: Docs
+
+# Build-only: `mkdocs build --strict` keeps the docs honest on every push.
+# The GitHub Pages deploy job was removed 2026-06-10 — Pages cannot be
+# enabled on a private repo under the org's free plan, so deploy-pages@v4
+# hard-failed every run with "Failed to create deployment (status: 404)".
+# Restore the upload-pages-artifact + deploy-pages jobs (plus `pages: write`
+# / `id-token: write` permissions and the `pages` concurrency group) when
+# the repo goes public or the org moves to a paid plan.
 
 on:
   push:
@@ -12,12 +20,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -34,19 +36,3 @@ jobs:
 
       - name: Build docs
         run: uv run mkdocs build --strict
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
