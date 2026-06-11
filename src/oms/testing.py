@@ -142,6 +142,10 @@ class DummyAdapter:
     def install_skills(self, **_kwargs: Any) -> None:
         return None
 
+    def mine(self, _ctx: Any) -> dict[str, Any] | None:
+        """ABC parity (M13): no harness transcript to mine in a simulation."""
+        return None
+
     def capture(self) -> CanonicalTrace:
         return CanonicalTrace(
             session_id=self.session_id,
@@ -529,7 +533,10 @@ class Simulation:
 
         self._transcript = transcript
         self.adapter.transcript = transcript
-        io = ScriptedIO()
+        # default="n": allowance gates are affirmative-by-default, so any
+        # other fallback would silently ACCEPT the agent-exit end offer and
+        # close the session mid-conversation.
+        io = ScriptedIO(default="n")
         rc = await cli._do_run_agent(self.adapter.name, list(agent_args), None, bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
 
