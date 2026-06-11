@@ -1,11 +1,11 @@
-"""M8 tests for oms.cli — the dumb orchestrator (oms.cli.md Verification).
+"""M8 tests for manyagent.cli — the dumb orchestrator (manyagent.cli.md Verification).
 
 Pure helpers (slash sniffer incl `/path` passthrough, ★/y-n prompts,
 preview, argparse for every verb+flag), the two-stage SIGINT handler, and
 async orchestration on a FakeBank with scripted ``input()``. The headline
 case is **C1**: a rejected/parser-refused `/self-distill` post is NOT
 persisted and the record never carries ``preference`` (the M8 third defense
-that supersedes ``oms.cli.md:61``).
+that supersedes ``manyagent.cli.md:61``).
 """
 
 from __future__ import annotations
@@ -16,21 +16,21 @@ from typing import Any
 
 import pytest
 
-from oms import cli
-from oms.bank import FakeBank
-from oms.utils import config
+from manyagent import cli
+from manyagent.bank import FakeBank
+from manyagent.utils import config
 
 
 @pytest.fixture(autouse=True)
 def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_HOME", str(tmp_path / ".oms"))
-    monkeypatch.delenv("OMS_NONINTERACTIVE", raising=False)
-    # M11: `_do_run_agent` exports OMS_SESSION before PTY spawn; delenv at
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path / ".manyagent"))
+    monkeypatch.delenv("MANYAGENT_NONINTERACTIVE", raising=False)
+    # M11: `_do_run_agent` exports MANYAGENT_SESSION before PTY spawn; delenv at
     # setup records "was absent" so monkeypatch restores absence at teardown
-    # (prevents OMS_SESSION pollution between tests).
-    monkeypatch.delenv("OMS_SESSION", raising=False)
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")  # tests never write to ~/.claude
-    from oms.forum import clear_discuss_gate
+    # (prevents MANYAGENT_SESSION pollution between tests).
+    monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")  # tests never write to ~/.claude
+    from manyagent.forum import clear_discuss_gate
 
     clear_discuss_gate()
 
@@ -127,8 +127,8 @@ def test_ask_yn_deny_by_default_when_noninteractive() -> None:
 def test_argparse_lifecycle_verbs_only() -> None:
     """M11.4: only the 5 session-lifecycle verbs are CLI subcommands now.
     self-distill / discuss / cross-distill / inject are no longer here —
-    they're installed as in-agent skills + MCP tools by ``oms <name>``.
-    Programmatic callers use ``oms._handlers.do_*`` directly."""
+    they're installed as in-agent skills + MCP tools by ``manyagent <name>``.
+    Programmatic callers use ``manyagent._handlers.do_*`` directly."""
     a = _args("start", "speed", "--id", "S1")
     assert (a.verb, a.id, a.goal) == ("start", "S1", "speed")
     a = _args("register", "claude", "--session", "S2")
@@ -154,22 +154,22 @@ def test_version_action_exits_zero() -> None:
 
 
 async def _boom_runtime() -> int:
-    raise RuntimeError("Bank identity 'trusted' has no key (OMS_BANK_TRUSTED_KEY unset)")
+    raise RuntimeError("Bank identity 'trusted' has no key (MANYAGENT_BANK_TRUSTED_KEY unset)")
 
 
 def test_guard_translates_bank_error_no_traceback(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("OMS_DEBUG", raising=False)
+    monkeypatch.delenv("MANYAGENT_DEBUG", raising=False)
     rc = cli._guard(_boom_runtime())
     assert rc == 1
     err = capsys.readouterr().err
     assert "no key" in err  # the real cause is shown
-    assert "python -m oms.preflight" in err and "OMS_DEBUG=1" in err  # actionable
+    assert "python -m manyagent.preflight" in err and "MANYAGENT_DEBUG=1" in err  # actionable
 
 
 def test_guard_debug_env_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_DEBUG", "1")  # developer escape hatch
+    monkeypatch.setenv("MANYAGENT_DEBUG", "1")  # developer escape hatch
     with pytest.raises(RuntimeError, match="no key"):
         cli._guard(_boom_runtime())
 
@@ -186,7 +186,7 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     async def _no_session() -> int:
-        raise SystemExit("no active session: run `oms start` or pass --session <id>")
+        raise SystemExit("no active session: run `manyagent start` or pass --session <id>")
 
     assert cli._guard(_no_session()) == 1
     assert "no active session" in capsys.readouterr().err
@@ -202,17 +202,17 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
 async def test_main_missing_bank_key_returns_1_not_traceback(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The reported scenario: `oms start` with no Bank key must fail cleanly."""
+    """The reported scenario: `manyagent start` with no Bank key must fail cleanly."""
 
     class _NoKeyBank:
         async def put_session(self, *a: Any, **k: Any) -> None:
-            raise RuntimeError("Bank identity 'trusted' has no key (OMS_BANK_TRUSTED_KEY unset)")
+            raise RuntimeError("Bank identity 'trusted' has no key (MANYAGENT_BANK_TRUSTED_KEY unset)")
 
-    monkeypatch.delenv("OMS_DEBUG", raising=False)
+    monkeypatch.delenv("MANYAGENT_DEBUG", raising=False)
     monkeypatch.setattr(cli, "get_bank", lambda *a, **k: _NoKeyBank())
     rc = cli.main(["start", "demo", "--id", "DEMO-0001"])
     assert rc == 1  # not an unhandled traceback
-    assert "python -m oms.preflight" in capsys.readouterr().err
+    assert "python -m manyagent.preflight" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -222,7 +222,7 @@ async def test_main_missing_bank_key_returns_1_not_traceback(
 
 def test_sigint_two_stage(monkeypatch: pytest.MonkeyPatch) -> None:
     forces: list[bool] = []
-    monkeypatch.setattr("oms.adapters.terminate_all_agents", lambda *, force=False: forces.append(force))
+    monkeypatch.setattr("manyagent.adapters.terminate_all_agents", lambda *, force=False: forces.append(force))
 
     class _Exit(SystemExit):
         pass
@@ -259,44 +259,44 @@ async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> Non
 
 def test_session_url_defaults_to_hosted_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI's `open:` links point at the hosted viewer by default — the
-    deployment may move, so the base is the OMS_WEB_PUBLIC_URL tunable, never
+    deployment may move, so the base is the MANYAGENT_WEB_PUBLIC_URL tunable, never
     a hardcoded string at the call sites."""
-    monkeypatch.delenv("OMS_WEB_PUBLIC_URL", raising=False)
-    assert cli._session_url("X-1") == f"{config.OMS_WEB_PUBLIC_URL}/s/X-1"
-    assert config.OMS_WEB_PUBLIC_URL == "https://swarms.formulacode.org"
+    monkeypatch.delenv("MANYAGENT_WEB_PUBLIC_URL", raising=False)
+    assert cli._session_url("X-1") == f"{config.MANYAGENT_WEB_PUBLIC_URL}/s/X-1"
+    assert config.MANYAGENT_WEB_PUBLIC_URL == "https://swarms.formulacode.org"
 
 
 def test_session_url_public_base_override_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_WEB_PUBLIC_URL", "https://example.org/viewer/")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "https://example.org/viewer/")
     assert cli._session_url("X-1") == "https://example.org/viewer/s/X-1"
 
 
 def test_session_url_empty_public_base_falls_back_to_web_host_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_WEB_PUBLIC_URL", "")
-    monkeypatch.setenv("OMS_WEB_HOST", "127.0.0.1")
-    monkeypatch.setenv("OMS_WEB_PORT", "9001")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "")
+    monkeypatch.setenv("MANYAGENT_WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("MANYAGENT_WEB_PORT", "9001")
     assert cli._session_url("ABCD-1234") == "http://127.0.0.1:9001/s/ABCD-1234"
 
 
 def test_session_url_maps_wildcard_bind_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     # 0.0.0.0 is a bind wildcard, not a reachable address — must render as 127.0.0.1.
-    monkeypatch.setenv("OMS_WEB_PUBLIC_URL", "")
-    monkeypatch.setenv("OMS_WEB_HOST", "0.0.0.0")  # noqa: S104 — testing the defensive rewrite of the wildcard, not a real bind
-    monkeypatch.setenv("OMS_WEB_PORT", "8000")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "")
+    monkeypatch.setenv("MANYAGENT_WEB_HOST", "0.0.0.0")  # noqa: S104 — testing the defensive rewrite of the wildcard, not a real bind
+    monkeypatch.setenv("MANYAGENT_WEB_PORT", "8000")
     assert cli._session_url("X-1").startswith("http://127.0.0.1:8000/")
 
 
 def test_agent_url_round_trips_canonical_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_WEB_PUBLIC_URL", "")
-    monkeypatch.setenv("OMS_WEB_HOST", "127.0.0.1")
-    monkeypatch.setenv("OMS_WEB_PORT", "9001")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "")
+    monkeypatch.setenv("MANYAGENT_WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("MANYAGENT_WEB_PORT", "9001")
     assert cli._agent_url("ABCD-1234/agent-001-claude") == "http://127.0.0.1:9001/s/ABCD-1234/a/agent-001-claude"
 
 
 async def test_register_prints_open_link(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_WEB_PUBLIC_URL", "")
-    monkeypatch.setenv("OMS_WEB_HOST", "127.0.0.1")
-    monkeypatch.setenv("OMS_WEB_PORT", "8580")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "")
+    monkeypatch.setenv("MANYAGENT_WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("MANYAGENT_WEB_PORT", "8580")
     await fake_bank.put_session("SESS-AAAA")
     s = Scripted()
     rc = await cli._do_register(_args("register", "claude", "--session", "SESS-AAAA"), bank=fake_bank, io=s.io())
@@ -317,7 +317,7 @@ async def test_resolve_sid_errors_without_session(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# oms end — ★ lands on the most recent unrated reflection post
+# manyagent end — ★ lands on the most recent unrated reflection post
 # --------------------------------------------------------------------------- #
 
 
@@ -341,7 +341,7 @@ async def test_end_star_rates_last_unrated_reflection(fake_bank: FakeBank) -> No
 
 
 # --------------------------------------------------------------------------- #
-# oms <name> — PTY spawn (stdlib call monkeypatched) + skill install + capture
+# manyagent <name> — PTY spawn (stdlib call monkeypatched) + skill install + capture
 # --------------------------------------------------------------------------- #
 
 
@@ -350,7 +350,7 @@ async def test_run_agent_spawns_pty_installs_skills_and_captures_raw_packet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """M11.6: the PTY path now tees the master output and persists it as a
-    `raw` packet via `oms.capture.persist` (closes the M8 deferral). The
+    `raw` packet via `manyagent.capture.persist` (closes the M8 deferral). The
     monkeypatched `_pty_spawn` accepts the `tee` kwarg but never writes to
     it, so the captured trace is empty bytes — `persist` still creates the
     raw packet (validate → scrub → bound → put_packet all accept it)."""
@@ -360,7 +360,7 @@ async def test_run_agent_spawns_pty_installs_skills_and_captures_raw_packet(
     # The real ``_pty_spawn(argv, tee=...)`` takes a tee kwarg now; the
     # monkeypatch must accept it (it just ignores writes — no tty in tests).
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: spawned.append(argv))
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
     s = Scripted()
@@ -379,7 +379,7 @@ async def test_run_agent_spawns_pty_installs_skills_and_captures_raw_packet(
 )
 def test_pty_spawn_non_tty_tees_instead_of_exec_replacing(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """The M11 non-TTY hole: redirected stdin used to hit an ``os.execvp``
-    that REPLACED the oms process — no tee was written, and `_do_run_agent`
+    that REPLACED the manyagent process — no tee was written, and `_do_run_agent`
     never reached capture/persist. The fallback must instead spawn a piped
     child, tee its merged stdout+stderr, and RETURN control to the caller."""
     import sys as _sys
@@ -486,7 +486,7 @@ async def test_run_agent_mines_harness_rendition(
                 "segments": [{"harness_session_id": "hs-1", "turns": [{"role": "user", "ts": None, "text": "hi"}]}],
             }
 
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: MiningAdapter())
     s = Scripted()
@@ -512,7 +512,7 @@ async def test_run_agent_mining_failure_never_disturbs_the_run(
         def mine(self, ctx: Any) -> dict[str, Any] | None:
             raise RuntimeError("transcript parse exploded")
 
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: ExplodingAdapter())
     s = Scripted()
@@ -526,7 +526,7 @@ async def test_run_agent_passes_this_runs_bindings_to_the_miner(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M12/M13: binding records appended by ``oms._hook`` while the agent ran
+    """M12/M13: binding records appended by ``manyagent._hook`` while the agent ran
     reach the miner via MineContext; stale records from an earlier run of the
     same session (and malformed lines) are filtered out by the run-start
     clock."""
@@ -537,11 +537,11 @@ async def test_run_agent_passes_this_runs_bindings_to_the_miner(
     cli._write_active("S1")
 
     def fake_spawn(argv: list[str], tee: Any = None) -> None:
-        d = cli._oms_home() / "bindings"
+        d = cli._manyagent_home() / "bindings"
         d.mkdir(parents=True, exist_ok=True)
-        stale = {"oms_session": "S1", "harness_session_id": "stale-id", "ts": _time.time() - 3600}
+        stale = {"manyagent_session": "S1", "harness_session_id": "stale-id", "ts": _time.time() - 3600}
         live = {
-            "oms_session": "S1",
+            "manyagent_session": "S1",
             "event": "SessionEnd",
             "harness_session_id": "abc-123",
             "transcript_path": "/tmp/t.jsonl",
@@ -557,7 +557,7 @@ async def test_run_agent_passes_this_runs_bindings_to_the_miner(
             return None
 
     monkeypatch.setattr(cli, "_pty_spawn", fake_spawn)
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: CapturingAdapter())
     s = Scripted()
@@ -672,9 +672,9 @@ async def test_start_offer_skipped_when_goal_unknown_or_noninteractive(
     # no knowledge for the goal → no prompt at all (Scripted would raise on pop)
     rc = await cli._do_start(_args("start", "fresh", "--id", "S-INJ3"), bank=fake_bank, io=Scripted().io())
     assert rc == 0
-    # knowledge exists but OMS_NONINTERACTIVE → silent skip, never auto-inject
+    # knowledge exists but MANYAGENT_NONINTERACTIVE → silent skip, never auto-inject
     await _seed_goal_knowledge(fake_bank)
-    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     rc = await cli._do_start(_args("start", "speed", "--id", "S-INJ4"), bank=fake_bank, io=Scripted().io())
     assert rc == 0
     assert await fake_bank.list_injections() == []
@@ -696,12 +696,12 @@ async def test_end_offers_self_distill_when_session_has_none(
         calls.append(kw)
         return 0
 
-    monkeypatch.setattr("oms._handlers.do_self_distill", fake_self_distill)
+    monkeypatch.setattr("manyagent._handlers.do_self_distill", fake_self_distill)
     s = Scripted("")  # Enter = yes, distill
     rc = await cli._do_end(_args("end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
-    assert calls[0]["since"] is None  # bare `oms end`: no run window to scope to
+    assert calls[0]["since"] is None  # bare `manyagent end`: no run window to scope to
 
 
 async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -715,7 +715,7 @@ async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, mon
         calls.append(kw)
         return 0
 
-    monkeypatch.setattr("oms._handlers.do_self_distill", fake_self_distill)
+    monkeypatch.setattr("manyagent._handlers.do_self_distill", fake_self_distill)
     s = Scripted("")
     rc = await cli._do_end(argparse.Namespace(session="S-END2", since=123.0), bank=fake_bank, io=s.io())
     assert rc == 0
@@ -725,8 +725,8 @@ async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, mon
 async def test_start_nudges_cross_distill_when_goal_is_stale(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """≥ OMS_CROSS_NUDGE_MIN reflections newer than the goal's newest bundle
-    → `oms start` offers cross-distillation (the moment a fresh bundle is
+    """≥ MANYAGENT_CROSS_NUDGE_MIN reflections newer than the goal's newest bundle
+    → `manyagent start` offers cross-distillation (the moment a fresh bundle is
     about to be useful). Replaces the end-of-session cross offer."""
     pid = await _seed_goal_knowledge(fake_bank)  # bundle at T0
     for i in range(3):
@@ -747,7 +747,7 @@ async def test_start_nudges_cross_distill_when_goal_is_stale(
         calls.append(kw)
         return 0
 
-    monkeypatch.setattr("oms._handlers.do_cross_distill", fake_cross_distill)
+    monkeypatch.setattr("manyagent._handlers.do_cross_distill", fake_cross_distill)
     s = Scripted("", "n")  # Enter = yes to the nudge; n = skip the inject offer
     rc = await cli._do_start(_args("start", "speed", "--id", "S-NUDGE"), bank=fake_bank, io=s.io())
     assert rc == 0
@@ -789,7 +789,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
         calls.append(kw)
         return 0
 
-    monkeypatch.setattr("oms._handlers.do_self_distill", fake_self_distill)
+    monkeypatch.setattr("manyagent._handlers.do_self_distill", fake_self_distill)
     s = Scripted("")
     rc = await cli._do_end(_args("end", "--session", "S-FUP"), bank=fake_bank, io=s.io())
     assert rc == 0
@@ -797,7 +797,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
 
 
 async def test_start_goal_continuity_offer(fake_bank: FakeBank) -> None:
-    """`oms start` without a goal offers the previous session's goal; Enter
+    """`manyagent start` without a goal offers the previous session's goal; Enter
     adopts it onto the new session; declining files the session under the
     default bucket."""
     await fake_bank.put_session("PREV-1", goal="speed")
@@ -831,7 +831,7 @@ async def test_start_quarantine_note_is_informational(fake_bank: FakeBank) -> No
 
 
 async def test_end_offers_silent_when_noninteractive(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     await fake_bank.put_session("S-END3", goal="speed")
     await fake_bank.put_agent("S-END3/agent-001-claude", session_id="S-END3", adapter="claude", seq=1)
     rc = await cli._do_end(_args("end", "--session", "S-END3"), bank=fake_bank, io=Scripted().io())
@@ -853,7 +853,7 @@ async def test_agent_exit_asks_only_end_then_do_end_offers_distill(
     await fake_bank.put_session("S1", goal="g")
     cli._write_active("S1")
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
     calls: list[dict[str, Any]] = []
@@ -868,7 +868,7 @@ async def test_agent_exit_asks_only_end_then_do_end_offers_distill(
     assert rc == 0
     assert len(calls) == 1 and calls[0]["session"] == "S1"  # asked ONCE, inside _do_end
     assert (await fake_bank.get_session("S1"))["status"] == "ended"
-    assert cli._read_active() is None  # active cleared by the embedded `oms end`
+    assert cli._read_active() is None  # active cleared by the embedded `manyagent end`
 
 
 async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
@@ -879,7 +879,7 @@ async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
     await fake_bank.put_session("S1", goal="g")
     cli._write_active("S1")
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
     distilled: list[dict[str, Any]] = []

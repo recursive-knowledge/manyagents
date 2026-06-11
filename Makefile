@@ -59,12 +59,12 @@ bank-reset: ## Drop + re-apply all migrations from empty (local dev only)
 WEB_PORT ?= 8580
 
 .PHONY: web-up
-web-up: ## Serve the read-only API + viewer (oms.web; anon/public identity) on :8580
+web-up: ## Serve the read-only API + viewer (manyagent.web; anon/public identity) on :8580
 	@if [ ! -d web/viewer/build ]; then \
 	  echo "▶ no web/viewer/build/ — serving the legacy fallback (web/app/index.html)."; \
 	  echo "  run 'make web-build' for the SvelteKit viewer."; \
 	fi
-	@uv run python -m oms.web.server $(WEB_PORT)
+	@uv run python -m manyagent.web.server $(WEB_PORT)
 
 .PHONY: web-build
 web-build: ## Build the SvelteKit viewer (web/viewer/) for production
@@ -186,7 +186,7 @@ db-tunnel-delete: ## Delete the Bank tunnel (db-swarms.formulacode.org)
 	@$(MAKE) --no-print-directory tunnel-delete NAME="$(DB_TUNNEL)" HOSTNAME="$(DB_HOSTNAME)"
 
 .PHONY: model-proxy
-model-proxy: ## (placeholder, deferred) LiteLLM proxy for the OMS_LLM_* fallback endpoint
+model-proxy: ## (placeholder, deferred) LiteLLM proxy for the MANYAGENT_LLM_* fallback endpoint
 	@echo "model-proxy deferred (hosted ops); named per Package Structure & Workflow"
 
 .PHONY: help

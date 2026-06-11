@@ -1,4 +1,4 @@
-"""M11 tests for ``oms._installer`` — the transparency contract.
+"""M11 tests for ``manyagent._installer`` — the transparency contract.
 
 Headlines:
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from oms._installer import (
+from manyagent._installer import (
     CLIAction,
     FileOp,
     InstallPlan,
@@ -42,9 +42,9 @@ from oms._installer import (
 
 def test_merge_json_keys_creates_when_absent(tmp_path: Path) -> None:
     p = tmp_path / "settings.json"
-    text, prev = merge_json_keys(p, "mcpServers", "oms", {"command": "python"})
+    text, prev = merge_json_keys(p, "mcpServers", "manyagent", {"command": "python"})
     assert prev is None
-    assert json.loads(text) == {"mcpServers": {"oms": {"command": "python"}}}
+    assert json.loads(text) == {"mcpServers": {"manyagent": {"command": "python"}}}
 
 
 def test_merge_json_keys_preserves_third_party(tmp_path: Path) -> None:
@@ -58,19 +58,19 @@ def test_merge_json_keys_preserves_third_party(tmp_path: Path) -> None:
             indent=2,
         )
     )
-    text, _prev = merge_json_keys(p, "mcpServers", "oms", {"command": "python"})
+    text, _prev = merge_json_keys(p, "mcpServers", "manyagent", {"command": "python"})
     data = json.loads(text)
     assert data["mcpServers"]["other"] == {"command": "node"}  # third-party survives
-    assert data["mcpServers"]["oms"] == {"command": "python"}
+    assert data["mcpServers"]["manyagent"] == {"command": "python"}
     assert data["permissions"] == {"allow": ["Bash"]}  # unrelated top-level keys survive
 
 
 def test_merge_json_keys_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "settings.json"
-    payload = {"command": "python", "args": ["-m", "oms._mcp"]}
-    once, _ = merge_json_keys(p, "mcpServers", "oms", payload)
+    payload = {"command": "python", "args": ["-m", "manyagent._mcp"]}
+    once, _ = merge_json_keys(p, "mcpServers", "manyagent", payload)
     p.write_text(once)
-    twice, _ = merge_json_keys(p, "mcpServers", "oms", payload)
+    twice, _ = merge_json_keys(p, "mcpServers", "manyagent", payload)
     assert once == twice  # twice == once, byte-identical
 
 
@@ -90,21 +90,21 @@ def test_merge_toml_section_preserves_comments_and_other_servers(tmp_path: Path)
     )
     text, _prev = merge_toml_section(
         p,
-        "mcp_servers.oms",
-        {"command": "python", "args": ["-m", "oms._mcp"], "env_vars": ["OMS_SESSION"]},
+        "mcp_servers.manyagent",
+        {"command": "python", "args": ["-m", "manyagent._mcp"], "env_vars": ["MANYAGENT_SESSION"]},
     )
     assert "# user's codex config" in text  # top comment survives
     assert "# a comment on the args line" in text  # mid-document comment survives
     assert "docs-server" in text  # third-party server survives
-    assert "oms._mcp" in text  # our entry landed
+    assert "manyagent._mcp" in text  # our entry landed
 
 
 def test_merge_toml_section_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    value = {"command": "python", "args": ["-m", "oms._mcp"]}
-    once, _ = merge_toml_section(p, "mcp_servers.oms", value)
+    value = {"command": "python", "args": ["-m", "manyagent._mcp"]}
+    once, _ = merge_toml_section(p, "mcp_servers.manyagent", value)
     p.write_text(once)
-    twice, _ = merge_toml_section(p, "mcp_servers.oms", value)
+    twice, _ = merge_toml_section(p, "mcp_servers.manyagent", value)
     assert once == twice
 
 
@@ -112,7 +112,7 @@ def test_merge_toml_section_idempotent(tmp_path: Path) -> None:
 # merge_json_list_item / unmerge_json_list_items — shared arrays (hooks)
 # --------------------------------------------------------------------------- #
 
-_OUR_HOOK = {"hooks": [{"type": "command", "command": "python -m oms._hook"}]}
+_OUR_HOOK = {"hooks": [{"type": "command", "command": "python -m manyagent._hook"}]}
 _USER_HOOK = {"matcher": "startup", "hooks": [{"type": "command", "command": "say hi"}]}
 
 
@@ -160,22 +160,22 @@ def test_unmerge_json_list_items_prunes_empty_and_signals_delete(tmp_path: Path)
 
 def test_merge_json_list_item_purges_stale_marked_variants(tmp_path: Path) -> None:
     """A reinstall whose item differs (e.g. a new venv path baked into the
-    command) replaces the old oms entry instead of accumulating — but never
+    command) replaces the old manyagent entry instead of accumulating — but never
     touches user items, which carry no marker."""
     p = tmp_path / "settings.json"
-    stale = {"hooks": [{"type": "command", "command": "/old/venv/python -m oms._hook"}]}
+    stale = {"hooks": [{"type": "command", "command": "/old/venv/python -m manyagent._hook"}]}
     p.write_text(json.dumps({"hooks": {"SessionStart": [_USER_HOOK, stale]}}, indent=2))
-    text, _ = merge_json_list_item(p, "hooks", "SessionStart", _OUR_HOOK, purge_contains="-m oms._hook")
+    text, _ = merge_json_list_item(p, "hooks", "SessionStart", _OUR_HOOK, purge_contains="-m manyagent._hook")
     assert json.loads(text)["hooks"]["SessionStart"] == [_USER_HOOK, _OUR_HOOK]
 
 
 def test_unmerge_json_list_items_purges_edited_marked_entries(tmp_path: Path) -> None:
-    """Uninstall removes an oms entry even after the user/host tool edited it
+    """Uninstall removes an manyagent entry even after the user/host tool edited it
     (structural equality broken) as long as the staleness marker survives."""
-    edited = {"matcher": "*", "hooks": [{"type": "command", "command": "python -m oms._hook"}]}
+    edited = {"matcher": "*", "hooks": [{"type": "command", "command": "python -m manyagent._hook"}]}
     p = tmp_path / "settings.json"
     p.write_text(json.dumps({"hooks": {"SessionStart": [_USER_HOOK, edited]}}, indent=2))
-    text = unmerge_json_list_items(p, "hooks", "SessionStart", [_OUR_HOOK], purge_contains="-m oms._hook")
+    text = unmerge_json_list_items(p, "hooks", "SessionStart", [_OUR_HOOK], purge_contains="-m manyagent._hook")
     assert text is not None
     assert json.loads(text) == {"hooks": {"SessionStart": [_USER_HOOK]}}
 
@@ -183,7 +183,7 @@ def test_unmerge_json_list_items_purges_edited_marked_entries(tmp_path: Path) ->
 def test_apply_plan_failure_saves_partial_manifest_for_reversal(tmp_path: Path) -> None:
     """A mid-apply failure (a user-shaped settings.json the merge can't
     parse) must not strand already-written creates with no manifest: a
-    partial manifest is saved so `oms uninstall` can reverse them."""
+    partial manifest is saved so `manyagent uninstall` can reverse them."""
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"hooks": []}, indent=2))  # hooks is an ARRAY → TypeError
     plan = InstallPlan(
@@ -201,7 +201,7 @@ def test_apply_plan_failure_saves_partial_manifest_for_reversal(tmp_path: Path) 
             ),
         ],
     )
-    oma_home = tmp_path / ".oms"
+    oma_home = tmp_path / ".manyagent"
     with pytest.raises(TypeError):
         apply_plan(plan, oma_home=oma_home)
     created = tmp_path / "skills" / "x" / "SKILL.md"
@@ -231,7 +231,7 @@ def test_list_merge_round_trip_through_apply_and_uninstall(tmp_path: Path) -> No
             ),
         ],
     )
-    oma_home = tmp_path / ".oms"
+    oma_home = tmp_path / ".manyagent"
     apply_plan(plan, oma_home=oma_home)
     data = json.loads(settings.read_text())
     assert data["hooks"]["SessionStart"] == [_USER_HOOK, _OUR_HOOK]
@@ -267,11 +267,11 @@ def _two_file_plan(tmp_path: Path) -> InstallPlan:
                 path=tmp_path / "settings.json",
                 payload={
                     "__top_key__": "mcpServers",
-                    "__our_key__": "oms",
-                    "__value__": {"command": "python", "args": ["-m", "oms._mcp"]},
+                    "__our_key__": "manyagent",
+                    "__value__": {"command": "python", "args": ["-m", "manyagent._mcp"]},
                 },
-                description="register oms MCP server",
-                merge_keys=("mcpServers.oms",),
+                description="register manyagent MCP server",
+                merge_keys=("mcpServers.manyagent",),
             ),
         ],
     )
@@ -285,7 +285,7 @@ def test_apply_plan_writes_files_and_manifest(tmp_path: Path) -> None:
     skill = tmp_path / "skills" / "demo" / "SKILL.md"
     settings = tmp_path / "settings.json"
     assert skill.read_text() == "# demo skill"
-    assert json.loads(settings.read_text())["mcpServers"]["oms"]["command"] == "python"
+    assert json.loads(settings.read_text())["mcpServers"]["manyagent"]["command"] == "python"
     # manifest persisted
     assert (oma_home / "installed" / "demo.json").is_file()
     loaded = load_manifest("demo", oma_home)
@@ -342,7 +342,7 @@ def test_third_party_survives_install_and_uninstall_round_trip(tmp_path: Path) -
     # after install: our key + theirs
     mid = json.loads(settings.read_text())
     assert mid["mcpServers"]["other"] == {"command": "node", "args": ["other.js"]}
-    assert mid["mcpServers"]["oms"]["command"] == "python"
+    assert mid["mcpServers"]["manyagent"]["command"] == "python"
 
     # uninstall: pop our key only
     out_lines: list[str] = []
@@ -401,16 +401,20 @@ def _plan(tmp_path: Path) -> InstallPlan:
     return _two_file_plan(tmp_path)
 
 
-def test_consent_prompt_oms_install_skills_auto_silent_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "auto")
+def test_consent_prompt_manyagent_install_skills_auto_silent_yes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "auto")
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out.append)
     assert ok is True
     assert out == []  # silent
 
 
-def test_consent_prompt_oms_install_skills_deny_silent_no(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")
+def test_consent_prompt_manyagent_install_skills_deny_silent_no(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "y", output_fn=out.append)
     assert ok is False
@@ -418,14 +422,14 @@ def test_consent_prompt_oms_install_skills_deny_silent_no(tmp_path: Path, monkey
 
 
 def test_consent_prompt_default_asks_once_then_silent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     out: list[str] = []
     # first call: no manifest yet → ask. Reply 'y'.
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "y", output_fn=out.append, manifest_exists=False)
     assert ok is True
     blob = "\n".join(out)
     assert "1 created · 1 merged" in blob  # the plan summary was rendered
-    assert "mcpServers.oms" in blob  # merge transparency: the keys we own are listed
+    assert "mcpServers.manyagent" in blob  # merge transparency: the keys we own are listed
     # second call: manifest exists → silent yes.
     out2: list[str] = []
     ok2 = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out2.append, manifest_exists=True)
@@ -433,7 +437,7 @@ def test_consent_prompt_default_asks_once_then_silent(tmp_path: Path, monkeypatc
 
 
 def test_consent_prompt_decline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     out: list[str] = []
     ok = consent_prompt(_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out.append)
     assert ok is False
@@ -441,7 +445,7 @@ def test_consent_prompt_decline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_consent_prompt_diff_then_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     answers = iter(["d", "y"])
     out: list[str] = []
     ok = consent_prompt(
@@ -478,8 +482,8 @@ def _command_plan(tmp_path: Path) -> InstallPlan:
                 payload={
                     "__top_key__": "hooks",
                     "__our_key__": "SessionStart",
-                    "__list_item__": {"hooks": [{"type": "command", "command": "py -m oms._hook"}]},
-                    "__list_purge__": "-m oms._hook",
+                    "__list_item__": {"hooks": [{"type": "command", "command": "py -m manyagent._hook"}]},
+                    "__list_purge__": "-m manyagent._hook",
                 },
                 description="SessionStart hook",
                 merge_keys=("list:hooks.SessionStart",),
@@ -487,9 +491,9 @@ def _command_plan(tmp_path: Path) -> InstallPlan:
         ],
         cli_actions=[
             CLIAction(
-                install_argv=("demo", "mcp", "add", "oms"),
-                uninstall_argv=("demo", "mcp", "remove", "oms"),
-                description="register the oms MCP server",
+                install_argv=("demo", "mcp", "add", "manyagent"),
+                uninstall_argv=("demo", "mcp", "remove", "manyagent"),
+                description="register the manyagent MCP server",
             )
         ],
         commands=[("/demo", "do one demo thing")],
@@ -499,7 +503,7 @@ def _command_plan(tmp_path: Path) -> InstallPlan:
 def test_consent_advisory_panel_leads_details_behind_d(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """First screen: what the user gets + the undo — no paths, keys, or argvs.
     [d] reveals the full file-by-file plan AND the diff, then re-prompts."""
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     answers = iter(["d", "y"])
     out: list[str] = []
     seen_at_prompt: list[str] = []
@@ -512,13 +516,13 @@ def test_consent_advisory_panel_leads_details_behind_d(tmp_path: Path, monkeypat
     assert ok is True
     first_screen = seen_at_prompt[0]
     assert "/demo" in first_screen and "do one demo thing" in first_screen
-    assert "oms uninstall demo" in first_screen  # the undo is advisory, up front
+    assert "manyagent uninstall demo" in first_screen  # the undo is advisory, up front
     assert "SKILL.md" not in first_screen  # plumbing stays behind [d]
     assert "mcp add" not in first_screen
     assert "keys we own" not in first_screen
     # after pressing d: the full plan + diff were rendered
     details = seen_at_prompt[1]
-    assert "SKILL.md" in details and "demo mcp add oms" in details
+    assert "SKILL.md" in details and "demo mcp add manyagent" in details
     assert "hooks.SessionStart" in details  # merge transparency survives in [d]
     assert "list:hooks" not in details  # ...without the manifest-encoding prefix
     assert "===" in details  # the diff followed the plan
@@ -527,7 +531,7 @@ def test_consent_advisory_panel_leads_details_behind_d(tmp_path: Path, monkeypat
 def test_consent_decline_is_remembered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A first-run 'no' writes a declined marker; later runs print one dim
     line instead of re-walling the user with the panel."""
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     oma_home = tmp_path / "oma_home"
     out: list[str] = []
     ok = consent_prompt(_command_plan(tmp_path), input_fn=lambda _p: "n", output_fn=out.append, oma_home=oma_home)
@@ -546,13 +550,13 @@ def test_consent_decline_is_remembered(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_consent_prompt_mode_re_asks_and_yes_clears_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """OMS_INSTALL_SKILLS=prompt re-offers past a recorded decline; accepting
+    """MANYAGENT_INSTALL_SKILLS=prompt re-offers past a recorded decline; accepting
     removes the marker (the manifest becomes the consent record)."""
     oma_home = tmp_path / "oma_home"
     marker = oma_home / "installed" / "demo.declined"
     marker.parent.mkdir(parents=True)
     marker.write_text("2026-06-09T00:00:00\n")
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "prompt")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "prompt")
     ok = consent_prompt(_command_plan(tmp_path), input_fn=lambda _p: "y", output_fn=lambda _s: None, oma_home=oma_home)
     assert ok is True
     assert not marker.exists()
@@ -560,16 +564,16 @@ def test_consent_prompt_mode_re_asks_and_yes_clears_marker(tmp_path: Path, monke
 
 def test_consent_auto_yes_and_uninstall_both_clear_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Any affirmative consent supersedes an old decline — including the
-    OMS_INSTALL_SKILLS=auto fast path — and `oms uninstall` resets consent
+    MANYAGENT_INSTALL_SKILLS=auto fast path — and `manyagent uninstall` resets consent
     state fully, so the next run is a genuine first run again."""
     oma_home = tmp_path / "oma_home"
     marker = oma_home / "installed" / "demo.declined"
     # decline → marker recorded
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     consent_prompt(_command_plan(tmp_path), input_fn=lambda _p: "n", output_fn=lambda _s: None, oma_home=oma_home)
     assert marker.is_file()
     # auto-mode yes → marker cleared, install proceeds
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "auto")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "auto")
     assert consent_prompt(_command_plan(tmp_path), output_fn=lambda _s: None, oma_home=oma_home) is True
     assert not marker.exists()
     apply_plan(_command_plan(tmp_path), oma_home=oma_home)
@@ -578,7 +582,7 @@ def test_consent_auto_yes_and_uninstall_both_clear_marker(tmp_path: Path, monkey
     uninstall("demo", oma_home, output_fn=lambda _s: None)
     assert not marker.exists()
     # next default-mode run prompts again
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     asked: list[str] = []
 
     def _input(prompt: str) -> str:
@@ -592,7 +596,7 @@ def test_consent_auto_yes_and_uninstall_both_clear_marker(tmp_path: Path, monkey
 def test_consent_dry_run_never_touches_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Dry-run consent honors the no-disk-writes contract: a 'n' answer
     records nothing, and a 'y' answer doesn't erase a real prior decline."""
-    monkeypatch.delenv("OMS_INSTALL_SKILLS", raising=False)
+    monkeypatch.delenv("MANYAGENT_INSTALL_SKILLS", raising=False)
     oma_home = tmp_path / "oma_home"
     marker = oma_home / "installed" / "demo.declined"
     out: list[str] = []
@@ -604,7 +608,7 @@ def test_consent_dry_run_never_touches_marker(tmp_path: Path, monkeypatch: pytes
     # plant a real decline; a dry-run 'y' must not erase it
     marker.parent.mkdir(parents=True)
     marker.write_text("2026-06-09T00:00:00\n")
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "prompt")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "prompt")
     ok2 = consent_prompt(
         _command_plan(tmp_path), input_fn=lambda _p: "y", output_fn=lambda _s: None, oma_home=oma_home, dry_run=True
     )
@@ -612,9 +616,9 @@ def test_consent_dry_run_never_touches_marker(tmp_path: Path, monkeypatch: pytes
 
 
 def test_consent_unknown_mode_warns_and_re_asks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An unknown OMS_INSTALL_SKILLS value falls back to 'prompt' for real:
+    """An unknown MANYAGENT_INSTALL_SKILLS value falls back to 'prompt' for real:
     the warning fires and the prompt shows even past a manifest or marker."""
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "yolo")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "yolo")
     oma_home = tmp_path / "oma_home"
     marker = oma_home / "installed" / "demo.declined"
     marker.parent.mkdir(parents=True)
@@ -628,14 +632,14 @@ def test_consent_unknown_mode_warns_and_re_asks(tmp_path: Path, monkeypatch: pyt
         oma_home=oma_home,
     )
     assert ok is False  # asked (not silently True from the manifest)
-    assert any("unknown OMS_INSTALL_SKILLS" in line for line in out)
+    assert any("unknown MANYAGENT_INSTALL_SKILLS" in line for line in out)
 
 
 def test_consent_decline_while_installed_writes_no_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Declining a re-offer while a manifest exists is not an uninstall: no
     marker (the manifest would silently override it anyway) — point at the
     real verb instead."""
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "prompt")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "prompt")
     oma_home = tmp_path / "oma_home"
     out: list[str] = []
     ok = consent_prompt(
@@ -647,7 +651,7 @@ def test_consent_decline_while_installed_writes_no_marker(tmp_path: Path, monkey
     )
     assert ok is False
     assert not (oma_home / "installed" / "demo.declined").exists()
-    assert any("oms uninstall demo" in line for line in out)
+    assert any("manyagent uninstall demo" in line for line in out)
 
 
 # --------------------------------------------------------------------------- #
@@ -658,27 +662,27 @@ def test_consent_decline_while_installed_writes_no_marker(tmp_path: Path, monkey
 def test_run_cli_failure_prints_note_by_default(capsys: pytest.CaptureFixture[str]) -> None:
     import sys
 
-    from oms._installer import _run_cli
+    from manyagent._installer import _run_cli
 
     _run_cli(
         [sys.executable, "-c", "import sys; sys.stderr.write('it broke\\n'); sys.exit(1)"],
         description="doomed action",
     )
-    assert "oms: doomed action — exit 1: it broke" in capsys.readouterr().out
+    assert "manyagent: doomed action — exit 1: it broke" in capsys.readouterr().out
 
 
 def test_run_cli_failure_ok_suppresses_note(capsys: pytest.CaptureFixture[str]) -> None:
     """A pre-clear whose target was never registered exits nonzero — that IS
     the expected fresh-install case and must not print scary noise
-    (decision 2026-06-10: `oms: pre-clear ... — exit 1: No user-scoped MCP
+    (decision 2026-06-10: `manyagent: pre-clear ... — exit 1: No user-scoped MCP
     server found` on every first install)."""
     import sys
 
-    from oms._installer import _run_cli
+    from manyagent._installer import _run_cli
 
     _run_cli(
         [sys.executable, "-c", "import sys; sys.stderr.write('No user-scoped MCP server found\\n'); sys.exit(1)"],
-        description="pre-clear any existing oms MCP server (--scope user)",
+        description="pre-clear any existing manyagent MCP server (--scope user)",
         failure_ok=True,
     )
     assert capsys.readouterr().out == ""

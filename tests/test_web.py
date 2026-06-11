@@ -1,4 +1,4 @@
-"""M9 tests for oms.web — the read-only public surface (oms.web.md Verification).
+"""M9 tests for manyagent.web — the read-only public surface (manyagent.web.md Verification).
 
 Load-bearing invariants:
 
@@ -8,7 +8,7 @@ Load-bearing invariants:
 * Quarantined packets are **visible but flagged** (``quarantined: true``) and
   **excluded** from the ``/api/reuse`` "use as context" signal.
 * Every payload is the canonical ``KnowledgePacket`` shape; ``?p=`` resolves
-  the exact ``curator/<hex>`` URL ``oms.distill`` emits (round-trip).
+  the exact ``curator/<hex>`` URL ``manyagent.distill`` emits (round-trip).
 * Cursor pagination is stable across a mid-scan insert (no skip / no dup).
 """
 
@@ -19,10 +19,10 @@ from typing import Any
 import httpx
 import pytest
 
-from oms.bank import FakeBank, make_cursor
-from oms.core import clear_packet_cache
-from oms.distill import curate
-from oms.web import create_app
+from manyagent.bank import FakeBank, make_cursor
+from manyagent.core import clear_packet_cache
+from manyagent.distill import curate
+from manyagent.web import create_app
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +104,7 @@ async def test_packet_by_p_and_404(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# the exact URL oms.distill emits — curator/<hex> round-trip
+# the exact URL manyagent.distill emits — curator/<hex> round-trip
 # --------------------------------------------------------------------------- #
 
 
@@ -165,8 +165,8 @@ async def test_curate_url_roundtrips_without_a_session_row(fake_bank: FakeBank) 
 
 
 # --------------------------------------------------------------------------- #
-# the trace-body gate: pre-alpha default is PUBLIC (OMS_WEB_PUBLIC_RAW=1 +
-# migration 00008); OMS_WEB_PUBLIC_RAW=0 restores the original M9 invariant
+# the trace-body gate: pre-alpha default is PUBLIC (MANYAGENT_WEB_PUBLIC_RAW=1 +
+# migration 00008); MANYAGENT_WEB_PUBLIC_RAW=0 restores the original M9 invariant
 # (anon never gets a raw body, even ?include=raw — the datasmith lesson).
 # --------------------------------------------------------------------------- #
 
@@ -204,9 +204,9 @@ async def test_raw_body_gate(fake_bank: FakeBank, identity: str, include: str | 
 async def test_raw_body_gate_switch_off_restores_anon_exclusion(
     fake_bank: FakeBank, identity: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """OMS_WEB_PUBLIC_RAW=0 is the app-layer kill switch: anon loses the body
+    """MANYAGENT_WEB_PUBLIC_RAW=0 is the app-layer kill switch: anon loses the body
     AND the cast endpoint, even with the explicit ask; trusted is unaffected."""
-    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_RAW", "0")
     await fake_bank.put_session("S1")
     await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
     body = _envelope([{"ts": 0.0, "kind": "system", "text": "SECRET-TRACE-BODY"}])
@@ -378,7 +378,7 @@ async def test_terminal_text_shares_the_raw_gates(fake_bank: FakeBank, monkeypat
     async with _client(fake_bank, identity="trusted") as c:
         assert "LEAK" in (await c.get("/api/cast/S1/q1/text")).text  # auditing path
 
-    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_RAW", "0")
     await fake_bank.put_packet(_raw("S1/r2", created_at="2026-05-19T00:00:02+00:00"))
     await fake_bank.put_trace("S1/r2", _envelope([{"ts": 0.0, "kind": "system", "text": "x"}]), scrub_version="v1")
     async with _client(fake_bank) as c:
@@ -430,7 +430,7 @@ async def test_rendition_endpoint_shares_the_raw_gates(fake_bank: FakeBank, monk
     async with _client(fake_bank, identity="trusted") as c:
         assert (await c.get("/api/rendition/S1/q1/harness")).status_code == 200
 
-    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_RAW", "0")
     await fake_bank.put_packet(_raw("S1/r3", created_at="2026-05-19T00:00:03+00:00"))
     await fake_bank.put_rendition("S1/r3", "harness", body)
     async with _client(fake_bank) as c:
@@ -752,13 +752,13 @@ async def test_session_summary_404s_unknown_session(fake_bank: FakeBank) -> None
 
 # --------------------------------------------------------------------------- #
 # RLS DB-enforced pairing (gated): the read-only key cannot write at the DB,
-# even when a handler attempts it (the datasmith lesson, paired with oms.bank).
+# even when a handler attempts it (the datasmith lesson, paired with manyagent.bank).
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.integration
 async def test_public_bank_cannot_write_at_the_db() -> None:
-    from oms.bank import get_bank
+    from manyagent.bank import get_bank
 
     pub = get_bank("public")
     with pytest.raises(Exception):

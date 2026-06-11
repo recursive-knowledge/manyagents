@@ -1,5 +1,5 @@
 """M2 gated integration suite — the DB-enforced RLS security matrix (the
-highest-priority verification, oms.bank.md). Opt-in: ``OMS_RUN_INTEGRATION=1``
+highest-priority verification, manyagent.bank.md). Opt-in: ``MANYAGENT_RUN_INTEGRATION=1``
 with a local Bank up + migrated (``make bank-up && make bank-migrate``).
 
 Uses direct psycopg with ``SET ROLE`` (more reliable than minting JWTs) so the
@@ -19,7 +19,7 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-# oms's local Bank is on 544xx (config.toml) so it coexists with datasmith's.
+# manyagent's local Bank is on 544xx (config.toml) so it coexists with datasmith's.
 _DSN = "host=127.0.0.1 port=54422 dbname=postgres user=postgres password=postgres"
 
 
@@ -187,8 +187,8 @@ async def test_m2_m3_hydration_smoke_over_real_postgrest(conn: Any, monkeypatch:
     if env is None or "SERVICE_ROLE_KEY" not in env:
         pytest.skip("`supabase status -o env` unavailable; run `make bank-up`")
 
-    from oms.bank.supabase_bank import SupabaseBank
-    from oms.core import Packet, clear_packet_cache
+    from manyagent.bank.supabase_bank import SupabaseBank
+    from manyagent.core import Packet, clear_packet_cache
 
     sid = f"it-{uuid.uuid4().hex[:8]}"
     with conn.cursor() as cur:
@@ -198,8 +198,8 @@ async def test_m2_m3_hydration_smoke_over_real_postgrest(conn: Any, monkeypatch:
             (f"{sid}/p", sid),
         )
 
-    monkeypatch.setenv("OMS_BANK_URL", env.get("API_URL", "http://127.0.0.1:54421"))
-    monkeypatch.setenv("OMS_BANK_ADMIN_KEY", env["SERVICE_ROLE_KEY"])  # admin ⇒ full read
+    monkeypatch.setenv("MANYAGENT_BANK_URL", env.get("API_URL", "http://127.0.0.1:54421"))
+    monkeypatch.setenv("MANYAGENT_BANK_ADMIN_KEY", env["SERVICE_ROLE_KEY"])  # admin ⇒ full read
     clear_packet_cache()
 
     pkt = await Packet.fetch(f"{sid}/p", bank=SupabaseBank("admin"))

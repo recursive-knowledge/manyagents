@@ -1,7 +1,7 @@
-"""M5 tests for oms.adapters — ABC enforcement, registry resolution order,
+"""M5 tests for manyagent.adapters — ABC enforcement, registry resolution order,
 the PromptPrefixInjector round-trip, per-builtin conformance against sample
-native traces, capture()-is-raw (scrub happens in oms.capture), and the
-distill_model() provider seam (oms.adapters.md Verification)."""
+native traces, capture()-is-raw (scrub happens in manyagent.capture), and the
+distill_model() provider seam (manyagent.adapters.md Verification)."""
 
 from __future__ import annotations
 
@@ -10,16 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from oms.adapters import Adapter, AdapterError, NotInstalled, available, resolve, terminate_all_agents
-from oms.adapters import base as adapters_base
-from oms.adapters.base import PromptPrefixInjector
-from oms.adapters.builtin.claude import ClaudeAdapter
-from oms.adapters.builtin.codex import CodexAdapter
-from oms.adapters.builtin.gemini import GeminiAdapter
-from oms.adapters.builtin.qwen import QwenAdapter
-from oms.adapters.registry import _hub_fetch
-from oms.capture import validate
-from oms.utils import provider
+from manyagent.adapters import Adapter, AdapterError, NotInstalled, available, resolve, terminate_all_agents
+from manyagent.adapters import base as adapters_base
+from manyagent.adapters.base import PromptPrefixInjector
+from manyagent.adapters.builtin.claude import ClaudeAdapter
+from manyagent.adapters.builtin.codex import CodexAdapter
+from manyagent.adapters.builtin.gemini import GeminiAdapter
+from manyagent.adapters.builtin.qwen import QwenAdapter
+from manyagent.adapters.registry import _hub_fetch
+from manyagent.capture import validate
+from manyagent.utils import provider
 
 _SAMPLES = Path(__file__).parent / "fixtures" / "adapter_samples"
 _BUILTIN_FIDELITY = {ClaudeAdapter: "structured", CodexAdapter: "structured", GeminiAdapter: "pty"}
@@ -88,7 +88,7 @@ def _write_local_adapter(root: Path, name: str, marker: str) -> None:
     d = root / name
     d.mkdir(parents=True)
     (d / "__init__.py").write_text(
-        "from oms.adapters.base import Adapter\n"
+        "from manyagent.adapters.base import Adapter\n"
         "import subprocess\n"
         f"class _Local(Adapter):\n"
         f"    name = {name!r}\n"
@@ -102,27 +102,27 @@ def _write_local_adapter(root: Path, name: str, marker: str) -> None:
 
 
 def test_local_install_overrides_builtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
     _write_local_adapter(tmp_path, "claude", "local-claude-bin")
     resolved = resolve("claude")
     assert resolved is not ClaudeAdapter and resolved.binary == "local-claude-bin"
 
 
 def test_unknown_adapter_with_offline_hub_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
     assert _hub_fetch("acme") is None  # offline default
     with pytest.raises(AdapterError, match="no adapter 'acme'"):
         resolve("acme")
 
 
 def test_hub_not_found_then_installed_then_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
 
     def fake_hub(name: str) -> Path | None:
         _write_local_adapter(tmp_path, name, f"hub-{name}")
         return tmp_path / name
 
-    monkeypatch.setattr("oms.adapters.registry._hub_fetch", fake_hub)
+    monkeypatch.setattr("manyagent.adapters.registry._hub_fetch", fake_hub)
     resolved = resolve("acme")  # not local, not builtin → hub installs → local load
     assert resolved.binary == "hub-acme" and resolved.name == "acme"
 
@@ -140,7 +140,7 @@ def test_builtin_sample_normalizes_with_correct_fidelity(cls: type[Adapter], fid
     assert trace.source_fidelity == fidelity == cls.source_fidelity
     assert trace.adapter == cls.name and trace.session_id == "S"
     assert trace.events and all(e.kind in {"user", "agent", "tool_call", "tool_result", "system"} for e in trace.events)
-    assert trace.bytes_in > 0 and trace.bytes_out == 0  # raw: oms.capture sets bytes_out
+    assert trace.bytes_in > 0 and trace.bytes_out == 0  # raw: manyagent.capture sets bytes_out
 
 
 def test_structured_builtins_map_turn_structure() -> None:
@@ -160,9 +160,9 @@ def test_pty_builtin_is_unstructured_single_blob() -> None:
     assert "Peak RSS" in evs[0].text
 
 
-def test_capture_is_raw_scrub_happens_in_oms_capture() -> None:
+def test_capture_is_raw_scrub_happens_in_manyagent_capture() -> None:
     # The claude sample embeds a fake key; capture() must NOT scrub it (that is
-    # oms.capture's centralized job — a careless adapter cannot weaken safety).
+    # manyagent.capture's centralized job — a careless adapter cannot weaken safety).
     c = ClaudeAdapter(session_id="S", agent_id="S/a", trace_source=_SAMPLES / "claude.json")
     body = " ".join(e.text for e in c.capture().events)
     assert "sk-proj-LEAKLEAKLEAKLEAKLEAKLEAK" in body  # raw, faithful, un-scrubbed
@@ -173,9 +173,9 @@ def test_capture_without_trace_source_errors() -> None:
         ClaudeAdapter(session_id="S", agent_id="S/a").capture()
 
 
-async def test_capture_then_oms_capture_persist_scrubs_and_lands_raw_packet(fake_bank: object) -> None:
-    from oms.bank import FakeBank
-    from oms.capture import persist
+async def test_capture_then_manyagent_capture_persist_scrubs_and_lands_raw_packet(fake_bank: object) -> None:
+    from manyagent.bank import FakeBank
+    from manyagent.capture import persist
 
     bank = fake_bank if isinstance(fake_bank, FakeBank) else FakeBank()
     await bank.put_session("S")
@@ -190,15 +190,15 @@ async def test_capture_then_oms_capture_persist_scrubs_and_lands_raw_packet(fake
 
 
 # --------------------------------------------------------------------------- #
-# distill_model() — the oms.utils.provider seam
+# distill_model() — the manyagent.utils.provider seam
 # --------------------------------------------------------------------------- #
 
 
 def test_distill_model_none_when_binary_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(adapters_base.shutil, "which", lambda _b: None)
     assert ClaudeAdapter().distill_model() is None
-    monkeypatch.delenv("OMS_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("OMS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_MODEL", raising=False)
     with pytest.raises(provider.ProviderUnavailable):
         provider.resolve(adapter=ClaudeAdapter())  # no model, no OpenAI fallback
 
@@ -211,14 +211,14 @@ def test_distill_model_is_a_provider_when_binary_present(monkeypatch: pytest.Mon
     assert callable(p.complete) and callable(p.rate_limit_signal)
 
 
-def test_headless_complete_strips_oms_session_from_child_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The distiller is NOT the wrapped session: with OMS_SESSION inherited,
-    the user-scope oms._hook inside the spawned CLI would bind the distiller's
+def test_headless_complete_strips_manyagent_session_from_child_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distiller is NOT the wrapped session: with MANYAGENT_SESSION inherited,
+    the user-scope manyagent._hook inside the spawned CLI would bind the distiller's
     own harness session into the session's bindings file (the 2026-06-10
     wrong-session contamination) and receive its inject stash."""
-    import oms.adapters.builtin as builtin
+    import manyagent.adapters.builtin as builtin
 
-    monkeypatch.setenv("OMS_SESSION", "FA04-ESNF")
+    monkeypatch.setenv("MANYAGENT_SESSION", "FA04-ESNF")
     captured: dict[str, object] = {}
 
     def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
@@ -230,7 +230,7 @@ def test_headless_complete_strips_oms_session_from_child_env(monkeypatch: pytest
     out = builtin._HeadlessModel("claude", ["claude", "-p"]).complete("hi")
     assert out == "ok"
     env = captured["env"]
-    assert isinstance(env, dict) and "OMS_SESSION" not in env
+    assert isinstance(env, dict) and "MANYAGENT_SESSION" not in env
     assert env.get("PATH")  # the rest of the environment is preserved
 
 
@@ -240,7 +240,7 @@ def test_headless_complete_runs_in_hermetic_cwd(monkeypatch: pytest.MonkeyPatch)
     and blends it into the post as if it were session evidence."""
     import os as _os
 
-    import oms.adapters.builtin as builtin
+    import manyagent.adapters.builtin as builtin
 
     captured: dict[str, object] = {}
 
@@ -272,7 +272,7 @@ def test_claude_distill_extract_unwraps_result_envelope() -> None:
 
 
 def test_headless_complete_applies_adapter_extract(monkeypatch: pytest.MonkeyPatch) -> None:
-    import oms.adapters.builtin as builtin
+    import manyagent.adapters.builtin as builtin
 
     monkeypatch.setattr(adapters_base.shutil, "which", lambda b: f"/usr/bin/{b}")
     monkeypatch.setattr(

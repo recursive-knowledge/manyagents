@@ -1,7 +1,7 @@
-"""Tests for ``oms.testing`` — the simulated-conversation scaffolding.
+"""Tests for ``manyagent.testing`` — the simulated-conversation scaffolding.
 
 Each test here is a *conversation*, not a function call: the trial story (a
-real captured session — see the ``oms.testing`` docstring) replayed through
+real captured session — see the ``manyagent.testing`` docstring) replayed through
 the REAL lifecycle verbs and knowledge-loop handlers, with only the Bank, the
 LLM, and the wrapped agent CLI as scripted doubles. The assertions target the
 system's actual utility — evidence survives capture, accepted lessons persist
@@ -12,9 +12,9 @@ across sessions through the injection ledger.
 
 from __future__ import annotations
 
-from oms import cli
-from oms.bank import FakeBank
-from oms.testing import (
+from manyagent import cli
+from manyagent.bank import FakeBank
+from manyagent.testing import (
     Simulation,
     trial_bundle,
     trial_reflection,
@@ -134,7 +134,7 @@ async def test_seeded_bundle_injects_into_a_new_session(trial_bank: FakeBank, tm
     trial story's curated bundle via /inject, and the ledger records it."""
     from pathlib import Path
 
-    with Simulation(bank=trial_bank, home=Path(str(tmp_path)) / ".oms") as sim:
+    with Simulation(bank=trial_bank, home=Path(str(tmp_path)) / ".manyagent") as sim:
         await sim.start("S2")
         r = await sim.inject()  # defaults to the latest distill = the seeded bundle
         assert r.ok and r.saw("--- inject preview ---")
@@ -150,7 +150,7 @@ async def test_seeded_bundle_quarantine_refuses_inject(trial_bank: FakeBank, tmp
     from pathlib import Path
 
     await trial_bank.quarantine("curator/3df0178cd6811aee23579272", "auditor flagged")
-    with Simulation(bank=trial_bank, home=Path(str(tmp_path)) / ".oms") as sim:
+    with Simulation(bank=trial_bank, home=Path(str(tmp_path)) / ".manyagent") as sim:
         await sim.start("S2")
         r = await sim.inject(packet="curator/3df0178cd6811aee23579272")
         assert r.rc == 1 and r.saw("quarantined")
@@ -168,7 +168,7 @@ async def test_trial_reflection_still_passes_the_live_discipline(trial_bank: Fak
     captured; it must keep passing the CURRENT one — if the discipline
     tightens past the fixture, this canary (not some downstream simulation)
     is what fails."""
-    from oms.forum import parse_post
+    from manyagent.forum import parse_post
 
     record = {
         "id": "trial/canary01",
@@ -189,7 +189,7 @@ def test_trial_bundle_survives_the_shipped_grounding_parser_unchanged() -> None:
     real one (whitespace-normalized quote vs. searchable field values). If the
     discipline tightens past the fixture, this fails with the dropped item
     visible in the diff."""
-    from oms.distill.parse import validate_bundle
+    from manyagent.distill.parse import validate_bundle
 
     post = {
         "id": "trial/kds77s64",

@@ -1,5 +1,5 @@
 [project]
-name = "oh-my-swarm"
+name = "manyagent"
 version = "0.1.0"
 description = "Wrap installed coding-agent CLIs; capture traces, curate cross-session knowledge, serve a read-only viewer."
 authors = [{ name = "Atharva Sehgal", email = "atharva.sehgal@gmail.com" }]
@@ -15,34 +15,34 @@ classifiers = [
 ]
 # Runtime deps are declared per milestone as the code that imports them lands,
 # so `deptry src` (DEP002) and `make check` stay green at every boundary.
-# M0 scaffolding only needs python-dotenv (oms.env loading in __init__).
+# M0 scaffolding only needs python-dotenv (manyagent.env loading in __init__).
 dependencies = [
     "python-dotenv>=1.0.1",
     "httpx>=0.27",
     "supabase>=2.0",
     "pydantic>=2.0",
-    # M9 oms.web: read-only FastAPI surface + uvicorn server entrypoint.
+    # M9 manyagent.web: read-only FastAPI surface + uvicorn server entrypoint.
     "fastapi>=0.110",
     "uvicorn>=0.29",
-    # M11 in-agent surface: MCP server (oms._mcp) for Claude Code / Codex /
+    # M11 in-agent surface: MCP server (manyagent._mcp) for Claude Code / Codex /
     # Gemini, plus tomlkit for safe comment- and order-preserving merges into
     # the user's ~/.codex/config.toml during install.
     "mcp>=1.0",
     "tomlkit>=0.13",
     # M11 UX pass: the CLI presentation layer (consent panel, colored diff,
-    # status/uninstall/preflight styling) renders via rich in oms.utils.ui;
-    # output degrades to plain text when piped (OMS_COLOR=auto|always|never).
+    # status/uninstall/preflight styling) renders via rich in manyagent.utils.ui;
+    # output degrades to plain text when piped (MANYAGENT_COLOR=auto|always|never).
     "rich>=13.7",
     "pyte>=0.8.2",
 ]
 
 [project.scripts]
-oms = "oms.cli:main"
+ma = "manyagent.cli:main"
 
 [project.urls]
-Homepage = "https://oh-my-swarm.org/"
-Repository = "https://github.com/formula-code/oh-my-swarm"
-Documentation = "https://oh-my-swarm.org/"
+Homepage = "https://github.com/manyagent/manyagent"
+Repository = "https://github.com/manyagent/manyagent"
+Documentation = "https://github.com/manyagent/manyagent"
 
 [dependency-groups]
 dev = [
@@ -73,7 +73,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/oms"]
+packages = ["src/manyagent"]
 
 [tool.mypy]
 files = ["src"]
@@ -94,15 +94,15 @@ module = "postgrest.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "oms.bank.supabase_bank"
+module = "manyagent.bank.supabase_bank"
 disable_error_code = ["no-any-unimported", "import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "integration: requires a local Bank (Supabase); opt-in via OMS_RUN_INTEGRATION=1",
-    "online: requires installed agent CLIs / a live LLM; opt-in via OMS_RUN_ONLINE=1",
+    "integration: requires a local Bank (Supabase); opt-in via MANYAGENT_RUN_INTEGRATION=1",
+    "online: requires installed agent CLIs / a live LLM; opt-in via MANYAGENT_RUN_ONLINE=1",
 ]
 
 [tool.ruff]
@@ -152,12 +152,12 @@ ignore = [
     "E731",
     # try-except return (common in fallback patterns)
     "TRY300",
-    # subprocess call security (we control inputs; oms wraps trusted CLIs)
+    # subprocess call security (we control inputs; manyagent wraps trusted CLIs)
     "S603",
     # partial executable path (we use claude, codex, gemini, npx, git)
     "S607",
-    # builtin-argument-shadowing: oms's public vocabulary deliberately mirrors
-    # the frozen wire schema (`id`, `type`) and oms.core.md's documented
+    # builtin-argument-shadowing: manyagent's public vocabulary deliberately mirrors
+    # the frozen wire schema (`id`, `type`) and manyagent.core.md's documented
     # signatures (e.g. Packet.fetch(cls, id: str)). A001/A003+ stay active.
     "A002",
     # mutable class attr without ClassVar (acceptable for registries)
@@ -170,7 +170,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["oms"]
+known-first-party = ["manyagent"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S108", "PGH003", "B017", "SIM117", "F841"]

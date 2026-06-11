@@ -1,6 +1,6 @@
-"""M2 offline tests for oms.bank — retry, idempotent put, FakeBank round-trip,
+"""M2 offline tests for manyagent.bank — retry, idempotent put, FakeBank round-trip,
 atomic next_agent_seq, reuse_score, quarantine, migration integrity
-(oms.bank.md Verification; security/RLS matrix is the gated integration suite).
+(manyagent.bank.md Verification; security/RLS matrix is the gated integration suite).
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import pathlib
 
 import pytest
 
-from oms.bank import FakeBank, make_cursor, with_backoff
+from manyagent.bank import FakeBank, make_cursor, with_backoff
 
 _MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "supabase" / "migrations"
 

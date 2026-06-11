@@ -1,5 +1,5 @@
-"""M1 tests for oms.utils — sid codec, config precedence, provider, rate
-limit detection, log prefixes (oms.utils.md Verification)."""
+"""M1 tests for manyagent.utils — sid codec, config precedence, provider, rate
+limit detection, log prefixes (manyagent.utils.md Verification)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import httpx
 import pytest
 import respx
 
-from oms.utils import config, messages, provider, sid, ui
-from oms.utils.log import get_logger
-from oms.utils.provider import (
+from manyagent.utils import config, messages, provider, sid, ui
+from manyagent.utils.log import get_logger
+from manyagent.utils.provider import (
     OpenAICompatibleProvider,
     ProviderUnavailable,
     RateLimit,
@@ -94,16 +94,16 @@ def test_sid_parse_rejects_unfixable() -> None:
 
 
 def test_config_precedence_cli_over_env_over_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_X", raising=False)
-    assert config.resolve("OMS_X", "dflt") == "dflt"  # default
-    monkeypatch.setenv("OMS_X", "from_env")
-    assert config.resolve("OMS_X", "dflt") == "from_env"  # env > default
-    assert config.resolve("OMS_X", "dflt", cli_value="from_cli") == "from_cli"  # cli > env
+    monkeypatch.delenv("MANYAGENT_X", raising=False)
+    assert config.resolve("MANYAGENT_X", "dflt") == "dflt"  # default
+    monkeypatch.setenv("MANYAGENT_X", "from_env")
+    assert config.resolve("MANYAGENT_X", "dflt") == "from_env"  # env > default
+    assert config.resolve("MANYAGENT_X", "dflt", cli_value="from_cli") == "from_cli"  # cli > env
 
 
 def test_config_casts() -> None:
-    assert config.resolve("OMS_MISSING", 42, cast=int) == 42
-    assert config.resolve("OMS_MISSING", 1.5, cast=float) == 1.5
+    assert config.resolve("MANYAGENT_MISSING", 42, cast=int) == 42
+    assert config.resolve("MANYAGENT_MISSING", 1.5, cast=float) == 1.5
 
 
 @pytest.mark.parametrize(
@@ -125,11 +125,11 @@ def test_config_as_bool(raw: str, expected: bool) -> None:
 
 
 def test_config_snapshot_constants_have_expected_defaults() -> None:
-    assert config.OMS_DISTILL_TIMEOUT_S == 600
-    assert config.OMS_TRACE_MAX_BYTES == 2 * 1024 * 1024
-    assert config.OMS_CURATOR_MODE == "auto"
-    assert config.OMS_RATING_PROMPT is True
-    assert config.OMS_NONINTERACTIVE is False
+    assert config.MANYAGENT_DISTILL_TIMEOUT_S == 600
+    assert config.MANYAGENT_TRACE_MAX_BYTES == 2 * 1024 * 1024
+    assert config.MANYAGENT_CURATOR_MODE == "auto"
+    assert config.MANYAGENT_RATING_PROMPT is True
+    assert config.MANYAGENT_NONINTERACTIVE is False
 
 
 # --------------------------------------------------------------------------- #
@@ -155,24 +155,24 @@ class _AdapterWithModel:
 
 
 def test_provider_resolve_adapter_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("OMS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_MODEL", raising=False)
     p = provider.resolve(adapter=_AdapterWithModel())
     assert p.complete("hi") == "echo:hi"
 
 
 def test_provider_resolve_openai_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_LLM_BASE_URL", "https://llm.example/v1")
-    monkeypatch.setenv("OMS_LLM_MODEL", "gpt-test")
-    monkeypatch.setenv("OMS_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("MANYAGENT_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("MANYAGENT_LLM_MODEL", "gpt-test")
+    monkeypatch.setenv("MANYAGENT_LLM_API_KEY", "sk-test")
     p = provider.resolve(adapter=None)
     assert isinstance(p, OpenAICompatibleProvider)
     assert p.model == "gpt-test"
 
 
 def test_provider_resolve_hard_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OMS_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("OMS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("MANYAGENT_LLM_MODEL", raising=False)
     with pytest.raises(ProviderUnavailable, match="ships no keys"):
         provider.resolve(adapter=None)
 
@@ -244,12 +244,12 @@ def test_rate_limit_retry_after_seconds() -> None:
 
 def test_log_emits_bracketed_level_prefixes() -> None:
     logger = get_logger("m1test")
-    assert logger.name == "oms.m1test"
-    handler = logging.getLogger("oms").handlers[0]
+    assert logger.name == "manyagent.m1test"
+    handler = logging.getLogger("manyagent").handlers[0]
     fmt = handler.formatter
     assert fmt is not None
     for level, tag in ((logging.INFO, "[INFO]"), (logging.DEBUG, "[DEBUG]")):
-        rec = logging.LogRecord("oms.x", level, __file__, 1, "hello", None, None)
+        rec = logging.LogRecord("manyagent.x", level, __file__, 1, "hello", None, None)
         assert fmt.format(rec).startswith(f"{tag} hello")
 
 
@@ -259,14 +259,14 @@ def test_log_emits_bracketed_level_prefixes() -> None:
 
 
 def test_ui_render_is_plain_text_when_color_never(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     from rich.text import Text
 
     assert ui.render(Text("hello", style="bold red")) == "hello"
 
 
 def test_ui_render_emits_ansi_when_color_always(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_COLOR", "always")
+    monkeypatch.setenv("MANYAGENT_COLOR", "always")
     monkeypatch.delenv("NO_COLOR", raising=False)  # rich itself strips colors (not attributes) under NO_COLOR
     monkeypatch.setenv("TERM", "xterm-256color")
     from rich.text import Text
@@ -277,9 +277,9 @@ def test_ui_render_emits_ansi_when_color_always(monkeypatch: pytest.MonkeyPatch)
 
 def test_ui_no_color_env_downgrades_auto_to_never(monkeypatch: pytest.MonkeyPatch) -> None:
     """NO_COLOR (no-color.org) forces plain output in auto mode — even if the
-    stream were a TTY. An explicit OMS_COLOR=always wins over it (the spec's
+    stream were a TTY. An explicit MANYAGENT_COLOR=always wins over it (the spec's
     software-level-config precedence)."""
-    monkeypatch.setenv("OMS_COLOR", "auto")
+    monkeypatch.setenv("MANYAGENT_COLOR", "auto")
     monkeypatch.setenv("NO_COLOR", "1")
     assert ui.console().is_terminal is False  # forced off, not auto-detected
 
@@ -287,7 +287,7 @@ def test_ui_no_color_env_downgrades_auto_to_never(monkeypatch: pytest.MonkeyPatc
 def test_ui_render_soft_wrap_keeps_long_lines_intact(monkeypatch: pytest.MonkeyPatch) -> None:
     """A one-line message longer than the 80-col non-TTY width must not be
     wrapped — `grep` and substring assertions over CLI output rely on it."""
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     from rich.text import Text
 
     long_line = "x" * 300
@@ -304,9 +304,9 @@ def test_ui_tilde_abbreviates_home_for_display_only() -> None:
 
 def test_ui_style_diff_preserves_content_and_colors_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     diff = "=== f ===\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n context"
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     assert ui.render(ui.style_diff(diff)) == diff  # plain rendering is byte-identical
-    monkeypatch.setenv("OMS_COLOR", "always")
+    monkeypatch.setenv("MANYAGENT_COLOR", "always")
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm-256color")
     assert "\x1b[" in ui.render(ui.style_diff(diff))
@@ -318,7 +318,7 @@ def test_ui_style_diff_preserves_content_and_colors_lines(monkeypatch: pytest.Mo
 
 
 def _run_picker(propose: int, *keys: str) -> tuple[tuple[bool, int | None], str]:
-    from oms.utils import ui
+    from manyagent.utils import ui
 
     feed = list(keys)
     frames: list[str] = []
@@ -350,7 +350,7 @@ def test_pick_star_digit_jump_skip_and_discard() -> None:
 
 
 def test_pick_star_legend_says_which_end_is_best() -> None:
-    from oms.utils import messages
+    from manyagent.utils import messages
 
     _, screen = _run_picker(3, "enter")
     assert messages.COMMIT_PICKER_SCALE_LOW in screen and messages.COMMIT_PICKER_SCALE_HIGH in screen
@@ -360,7 +360,7 @@ def test_render_post_labels_every_schema_field(monkeypatch: pytest.MonkeyPatch) 
     """The commit-gate preview renders the post-mortem as a labeled panel —
     human field names, values verbatim, confidence as the subtitle — instead
     of a raw json.dumps blob."""
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     structured = {
         "load_bearing_assumption": "the regex recompiled per call — that's the slowdown",
         "evidence": "cumtime 4.2s in tokenize()",
@@ -382,10 +382,10 @@ def test_render_post_labels_every_schema_field(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_render_post_wraps_to_the_cap_then_truncates_with_a_marker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A field wraps in full up to OMS_POST_PREVIEW_FIELD_CHARS, then is cut
+    """A field wraps in full up to MANYAGENT_POST_PREVIEW_FIELD_CHARS, then is cut
     at a word boundary with the dim `… (+N chars)` marker; ``full=True`` (the
     `d` expansion) renders every character with no marker."""
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     long_evidence = ("word " * 200).strip()  # 999 chars, far past the 280 cap
     structured = {
         "load_bearing_assumption": "short",
@@ -402,7 +402,7 @@ def test_render_post_wraps_to_the_cap_then_truncates_with_a_marker(monkeypatch: 
     assert "chars)" not in full
     assert full.count("word") == 200
     # the cap is a tunable: 0 disables truncation entirely
-    monkeypatch.setenv("OMS_POST_PREVIEW_FIELD_CHARS", "0")
+    monkeypatch.setenv("MANYAGENT_POST_PREVIEW_FIELD_CHARS", "0")
     assert "chars)" not in ui.render_post(structured, kind="reflection")
 
 
@@ -425,7 +425,7 @@ def test_render_post_falls_back_to_highlighted_json(monkeypatch: pytest.MonkeyPa
     """A body that is not the post-mortem shape (defensive: the parser ran
     first) falls back to the plain header + JSON — em-dashes and quotes stay
     human-readable (ensure_ascii=False), never \\u-escaped."""
-    monkeypatch.setenv("OMS_COLOR", "never")
+    monkeypatch.setenv("MANYAGENT_COLOR", "never")
     out = ui.render_post({"weird": "shape — kept readable"}, kind="reflection")
     assert out.startswith(messages.POST_PROPOSED_HEADER)
     assert '"weird"' in out and "shape — kept readable" in out
@@ -482,7 +482,7 @@ def test_read_key_drains_full_csi_sequences_without_leaking_tail_bytes() -> None
 def test_messages_catalog_is_pure_text() -> None:
     """Every public constant is a plain string; every template formats with
     its documented fields (a rename in the catalog must fail loudly here)."""
-    from oms.utils import messages
+    from manyagent.utils import messages
 
     consts = {k: v for k, v in vars(messages).items() if k.isupper()}
     assert consts and all(isinstance(v, str) for v in consts.values())

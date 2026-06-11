@@ -1,5 +1,5 @@
 """Simulate the Overview's Alice/Bob (… Carol/Dave/Erin) stories end-to-end
-through the **real** ``oms.cli`` handlers on a shared in-memory FakeBank.
+through the **real** ``manyagent.cli`` handlers on a shared in-memory FakeBank.
 
 Nothing here is mocked except the three seams a real run would shell out to:
 the wrapped agent's headless model (returns canned post JSON), the PTY spawn
@@ -21,14 +21,14 @@ import os
 import tempfile
 from typing import Any
 
-os.environ["OMS_CURATOR_MODE"] = "local"  # local curator; no server attempt
-os.environ["OMS_HOME"] = tempfile.mkdtemp(prefix="oms-sim-")
+os.environ["MANYAGENT_CURATOR_MODE"] = "local"  # local curator; no server attempt
+os.environ["MANYAGENT_HOME"] = tempfile.mkdtemp(prefix="manyagent-sim-")
 
-from oms import cli
-from oms.bank import FakeBank
-from oms.capture.models import CanonicalTrace, TraceEvent
+from manyagent import cli
+from manyagent.bank import FakeBank
+from manyagent.capture.models import CanonicalTrace, TraceEvent
 
-_resolve_mod = importlib.import_module("oms.distill.resolve")
+_resolve_mod = importlib.import_module("manyagent.distill.resolve")
 
 # Mutable seam state: the next post the wrapped agent "writes", and the next
 # bundle the curator "returns". Set immediately before the verb that consumes it.
@@ -66,7 +66,7 @@ class _Adapter:
         )
 
 
-from oms import _handlers as h  # noqa: E402
+from manyagent import _handlers as h  # noqa: E402
 
 h._adapter_for = lambda name, *, session_id, agent_id: _Adapter(name, session_id, agent_id)  # type: ignore[assignment]
 h._validate_adapter = lambda name: None  # type: ignore[assignment]  # doubles, not PATH binaries — skip the register gate
@@ -98,13 +98,13 @@ def _args(*argv: str) -> Any:
 async def verb(bank: FakeBank, *argv: str, inputs: tuple[str, ...] = (), post: str | None = None) -> list[str]:  # noqa: C901 — one elif per verb is the dispatch; refactoring would be artificial
     """Drive one verb through its real handler. ``post`` sets the canned agent
     JSON for self-distill/discuss. M11.4: the four knowledge-loop verbs live
-    in ``oms._handlers`` (kwargs API, no argparse coupling); the session-
-    lifecycle verbs stay in ``oms.cli._DISPATCH``."""
+    in ``manyagent._handlers`` (kwargs API, no argparse coupling); the session-
+    lifecycle verbs stay in ``manyagent.cli._DISPATCH``."""
     if post is not None:
         STATE["post"] = post
     io = _IO(*inputs)
     name = argv[0]
-    if name == "run":  # `oms <adapter>` — the PTY leg
+    if name == "run":  # `manyagent <adapter>` — the PTY leg
         rc = await cli._do_run_agent(argv[1], list(argv[2:]), None, bank=bank, io=io.pair())
     elif name == "self-distill":
         rc = await h.do_self_distill(
@@ -208,7 +208,7 @@ async def story_a(bank: FakeBank) -> None:
     alice_post = next(
         p["id"] for p in bank._packets.values() if p.get("kind") == "reflection" and p.get("goal") == "cfd-solver"
     )
-    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `oms end`.")
+    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `manyagent end`.")
     print("  She told no one. The goal — not a session id — is the only key.")
 
     # --- Bob (Codex), a different org, SAME goal, new session ------------
@@ -433,7 +433,7 @@ async def story_c(bank: FakeBank) -> None:
     print("  it with 'low' confidence; none would generalise it alone.")
 
     # A newcomer to *anything* numerically heavy: a session with NO goal lands
-    # in the default bucket (OMS_DEFAULT_GOAL) ⇒ the CLI selects
+    # in the default bucket (MANYAGENT_DEFAULT_GOAL) ⇒ the CLI selects
     # scope=cross_goal. The (canned) curator emits ONE insight with confidence
     # 'low'; the **real** parser sees evidence from ≥2 distinct sessions and
     # mechanically promotes it to high (recurrence promotion).

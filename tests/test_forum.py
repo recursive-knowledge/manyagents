@@ -1,7 +1,7 @@
-"""M6 tests for oms.forum — mechanical parser (missing-field / bad-ref /
+"""M6 tests for manyagent.forum — mechanical parser (missing-field / bad-ref /
 banned-meta / forge / no-history / reply-to-quarantined), the byte-identical
 ANTI_META_BLOCK, /discuss retrieval-before-post, and C1 (rejected post not
-persisted; preference is distill-only) (oms.forum.md Verification)."""
+persisted; preference is distill-only) (manyagent.forum.md Verification)."""
 
 from __future__ import annotations
 
@@ -9,18 +9,18 @@ from typing import Any
 
 import pytest
 
-from oms import forum
-from oms.bank import FakeBank
-from oms.core import Packet
-from oms.forum import (
+from manyagent import forum
+from manyagent.bank import FakeBank
+from manyagent.core import Packet
+from manyagent.forum import (
     ANTI_META_BLOCK,
     assert_anti_meta_rules_present,
     clear_discuss_gate,
     enforce_retrieved_before_reply,
     parse_post,
 )
-from oms.forum import anti_meta as anti_meta_mod
-from oms.forum.discuss import retrieve
+from manyagent.forum import anti_meta as anti_meta_mod
+from manyagent.forum.discuss import retrieve
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +240,12 @@ async def test_valid_post_round_trips_and_carries_no_preference(fake_bank: FakeB
 
 
 # --------------------------------------------------------------------------- #
-# render_post_prompt — agent-side prompt (M8 added the renderer to oms.forum)
+# render_post_prompt — agent-side prompt (M8 added the renderer to manyagent.forum)
 # --------------------------------------------------------------------------- #
 
 
 def test_render_post_prompt_embeds_anti_meta_and_schema() -> None:
-    from oms.forum import POST_ANTI_META_BLOCK, render_post_prompt
+    from manyagent.forum import POST_ANTI_META_BLOCK, render_post_prompt
 
     p = render_post_prompt(kind="reflection", goal="speed", guidance="focus on the hot loop")
     assert POST_ANTI_META_BLOCK in p  # the post-flow discipline (2026-06-11)
@@ -260,8 +260,8 @@ def test_post_anti_meta_block_shares_blacklist_without_curator_referents() -> No
     (single source of truth) but none of the curator block's foreign
     referents — a live run (2026-06-11) showed the headless distiller
     following ARC/'insights'/'evidence_post_ids' rules into a reflection."""
-    from oms.forum import POST_ANTI_META_BLOCK, render_post_prompt
-    from oms.forum.anti_meta import BANNED_META_PHRASES
+    from manyagent.forum import POST_ANTI_META_BLOCK, render_post_prompt
+    from manyagent.forum.anti_meta import BANNED_META_PHRASES
 
     for phrase in BANNED_META_PHRASES:
         assert phrase in POST_ANTI_META_BLOCK  # the blacklist the parser enforces
@@ -272,7 +272,7 @@ def test_post_anti_meta_block_shares_blacklist_without_curator_referents() -> No
 
 
 def test_render_post_prompt_reply_no_history_forbids_citation() -> None:
-    from oms.forum import render_post_prompt
+    from manyagent.forum import render_post_prompt
 
     p = render_post_prompt(kind="reply", goal="g", prior_posts=[])
     assert "no-history hardening" in p and "do NOT reference any post id" in p
@@ -287,7 +287,7 @@ def test_render_post_prompt_trace_context_section() -> None:
     """A headless caller's model did not live the session, so the trace must
     travel inside the prompt (2026-06-10); the in-agent MCP path passes None
     and gets no section."""
-    from oms.forum import render_post_prompt
+    from manyagent.forum import render_post_prompt
 
     p = render_post_prompt(kind="reflection", goal="g", trace_context="user: profile it\nagent: cumtime 4.2s")
     assert "--- BEGIN TRACE ---" in p and "cumtime 4.2s" in p and "--- END TRACE ---" in p

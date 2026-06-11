@@ -1,4 +1,4 @@
-"""M13.1 tests for ``oms.adapters.miners`` — the Claude conversation miner.
+"""M13.1 tests for ``manyagent.adapters.miners`` — the Claude conversation miner.
 
 Headlines: hook-tier binding reads exactly the bound transcript paths
 (surviving ``/clear``'s multiple session files), the scan tier falls back to
@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-from oms.adapters.base import MineContext
-from oms.adapters.miners.claude import MINER_VERSION, mine
+from manyagent.adapters.base import MineContext
+from manyagent.adapters.miners.claude import MINER_VERSION, mine
 
 
 def _entry(etype: str, content: Any, *, ts: str = "2026-06-10T17:52:00.000Z", sid: str = "hs-1") -> str:
@@ -115,7 +115,7 @@ def test_scrub_runs_before_cap_so_no_subfloor_credential_fragment(tmp_path: Path
     """A credential straddling the per-turn cap must be redacted, not
     truncated to a sub-floor fragment the regex misses (cap-before-scrub
     would leak the prefix)."""
-    from oms.adapters.miners.claude import _TURN_TEXT_CAP
+    from manyagent.adapters.miners.claude import _TURN_TEXT_CAP
 
     key = "sk-ant-api03-" + "Z" * 40
     text = "A" * (_TURN_TEXT_CAP - 5) + key  # the key straddles the cap boundary
@@ -131,7 +131,7 @@ def test_scrub_runs_before_cap_so_no_subfloor_credential_fragment(tmp_path: Path
 def test_artifact_is_size_bounded(tmp_path: Path) -> None:
     """A huge run can't store an unbounded body: over budget → trailing turns
     drop and completeness downgrades (mirrors the raw-trace bound)."""
-    from oms.adapters.miners.claude import _MAX_ARTIFACT_BYTES
+    from manyagent.adapters.miners.claude import _MAX_ARTIFACT_BYTES
 
     big = "x" * 3000
     lines = [_entry("user", big) for _ in range(800)]  # ~2.4 MB pre-cap
@@ -188,7 +188,7 @@ def test_missing_file_among_bound_marks_partial(tmp_path: Path) -> None:
 
 
 def test_claude_adapter_delegates_to_miner(tmp_path: Path) -> None:
-    from oms.adapters.builtin.claude import ClaudeAdapter
+    from manyagent.adapters.builtin.claude import ClaudeAdapter
 
     t1 = _transcript(tmp_path / "one.jsonl")
     adapter = ClaudeAdapter(session_id="S1", agent_id="S1/agent-001-claude")

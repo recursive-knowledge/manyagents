@@ -1,11 +1,11 @@
-"""M11.4 tests for ``oms._handlers`` — the four knowledge-loop verbs.
+"""M11.4 tests for ``manyagent._handlers`` — the four knowledge-loop verbs.
 
-These moved out of ``oms.cli`` when M11.4 ripped the bash slash subcommands;
+These moved out of ``manyagent.cli`` when M11.4 ripped the bash slash subcommands;
 the same C1 / retrieval / accept-reject behaviour is now tested by calling
 the handlers directly with kwargs (no argparse Namespace). The verbs are
 exposed to users **inside the wrapped agent** via the MCP server +
 per-adapter skills — this module covers the underlying handler functions
-that both the in-agent surface (via ``oms._mcp``) and any future
+that both the in-agent surface (via ``manyagent._mcp``) and any future
 programmatic caller rely on.
 
 The headline case stays **C1**: a rejected/parser-refused post is NOT
@@ -21,17 +21,17 @@ from typing import Any
 
 import pytest
 
-from oms import _handlers as h
-from oms.bank import FakeBank
+from manyagent import _handlers as h
+from manyagent.bank import FakeBank
 
 
 @pytest.fixture(autouse=True)
 def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_HOME", str(tmp_path / ".oms"))
-    monkeypatch.delenv("OMS_NONINTERACTIVE", raising=False)
-    monkeypatch.delenv("OMS_SESSION", raising=False)
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")
-    from oms.forum import clear_discuss_gate
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path / ".manyagent"))
+    monkeypatch.delenv("MANYAGENT_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")
+    from manyagent.forum import clear_discuss_gate
 
     clear_discuss_gate()
 
@@ -92,7 +92,7 @@ def _patch_adapter(monkeypatch: pytest.MonkeyPatch, adapter: FakeAdapter) -> Non
 
 async def _seed_session(bank: FakeBank, *, sid: str = "S1", goal: str | None = "speed") -> None:
     await bank.put_session(sid, goal=goal)
-    from oms.cli import _write_active
+    from manyagent.cli import _write_active
 
     _write_active(sid)
 
@@ -144,7 +144,7 @@ async def test_noninteractive_self_distill_accepts_unrated(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     await _seed_session(fake_bank)
     _patch_adapter(monkeypatch, FakeAdapter(json.dumps(_GOOD)))
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted().io())
@@ -210,7 +210,7 @@ async def test_inject_noninteractive_denied_no_ledger(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OMS_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     await _seed_session(fake_bank)
     pid = await _seed_distill(fake_bank)
     s = Scripted()
@@ -293,10 +293,10 @@ def _write_binding(
 ) -> None:
     tp = tmp_path / f"transcript-{harness_id}.jsonl"
     tp.write_text("\n".join(json.dumps(ln) for ln in transcript_lines), encoding="utf-8")
-    bindings = Path(os.environ["OMS_HOME"]).expanduser() / "bindings"
+    bindings = Path(os.environ["MANYAGENT_HOME"]).expanduser() / "bindings"
     bindings.mkdir(parents=True, exist_ok=True)
     rec = {
-        "oms_session": sid,
+        "manyagent_session": sid,
         "event": "SessionEnd",
         "harness_session_id": harness_id,
         "transcript_path": str(tp),
@@ -361,7 +361,7 @@ async def test_self_distill_falls_back_to_raw_packet(fake_bank: FakeBank, monkey
 async def test_trace_context_scrubbed_and_bounded(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    monkeypatch.setenv("OMS_DISTILL_CONTEXT_MAX_BYTES", "600")
+    monkeypatch.setenv("MANYAGENT_DISTILL_CONTEXT_MAX_BYTES", "600")
     await _seed_session(fake_bank)
     secret = "sk-ant-api03-" + "A" * 24
     _write_binding(
@@ -417,7 +417,7 @@ async def test_trace_context_drops_harness_scaffold_turns(
 ) -> None:
     """Slash-command envelopes and injected skill bodies are harness plumbing,
     not dialogue — left in, they dominate a short session and the distiller
-    reflects on oms itself (observed 2026-06-11)."""
+    reflects on manyagent itself (observed 2026-06-11)."""
     await _seed_session(fake_bank)
     _write_binding(
         tmp_path,
@@ -448,7 +448,7 @@ async def test_self_distill_no_trace_no_section(fake_bank: FakeBank, monkeypatch
 
 # --------------------------------------------------------------------------- #
 # register gate: minting an agent row requires a real, runnable adapter
-# (decision 2026-06-10 — `oms register agent` used to persist a Bank row +
+# (decision 2026-06-10 — `manyagent register agent` used to persist a Bank row +
 # viewer URL for a name that resolves to nothing and isn't on PATH)
 # --------------------------------------------------------------------------- #
 
@@ -459,7 +459,7 @@ async def test_resolve_agent_unknown_adapter_persists_nothing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path / "adapters"))
     monkeypatch.setattr(h, "_validate_adapter", adapter_gate)  # the real gate
     await _seed_session(fake_bank)
     with pytest.raises(SystemExit, match="unknown adapter 'agent'"):
@@ -470,9 +470,9 @@ async def test_resolve_agent_unknown_adapter_persists_nothing(
 async def test_validate_adapter_binary_off_path_exits(
     adapter_gate: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    import oms.adapters.base as base
+    import manyagent.adapters.base as base
 
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path / "adapters"))
     monkeypatch.setattr(base.shutil, "which", lambda _b: None)
     with pytest.raises(SystemExit, match="not on PATH"):
         adapter_gate("claude")
@@ -481,9 +481,9 @@ async def test_validate_adapter_binary_off_path_exits(
 async def test_validate_adapter_ok_when_binary_present(
     adapter_gate: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    import oms.adapters.base as base
+    import manyagent.adapters.base as base
 
-    monkeypatch.setenv("OMS_ADAPTERS_DIR", str(tmp_path / "adapters"))
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path / "adapters"))
     monkeypatch.setattr(base.shutil, "which", lambda _b: "/usr/bin/claude")
     adapter_gate("claude")  # builtin + binary on PATH: no raise
 

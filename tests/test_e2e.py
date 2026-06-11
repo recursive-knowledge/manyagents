@@ -1,11 +1,11 @@
-"""M10 end-to-end: the Overview transcript driven through ``oms.cli``.
+"""M10 end-to-end: the Overview transcript driven through ``manyagent.cli``.
 
 `test_cli.py` already covers each `_do_*` verb in isolation. This file adds the
 *only* thing isolation cannot: that the verbs **compose** — one shared
 FakeBank, the real handlers in sequence, every cross-verb state hand-off
 asserted (active-session file, auto-registered agent, the four packet types,
 the injection ledger row). Plus the two-stage SIGINT exercised from inside the
-run-agent leg (the one place `oms` wraps a live child).
+run-agent leg (the one place `manyagent` wraps a live child).
 
 Seams are substituted, never the verbs: `_adapter_for` → a fake adapter whose
 headless model returns canned JSON (so the real `_agent_json`/forum parser
@@ -21,19 +21,19 @@ from typing import Any
 
 import pytest
 
-from oms import cli
-from oms.bank import FakeBank
-from oms.capture.models import CanonicalTrace, TraceEvent
-from oms.core import clear_packet_cache
+from manyagent import cli
+from manyagent.bank import FakeBank
+from manyagent.capture.models import CanonicalTrace, TraceEvent
+from manyagent.core import clear_packet_cache
 
 
 @pytest.fixture(autouse=True)
 def _env(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OMS_HOME", str(tmp_path / ".oms"))
-    monkeypatch.delenv("OMS_NONINTERACTIVE", raising=False)
-    monkeypatch.delenv("OMS_SESSION", raising=False)
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")  # E2E never touches ~/.claude
-    from oms.forum import clear_discuss_gate
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path / ".manyagent"))
+    monkeypatch.delenv("MANYAGENT_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")  # E2E never touches ~/.claude
+    from manyagent.forum import clear_discuss_gate
 
     clear_discuss_gate()
     clear_packet_cache()
@@ -74,7 +74,7 @@ class _FakeModel:
 class _FakeAdapter:
     """The fake-adapter seam: a headless model that returns canned JSON, and a
     `capture()` returning a minimal CanonicalTrace so the real
-    `oms.capture.persist` writes the `raw` packet (the run-agent leg)."""
+    `manyagent.capture.persist` writes the `raw` packet (the run-agent leg)."""
 
     name = "claude"
     binary = "claude"
@@ -106,11 +106,11 @@ async def _run(handler: Any, args: Any, bank: FakeBank, *responses: str) -> tupl
 
 
 async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    # M11.4: the four knowledge-loop verbs live in ``oms._handlers``; the bash
+    # M11.4: the four knowledge-loop verbs live in ``manyagent._handlers``; the bash
     # subcommands are gone. The E2E drives them DIRECTLY via the kwargs API —
-    # which is exactly how the MCP server (oms._mcp) and any future
+    # which is exactly how the MCP server (manyagent._mcp) and any future
     # programmatic caller invokes them.
-    from oms import _handlers as h
+    from manyagent import _handlers as h
 
     adapter = _FakeAdapter(json.dumps(_GOOD))
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: adapter)
@@ -155,12 +155,12 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
             }
         ]
     })
-    # `oms.distill.resolve` the *name* is the re-exported function — it shadows
+    # `manyagent.distill.resolve` the *name* is the re-exported function — it shadows
     # the submodule in the package namespace, and `import … as` resolves the
     # shadowed attribute too. Fetch the real submodule from sys.modules.
     import importlib
 
-    _resolve_mod = importlib.import_module("oms.distill.resolve")
+    _resolve_mod = importlib.import_module("manyagent.distill.resolve")
     monkeypatch.setattr(_resolve_mod, "_discover_local_model", lambda: _FakeModel(bundle))
 
     # 5. /discuss --stance disagree  → retrieval-before-post enforced internally.
@@ -211,9 +211,9 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
 
 def test_sigint_two_stage_during_run_agent_leg(monkeypatch: pytest.MonkeyPatch) -> None:
     """The two-stage child SIGINT, exercised from inside the run-agent leg —
-    the one place `oms` wraps a live child (datasmith precedent)."""
+    the one place `manyagent` wraps a live child (datasmith precedent)."""
     forces: list[bool] = []
-    monkeypatch.setattr("oms.adapters.terminate_all_agents", lambda *, force=False: forces.append(force))
+    monkeypatch.setattr("manyagent.adapters.terminate_all_agents", lambda *, force=False: forces.append(force))
 
     class _Exit(SystemExit):
         pass
@@ -223,8 +223,8 @@ def test_sigint_two_stage_during_run_agent_leg(monkeypatch: pytest.MonkeyPatch) 
     # First Ctrl-C arrives *while the wrapped agent is running* (inside the PTY
     # leg): the handler SIGTERMs the child, then KeyboardInterrupt unwinds.
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: cli._sigint_handler(2, None))
-    # M11.4: `_adapter_for` lives in `oms._handlers` now.
-    from oms import _handlers as h
+    # M11.4: `_adapter_for` lives in `manyagent._handlers` now.
+    from manyagent import _handlers as h
 
     monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: _FakeAdapter("{}"))
 

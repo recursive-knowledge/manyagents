@@ -1,6 +1,6 @@
 """M11 per-adapter installer tests.
 
-Validates that ``oms.adapters.skills.<name>.install`` (and the
+Validates that ``manyagent.adapters.skills.<name>.install`` (and the
 ``Adapter.install_skills`` method that wraps it) writes exactly the files
 the agent expects, idempotently, and registers/unregisters the MCP server
 via the agent's *official* CLI (``claude mcp add`` / ``claude mcp remove``)
@@ -23,18 +23,18 @@ from typing import Any
 
 import pytest
 
-from oms._installer import load_manifest, uninstall
-from oms.adapters.builtin.claude import ClaudeAdapter
-from oms.adapters.skills.claude import build_plan, install
+from manyagent._installer import load_manifest, uninstall
+from manyagent.adapters.builtin.claude import ClaudeAdapter
+from manyagent.adapters.skills.claude import build_plan, install
 
 
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect ``Path.home()`` to a tmp dir so the user's real ~/.claude is
-    NEVER touched. Sets ``OMS_INSTALL_SKILLS=auto`` (silent consent) and
+    NEVER touched. Sets ``MANYAGENT_INSTALL_SKILLS=auto`` (silent consent) and
     monkeypatches the ``claude`` binary lookup so the installer thinks it's
     present and we can record what would have been invoked."""
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "auto")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "auto")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     return tmp_path
 
@@ -52,7 +52,7 @@ def captured_cli(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     def _run(argv: list[str], **_kwargs: Any) -> None:
         invocations.append(list(argv))
 
-    import oms._installer as inst_mod
+    import manyagent._installer as inst_mod
 
     monkeypatch.setattr(inst_mod.shutil, "which", _which)
     monkeypatch.setattr(
@@ -71,7 +71,7 @@ def captured_cli(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 def test_plan_creates_four_bare_verb_skill_dirs(fake_home: Path) -> None:
     """The directory name *is* the slash command in Claude Code (NOT the YAML
     ``name:`` field). Bare-verb dirs → ``/self-distill`` not
-    ``/oms-self-distill`` (M11.2 hotfix)."""
+    ``/manyagent-self-distill`` (M11.2 hotfix)."""
     plan = build_plan(session_id="S1", scope="user")
     assert plan.adapter == "claude" and plan.scope == "user"
     creates = [op for op in plan.ops if op.kind == "create"]
@@ -93,7 +93,7 @@ def test_plan_declares_advisory_commands(fake_home: Path) -> None:
 def test_plan_merges_lifecycle_hooks_into_settings_json(fake_home: Path) -> None:
     """M12 groundwork: exactly two shared-array merges into
     ``~/.claude/settings.json`` — SessionStart + SessionEnd hooks running
-    ``python -m oms._hook``. List-item merges (``list:`` keys), NOT key
+    ``python -m manyagent._hook``. List-item merges (``list:`` keys), NOT key
     upserts: the user's own hooks under the same events must survive.
     settings.json is the documented home for hooks; MCP registration stays
     on the ``claude mcp`` CLI (``~/.claude.json`` — the M11.2 lesson)."""
@@ -108,7 +108,7 @@ def test_plan_merges_lifecycle_hooks_into_settings_json(fake_home: Path) -> None
         events.add(op.payload["__our_key__"])
         item = op.payload["__list_item__"]
         command = item["hooks"][0]["command"]
-        assert "-m oms._hook" in command and sys.executable.rsplit("/", 1)[-1] in command
+        assert "-m manyagent._hook" in command and sys.executable.rsplit("/", 1)[-1] in command
         assert op.merge_keys == (f"list:hooks.{op.payload['__our_key__']}",)
     assert events == {"SessionStart", "SessionEnd"}
 
@@ -122,12 +122,12 @@ def test_plan_includes_claude_mcp_add_cli_actions(fake_home: Path) -> None:
     pre_clear, add = plan.cli_actions
     assert pre_clear.install_argv[:5] == ("claude", "mcp", "remove", "--scope", "user")
     assert add.install_argv[:5] == ("claude", "mcp", "add", "--scope", "user")
-    assert add.install_argv[5] == "oms" and add.install_argv[6] == "--"
+    assert add.install_argv[5] == "manyagent" and add.install_argv[6] == "--"
     assert sys.executable in add.install_argv and "-m" in add.install_argv
-    assert "oms._mcp" in add.install_argv
+    assert "manyagent._mcp" in add.install_argv
     # The inverse is `claude mcp remove` so uninstall can reverse it.
     assert add.uninstall_argv[:5] == ("claude", "mcp", "remove", "--scope", "user")
-    assert add.uninstall_argv[5] == "oms"
+    assert add.uninstall_argv[5] == "manyagent"
 
 
 def test_plan_project_scope_writes_to_cwd_with_project_scope(
@@ -161,7 +161,7 @@ def test_install_writes_skills_and_hooks_but_never_mcp_into_settings_json(
     groundwork) — never an ``mcpServers`` key: the user-scope MCP file is
     ``~/.claude.json``, managed by Claude Code itself via its CLI (the
     M11.2-first-pass bug was writing MCP config into settings.json)."""
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = install(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
     skills_root = fake_home / ".claude" / "skills"
@@ -170,7 +170,7 @@ def test_install_writes_skills_and_hooks_but_never_mcp_into_settings_json(
         assert skill.is_file(), f"missing {skill}"
         body = skill.read_text()
         assert f"name: {verb}" in body
-        assert "mcp__oms__" in body
+        assert "mcp__manyagent__" in body
     import json as _json
 
     settings = _json.loads((fake_home / ".claude" / "settings.json").read_text())
@@ -178,26 +178,26 @@ def test_install_writes_skills_and_hooks_but_never_mcp_into_settings_json(
     assert set(settings["hooks"]) == {"SessionStart", "SessionEnd"}
     for event in ("SessionStart", "SessionEnd"):
         (entry,) = settings["hooks"][event]
-        assert "-m oms._hook" in entry["hooks"][0]["command"]
+        assert "-m manyagent._hook" in entry["hooks"][0]["command"]
 
 
-def test_install_purges_stale_oms_hook_from_previous_venv(fake_home: Path, captured_cli: list[list[str]]) -> None:
+def test_install_purges_stale_manyagent_hook_from_previous_venv(fake_home: Path, captured_cli: list[list[str]]) -> None:
     """A reinstall from a different interpreter (moved/recreated venv) must
-    replace the old oms hook entry, not accumulate a second one that fires —
+    replace the old manyagent hook entry, not accumulate a second one that fires —
     and possibly errors — on every one of the user's sessions."""
     import json as _json
 
     settings_path = fake_home / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True)
-    stale = {"hooks": [{"type": "command", "command": "/dead/venv/bin/python -m oms._hook"}]}
+    stale = {"hooks": [{"type": "command", "command": "/dead/venv/bin/python -m manyagent._hook"}]}
     user = {"hooks": [{"type": "command", "command": "echo mine"}]}
     settings_path.write_text(_json.dumps({"hooks": {"SessionStart": [user, stale], "SessionEnd": [stale]}}, indent=2))
-    install(session_id="S1", oma_home=fake_home / ".oms", scope="user")
+    install(session_id="S1", oma_home=fake_home / ".manyagent", scope="user")
     data = _json.loads(settings_path.read_text())
     for event in ("SessionStart", "SessionEnd"):
         cmds = [h["hooks"][0]["command"] for h in data["hooks"][event]]
         assert not any("/dead/venv" in c for c in cmds), event
-        assert sum("-m oms._hook" in c for c in cmds) == 1, event
+        assert sum("-m manyagent._hook" in c for c in cmds) == 1, event
     assert data["hooks"]["SessionStart"][0] == user  # user's hook untouched
 
 
@@ -217,12 +217,12 @@ def test_install_hooks_preserve_user_hooks_through_round_trip(fake_home: Path, c
     )
     settings_path.write_text(original)
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
     merged = _json.loads(settings_path.read_text())
     commands = [h["hooks"][0]["command"] for h in merged["hooks"]["SessionStart"]]
     assert commands[0] == "echo mine"  # user's hook untouched, first
-    assert any("-m oms._hook" in c for c in commands[1:])
+    assert any("-m manyagent._hook" in c for c in commands[1:])
 
     rc = uninstall("claude", oma_home, output_fn=lambda _s: None)
     assert rc == 0
@@ -230,21 +230,21 @@ def test_install_hooks_preserve_user_hooks_through_round_trip(fake_home: Path, c
 
 
 def test_install_invokes_claude_mcp_add_with_right_argv(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
     # Two CLI invocations: pre-clear remove, then add.
     assert len(captured_cli) == 2
     pre_clear, add = captured_cli
     assert pre_clear[:5] == ["claude", "mcp", "remove", "--scope", "user"]
-    assert add[:7] == ["claude", "mcp", "add", "--scope", "user", "oms", "--"]
-    assert sys.executable in add and "oms._mcp" in add
+    assert add[:7] == ["claude", "mcp", "add", "--scope", "user", "manyagent", "--"]
+    assert sys.executable in add and "manyagent._mcp" in add
 
 
 def test_install_idempotent_twice_equals_once(fake_home: Path, captured_cli: list[list[str]]) -> None:
     """The advisor's invariant: re-running install is byte-identical for the
     skill files. The CLI actions re-run too (claude mcp remove + add is
     idempotent by design)."""
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
     skill = fake_home / ".claude" / "skills" / "self-distill" / "SKILL.md"
     settings = fake_home / ".claude" / "settings.json"
@@ -260,8 +260,8 @@ def test_install_idempotent_twice_equals_once(fake_home: Path, captured_cli: lis
 def test_install_declined_writes_nothing(
     fake_home: Path, monkeypatch: pytest.MonkeyPatch, captured_cli: list[list[str]]
 ) -> None:
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "deny")
-    oma_home = fake_home / ".oms"
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")
+    oma_home = fake_home / ".manyagent"
     m = install(session_id="S1", oma_home=oma_home, scope="user", output_fn=lambda _s: None)
     assert m is None
     assert not (fake_home / ".claude" / "skills").exists()
@@ -271,7 +271,7 @@ def test_install_declined_writes_nothing(
 
 
 def test_install_dry_run_writes_nothing_runs_no_cli(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user", dry_run=True)
     assert not (fake_home / ".claude" / "skills").exists()
     assert captured_cli == []
@@ -283,7 +283,7 @@ def test_install_dry_run_writes_nothing_runs_no_cli(fake_home: Path, captured_cl
 
 
 def test_uninstall_removes_skills_and_runs_claude_mcp_remove(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
     skills_root = fake_home / ".claude" / "skills"
 
@@ -303,15 +303,16 @@ def test_uninstall_removes_skills_and_runs_claude_mcp_remove(fake_home: Path, ca
     real_invocations = [argv for argv in captured_cli if argv[0] != "true"]
     assert len(real_invocations) >= 1
     assert any(
-        argv[:5] == ["claude", "mcp", "remove", "--scope", "user"] and argv[5] == "oms" for argv in real_invocations
+        argv[:5] == ["claude", "mcp", "remove", "--scope", "user"] and argv[5] == "manyagent"
+        for argv in real_invocations
     ), f"expected claude mcp remove in {real_invocations}"
 
 
 def test_uninstall_when_claude_binary_absent_records_skip(fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If ``claude`` isn't on PATH at uninstall time, we record a SKIPPED
-    line rather than crashing — the user can run ``claude mcp remove oms``
+    line rather than crashing — the user can run ``claude mcp remove manyagent``
     manually."""
-    import oms._installer as inst_mod
+    import manyagent._installer as inst_mod
 
     # Install with the binary present.
     def _which_present(_name: str) -> str:
@@ -320,7 +321,7 @@ def test_uninstall_when_claude_binary_absent_records_skip(fake_home: Path, monke
     monkeypatch.setattr(inst_mod.shutil, "which", _which_present)
     monkeypatch.setattr(inst_mod, "_run_cli", lambda *_a, **_k: None)
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
 
     # Now pretend claude is gone and try to uninstall.
@@ -338,7 +339,7 @@ def test_uninstall_when_claude_binary_absent_records_skip(fake_home: Path, monke
 
 def test_claude_adapter_install_skills_delegates(fake_home: Path, captured_cli: list[list[str]]) -> None:
     adapter = ClaudeAdapter(session_id="S1", agent_id="S1/agent-001-claude")
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = adapter.install_skills(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None  # consent auto-yes via fake_home fixture
     assert (fake_home / ".claude" / "skills" / "self-distill" / "SKILL.md").is_file()
@@ -346,7 +347,7 @@ def test_claude_adapter_install_skills_delegates(fake_home: Path, captured_cli: 
 
 
 def test_default_adapter_install_skills_is_no_op() -> None:
-    from oms.adapters.base import Adapter
+    from manyagent.adapters.base import Adapter
 
     class _MinimalAdapter(Adapter):
         name = "minimal"
@@ -374,21 +375,23 @@ def test_default_adapter_install_skills_is_no_op() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Gemini installer — extension bundle staged in $OMS_HOME, registered via CLI
+# Gemini installer — extension bundle staged in $MANYAGENT_HOME, registered via CLI
 # --------------------------------------------------------------------------- #
 
 
-def test_gemini_plan_stages_bundle_under_oms_home_with_link_cli(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    """Lesson from M11.2: don't file-poke ``~/.gemini/extensions/oms/``
-    directly. Source-of-truth bundle lives under ``$OMS_HOME/extensions/
-    gemini-oms/``; ``gemini extensions install --skip-settings --consent`` registers it (M11 P1: switched from `link` so the formal env-passthrough allowlist survives — `link` had no settings-skip flag) (was symlink under `link`, now a copy under `install`; pip
+def test_gemini_plan_stages_bundle_under_manyagent_home_with_link_cli(
+    fake_home: Path, captured_cli: list[list[str]]
+) -> None:
+    """Lesson from M11.2: don't file-poke ``~/.gemini/extensions/manyagent/``
+    directly. Source-of-truth bundle lives under ``$MANYAGENT_HOME/extensions/
+    gemini-manyagent/``; ``gemini extensions install --skip-settings --consent`` registers it (M11 P1: switched from `link` so the formal env-passthrough allowlist survives — `link` had no settings-skip flag) (was symlink under `link`, now a copy under `install`; pip
     upgrade auto-propagates the bundle, no re-install)."""
-    from oms.adapters.skills.gemini import build_plan
+    from manyagent.adapters.skills.gemini import build_plan
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     plan = build_plan(session_id="S1", oma_home=oma_home, scope="user")
-    bundle_root = oma_home / "extensions" / "gemini-oms"
-    # 6 CREATE ops write to the oms-owned staging dir; 1 MERGE op pre-trusts
+    bundle_root = oma_home / "extensions" / "gemini-manyagent"
+    # 6 CREATE ops write to the manyagent-owned staging dir; 1 MERGE op pre-trusts
     # that dir in ~/.gemini/trustedFolders.json (M11 P1: required so
     # `gemini extensions install` doesn't abort on the trust check).
     creates = [op for op in plan.ops if op.kind == "create"]
@@ -413,56 +416,56 @@ def test_gemini_plan_stages_bundle_under_oms_home_with_link_cli(fake_home: Path,
     # `link` to `install` so the formal settings allowlist survives, but
     # `install` isn't idempotent like `link` was — the pre-clear is back).
     pre_clear, register = plan.cli_actions
-    assert pre_clear.install_argv == ("gemini", "extensions", "uninstall", "oms")
+    assert pre_clear.install_argv == ("gemini", "extensions", "uninstall", "manyagent")
     assert register.install_argv[:3] == ("gemini", "extensions", "install")
     assert register.install_argv[3] == str(bundle_root)
     assert "--consent" in register.install_argv
     assert "--skip-settings" in register.install_argv
-    assert register.uninstall_argv == ("gemini", "extensions", "uninstall", "oms")
+    assert register.uninstall_argv == ("gemini", "extensions", "uninstall", "manyagent")
     assert register.stdin_input == "1\n"  # the workspace-trust prompt answer
 
 
 def test_gemini_install_writes_bundle_and_invokes_extensions_install(
     fake_home: Path, captured_cli: list[list[str]]
 ) -> None:
-    from oms.adapters.skills.gemini import install
+    from manyagent.adapters.skills.gemini import install
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = install(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
 
-    bundle_root = oma_home / "extensions" / "gemini-oms"
+    bundle_root = oma_home / "extensions" / "gemini-manyagent"
     assert (bundle_root / "gemini-extension.json").is_file()
     assert (bundle_root / "GEMINI.md").is_file()
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
         assert (bundle_root / "commands" / f"{verb}.toml").is_file()
-    # NEVER write ~/.gemini/extensions/oms/ directly.
-    assert not (fake_home / ".gemini" / "extensions" / "oms").exists()
+    # NEVER write ~/.gemini/extensions/manyagent/ directly.
+    assert not (fake_home / ".gemini" / "extensions" / "manyagent").exists()
     # The link CLI was invoked.
     assert any(argv[:3] == ["gemini", "extensions", "install"] and argv[3] == str(bundle_root) for argv in captured_cli)
 
 
 def test_gemini_adapter_install_skills_delegates(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    from oms.adapters.builtin.gemini import GeminiAdapter
+    from manyagent.adapters.builtin.gemini import GeminiAdapter
 
     adapter = GeminiAdapter(session_id="S1", agent_id="S1/agent-001-gemini")
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = adapter.install_skills(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
-    assert (oma_home / "extensions" / "gemini-oms" / "gemini-extension.json").is_file()
+    assert (oma_home / "extensions" / "gemini-manyagent" / "gemini-extension.json").is_file()
 
 
 def test_gemini_uninstall_runs_extensions_uninstall(fake_home: Path, captured_cli: list[list[str]]) -> None:
-    from oms.adapters.skills.gemini import install
+    from manyagent.adapters.skills.gemini import install
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
     captured_cli.clear()
 
     out: list[str] = []
     rc = uninstall("gemini", oma_home, output_fn=out.append)
     assert rc == 0
-    assert any(argv == ["gemini", "extensions", "uninstall", "oms"] for argv in captured_cli)
+    assert any(argv == ["gemini", "extensions", "uninstall", "manyagent"] for argv in captured_cli)
 
 
 # --------------------------------------------------------------------------- #
@@ -471,53 +474,53 @@ def test_gemini_uninstall_runs_extensions_uninstall(fake_home: Path, captured_cl
 # --------------------------------------------------------------------------- #
 
 
-def test_codex_plan_creates_oms_prefixed_skills_and_toml_merges(fake_home: Path) -> None:
-    """Codex reserves the ``/`` namespace — skills are invoked as ``$oms-<verb>``."""
-    from oms.adapters.skills.codex import build_plan
+def test_codex_plan_creates_manyagent_prefixed_skills_and_toml_merges(fake_home: Path) -> None:
+    """Codex reserves the ``/`` namespace — skills are invoked as ``$manyagent-<verb>``."""
+    from manyagent.adapters.skills.codex import build_plan
 
     plan = build_plan(session_id="S1", scope="user")
     creates = [op for op in plan.ops if op.kind == "create"]
     merges = [op for op in plan.ops if op.kind == "merge"]
     assert {Path(op.path).parent.name for op in creates} == {
-        "oms-self-distill",
-        "oms-discuss",
-        "oms-cross-distill",
-        "oms-inject",
+        "manyagent-self-distill",
+        "manyagent-discuss",
+        "manyagent-cross-distill",
+        "manyagent-inject",
     }
     # Three TOML merges: the main server entry + two per-tool approval modes.
     assert len(merges) == 3
     assert all(Path(op.path).name == "config.toml" for op in merges)
     sections = {op.merge_keys[0] for op in merges}
     assert sections == {
-        "mcp_servers.oms",
-        "mcp_servers.oms.tools.commit_post",
-        "mcp_servers.oms.tools.inject_commit",
+        "mcp_servers.manyagent",
+        "mcp_servers.manyagent.tools.commit_post",
+        "mcp_servers.manyagent.tools.inject_commit",
     }
 
 
 def test_codex_install_writes_skills_and_merges_toml(fake_home: Path) -> None:
-    from oms.adapters.skills.codex import install
+    from manyagent.adapters.skills.codex import install
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = install(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
     config_path = fake_home / ".codex" / "config.toml"
     assert config_path.is_file()
     text = config_path.read_text()
-    assert "[mcp_servers.oms]" in text
-    assert "[mcp_servers.oms.tools.commit_post]" in text
+    assert "[mcp_servers.manyagent]" in text
+    assert "[mcp_servers.manyagent.tools.commit_post]" in text
     assert 'approval_mode = "prompt"' in text
-    assert "OMS_SESSION" in text  # env_vars allowlist
+    assert "MANYAGENT_SESSION" in text  # env_vars allowlist
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
-        assert (fake_home / ".codex" / "skills" / f"oms-{verb}" / "SKILL.md").is_file()
+        assert (fake_home / ".codex" / "skills" / f"manyagent-{verb}" / "SKILL.md").is_file()
 
 
 def test_codex_install_preserves_third_party_mcp_server_round_trip(fake_home: Path) -> None:
     """The user already has another MCP server + comments in
-    ``~/.codex/config.toml``. Install adds ``[mcp_servers.oms]``, uninstall
+    ``~/.codex/config.toml``. Install adds ``[mcp_servers.manyagent]``, uninstall
     removes it, and the other content is byte-identical to before — including
     inline comments (tomlkit-preserving)."""
-    from oms.adapters.skills.codex import install
+    from manyagent.adapters.skills.codex import install
 
     config_path = fake_home / ".codex" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -530,21 +533,21 @@ def test_codex_install_preserves_third_party_mcp_server_round_trip(fake_home: Pa
     )
     config_path.write_text(before)
 
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     install(session_id="S1", oma_home=oma_home, scope="user")
 
     mid = config_path.read_text()
     assert "[mcp_servers.docs]" in mid  # third-party server survives
-    assert "[mcp_servers.oms]" in mid  # our entry landed
+    assert "[mcp_servers.manyagent]" in mid  # our entry landed
     assert "# the user's existing codex config" in mid  # top comment survives
     assert "# a comment on args" in mid  # mid-comment survives
 
     rc = uninstall("codex", oma_home, output_fn=lambda _s: None)
     assert rc == 0
     after = config_path.read_text() if config_path.is_file() else None
-    # After uninstall: oms sections gone, the user's content + comments intact.
+    # After uninstall: manyagent sections gone, the user's content + comments intact.
     assert after is not None
-    assert "[mcp_servers.oms]" not in after
+    assert "[mcp_servers.manyagent]" not in after
     assert "[mcp_servers.docs]" in after
     assert "# the user's existing codex config" in after
     assert "# a comment on args" in after
@@ -552,10 +555,10 @@ def test_codex_install_preserves_third_party_mcp_server_round_trip(fake_home: Pa
 
 
 def test_codex_adapter_install_skills_delegates(fake_home: Path) -> None:
-    from oms.adapters.builtin.codex import CodexAdapter
+    from manyagent.adapters.builtin.codex import CodexAdapter
 
     adapter = CodexAdapter(session_id="S1", agent_id="S1/agent-001-codex")
-    oma_home = fake_home / ".oms"
+    oma_home = fake_home / ".manyagent"
     m = adapter.install_skills(session_id="S1", oma_home=oma_home, scope="user")
     assert m is not None
     assert (fake_home / ".codex" / "config.toml").is_file()

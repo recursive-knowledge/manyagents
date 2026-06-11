@@ -59,8 +59,8 @@ ENV/
 env.bak/
 venv.bak/
 
-# oms local config (committed template is oms.env.example)
-oms.env
+# manyagent local config (committed template is manyagent.env.example)
+manyagent.env
 
 # Reference / scratch asciinema recordings dropped into the repo root
 *.cast
@@ -101,13 +101,13 @@ infra/cloudflared/cert.pem
 # MkDocs build output
 site/
 
-# Node / SvelteKit viewer (oms.web; web/viewer/)
+# Node / SvelteKit viewer (manyagent.web; web/viewer/)
 node_modules/
 web/viewer/build/
 web/viewer/.svelte-kit/
 # legacy paths kept in ignore in case stale local artifacts exist
-src/oms/web/app/build/
-src/oms/web/app/.svelte-kit/
+src/manyagent/web/app/build/
+src/manyagent/web/app/.svelte-kit/
 
 # Local artifacts
 .claude/

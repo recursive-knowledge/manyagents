@@ -1,4 +1,4 @@
-"""M11 tests for ``oms._mcp`` — the in-agent MCP server.
+"""M11 tests for ``manyagent._mcp`` — the in-agent MCP server.
 
 The load-bearing case is **C1** at the MCP layer: ``commit_post`` is the only
 tool that persists a post, and it refuses a parser-failed payload — so a host
@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from oms._mcp import (
+from manyagent._mcp import (
     commit_post,
     cross_distill,
     discuss_draft,
@@ -24,8 +24,8 @@ from oms._mcp import (
     inject_preview,
     self_distill_draft,
 )
-from oms.bank import FakeBank
-from oms.core import clear_packet_cache
+from manyagent.bank import FakeBank
+from manyagent.core import clear_packet_cache
 
 
 @pytest.fixture(autouse=True)
@@ -34,12 +34,12 @@ def _env(
     monkeypatch: pytest.MonkeyPatch,
     fake_bank: FakeBank,
 ) -> FakeBank:
-    """Per-test: tmp OMS_HOME, explicit OMS_SESSION='S1', the FakeBank wired
+    """Per-test: tmp MANYAGENT_HOME, explicit MANYAGENT_SESSION='S1', the FakeBank wired
     in as the Bank singleton, the discuss gate and packet cache cleared."""
-    monkeypatch.setenv("OMS_HOME", str(tmp_path / ".oms"))
-    monkeypatch.setenv("OMS_SESSION", "S1")
-    monkeypatch.setattr("oms.bank.get_bank", lambda *a, **k: fake_bank)
-    from oms.forum import clear_discuss_gate
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path / ".manyagent"))
+    monkeypatch.setenv("MANYAGENT_SESSION", "S1")
+    monkeypatch.setattr("manyagent.bank.get_bank", lambda *a, **k: fake_bank)
+    from manyagent.forum import clear_discuss_gate
 
     clear_discuss_gate()
     clear_packet_cache()
@@ -66,32 +66,32 @@ async def _seed_session(bank: FakeBank, *, sid: str = "S1", goal: str | None = "
 
 
 # --------------------------------------------------------------------------- #
-# session id resolution: OMS_SESSION env wins; ~/.oms/active fallback; else raise
+# session id resolution: MANYAGENT_SESSION env wins; ~/.manyagent/active fallback; else raise
 # --------------------------------------------------------------------------- #
 
 
 def test_session_id_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    from oms._mcp import _session_id
+    from manyagent._mcp import _session_id
 
-    monkeypatch.setenv("OMS_SESSION", "ENV-WINS")
+    monkeypatch.setenv("MANYAGENT_SESSION", "ENV-WINS")
     assert _session_id() == "ENV-WINS"
 
 
 def test_session_id_falls_back_to_active_file(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    from oms._mcp import _session_id
+    from manyagent._mcp import _session_id
 
-    monkeypatch.delenv("OMS_SESSION", raising=False)
-    monkeypatch.setenv("OMS_HOME", str(tmp_path))
+    monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path))
     (tmp_path / "active").write_text("FROM-FILE", encoding="utf-8")
     assert _session_id() == "FROM-FILE"
 
 
 def test_session_id_raises_when_no_source(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    from oms._mcp import _session_id
+    from manyagent._mcp import _session_id
 
-    monkeypatch.delenv("OMS_SESSION", raising=False)
-    monkeypatch.setenv("OMS_HOME", str(tmp_path))
-    with pytest.raises(RuntimeError, match="no active oms session"):
+    monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
+    monkeypatch.setenv("MANYAGENT_HOME", str(tmp_path))
+    with pytest.raises(RuntimeError, match="no active manyagent session"):
         _session_id()
 
 
@@ -131,7 +131,7 @@ async def test_discuss_draft_registers_gate_when_prior_exists(fake_bank: FakeBan
     assert out["kind"] == "reply" and out["stance"] == "agree" and out["reply_to"] == prior_id
     assert prior_id in out["ranked_post_ids"]
     # The retrieval gate is now registered for this session/agent: a subsequent
-    # commit_post(reply, reply_to=prior_id) is permitted by oms.forum.
+    # commit_post(reply, reply_to=prior_id) is permitted by manyagent.forum.
     res = await _call(
         commit_post,
         kind="reply",
@@ -237,7 +237,7 @@ async def test_cross_distill_happy_path(fake_bank: FakeBank, monkeypatch: pytest
                 ]
             })
 
-    rmod = importlib.import_module("oms.distill.resolve")
+    rmod = importlib.import_module("manyagent.distill.resolve")
     monkeypatch.setattr(rmod, "_discover_local_model", lambda: _M())
     out = await _call(cross_distill)
     assert out["ok"] is True and out["scope"] == "per_goal" and out["goal"] == "g"
