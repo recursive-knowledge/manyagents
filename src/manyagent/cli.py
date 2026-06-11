@@ -779,8 +779,10 @@ def _pipe_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C9
     t0 = time.monotonic()
     # M12.2 best-effort geometry: stdin is a pipe here, but stdout/stderr is
     # often still the terminal (`echo prompt | manyagent claude`). Without a size
-    # record the cast rendition has to guess a width.
-    if timing_fd is not None:
+    # record the cast rendition has to guess a width. The ``!= "win32"`` guard
+    # narrows fcntl/termios away for mypy on Windows (where this path is never
+    # reached — `_pty_spawn` raises NotImplementedError before calling here).
+    if timing_fd is not None and sys.platform != "win32":
         with contextlib.suppress(Exception):
             import fcntl
             import struct
