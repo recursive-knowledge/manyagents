@@ -10,6 +10,8 @@ that supersedes ``oms.cli.md:61``).
 
 from __future__ import annotations
 
+import argparse
+import sys
 from typing import Any
 
 import pytest
@@ -370,6 +372,11 @@ async def test_run_agent_spawns_pty_installs_skills_and_captures_raw_packet(
     assert any("captured raw packet" in line for line in s.out)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="_pty_spawn is POSIX-only by contract (its win32 guard raises before "
+    "the non-TTY fallback, and _pipe_spawn's select() on a pipe fd is POSIX too)",
+)
 def test_pty_spawn_non_tty_tees_instead_of_exec_replacing(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """The M11 non-TTY hole: redirected stdin used to hit an ``os.execvp``
     that REPLACED the oms process — no tee was written, and `_do_run_agent`
@@ -386,6 +393,134 @@ def test_pty_spawn_non_tty_tees_instead_of_exec_replacing(tmp_path: Any, monkeyp
     data = tee.read_bytes()
     assert b"out-marker" in data
     assert b"err-marker" in data  # stderr lands in the capture, as a PTY would merge it
+    # M12.1: the timing sidecar pairs every read with a monotonic offset, and
+    # its byte counts account for the tee exactly (the _timed_capture
+    # contract). Size records (`<off> r <cols>x<rows>`) appear only when
+    # stdout/stderr is a real terminal — not under pytest capture.
+    timing = (tmp_path / "tee.log.timing").read_text().splitlines()
+    assert timing, "timing sidecar missing"
+    reads = [parts for parts in (line.split() for line in timing) if len(parts) == 2]
+    assert sum(int(n) for _t, n in reads) == len(data)
+    offsets = [float(t) for t, _n in reads]
+    assert offsets == sorted(offsets)
+
+
+# --------------------------------------------------------------------------- #
+# _timed_capture — timing sidecar → timestamped TraceEvents + geometry
+# --------------------------------------------------------------------------- #
+
+
+def test_timed_capture_builds_timestamped_chunks_and_survives_split_glyphs() -> None:
+    """Real sidecar → one event per read with its offset; a multi-byte glyph
+    split across two reads decodes intact (incremental decoder)."""
+    star = "✶".encode()  # 3 bytes
+    raw = b"hello " + star[:1], star[1:] + b" world"
+    tee = b"".join(raw)
+    timing = f"0.5 {len(raw[0])}\n2.25 {len(raw[1])}\n"
+    events, term = cli._timed_capture(tee, timing)
+    assert [e.ts for e in events] == [0.5, 2.25]
+    assert "".join(e.text for e in events) == "hello ✶ world"
+    assert "�" not in "".join(e.text for e in events)  # no shredded glyph
+    assert term is None  # no size records in this sidecar
+
+
+def test_timed_capture_parses_geometry_records() -> None:
+    """`<off> r <cols>x<rows>` lines become the envelope's term: the first is
+    the initial size, the rest are resizes (M12.2 — the formatting-mess fix:
+    a cast replayed at a guessed width wraps every box border)."""
+    tee = b"abcd"
+    timing = "0.0 r 159x37\n0.5 2\n3.0 r 100x37\n3.2 2\n"
+    events, term = cli._timed_capture(tee, timing)
+    assert [e.ts for e in events] == [0.5, 3.2]
+    assert term == {"cols": 159, "rows": 37, "resizes": [[3.0, 100, 37]]}
+
+
+def test_timed_capture_falls_back_to_single_event_without_sidecar() -> None:
+    events, term = cli._timed_capture(b"plain bytes", "")
+    assert len(events) == 1 and events[0].ts == 0.0 and events[0].text == "plain bytes"
+    assert term is None
+
+
+def test_timed_capture_falls_back_on_byte_count_mismatch_or_garbage() -> None:
+    events, term = cli._timed_capture(b"abcdef", "0.0 r 100x30\n0.1 2\n0.2 2\n")
+    assert len(events) == 1  # 4 != 6 — timing dropped...
+    assert term == {"cols": 100, "rows": 30, "resizes": []}  # ...geometry kept
+    events, term = cli._timed_capture(b"abcdef", "not numbers\n")
+    assert len(events) == 1 and term is None
+
+
+def test_timed_capture_collapses_when_joined_text_holds_a_secret() -> None:
+    """A credential split across two reads would defeat per-event scrub —
+    any joined-text hit sacrifices timing so persist() scrubs it whole."""
+    secret = b"sk-ant-api03-" + b"A" * 24
+    half = len(secret) // 2
+    tee = b"before " + secret + b" after"
+    cut = 7 + half  # split point lands mid-secret
+    timing = f"0.1 {cut}\n0.2 {len(tee) - cut}\n"
+    events, _term = cli._timed_capture(tee, timing)
+    assert len(events) == 1 and events[0].ts == 0.0  # collapsed; scrub sees it whole
+
+
+async def test_run_agent_mines_harness_rendition(
+    fake_bank: FakeBank,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M13.1: after capture, the adapter's mine() artifact is persisted as
+    the `harness` rendition keyed to the raw packet, and the run summary
+    line reports it. The MineContext carries this run's bindings."""
+    import json as _json
+
+    await fake_bank.put_session("S1", goal="g")
+    cli._write_active("S1")
+    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
+    seen_ctx: list[Any] = []
+
+    class MiningAdapter(FakeAdapter):
+        def mine(self, ctx: Any) -> dict[str, Any] | None:
+            seen_ctx.append(ctx)
+            return {
+                "miner_version": "claude-v1",
+                "binding": "hook",
+                "completeness": "full",
+                "run_started": ctx.window[0],
+                "segments": [{"harness_session_id": "hs-1", "turns": [{"role": "user", "ts": None, "text": "hi"}]}],
+            }
+
+    from oms import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: MiningAdapter())
+    s = Scripted()
+    rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
+    assert rc == 0
+    raws = await fake_bank.list_packets(session_id="S1", type="raw")
+    assert len(raws) == 1
+    rend = await fake_bank.get_rendition(raws[0]["id"], "harness")
+    assert rend is not None and rend["miner_version"] == "claude-v1"
+    assert _json.loads(rend["body"])["segments"][0]["harness_session_id"] == "hs-1"
+    assert any("mined conversation" in line and "1 turns" in line for line in s.out)
+    assert seen_ctx and seen_ctx[0].window[0] <= seen_ctx[0].window[1]
+
+
+async def test_run_agent_mining_failure_never_disturbs_the_run(
+    fake_bank: FakeBank,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await fake_bank.put_session("S1", goal="g")
+    cli._write_active("S1")
+    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
+
+    class ExplodingAdapter(FakeAdapter):
+        def mine(self, ctx: Any) -> dict[str, Any] | None:
+            raise RuntimeError("transcript parse exploded")
+
+    from oms import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: ExplodingAdapter())
+    s = Scripted()
+    rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
+    assert rc == 0  # the run completes
+    assert any("captured raw packet" in line for line in s.out)  # capture unaffected
+    assert any("mining skipped" in line for line in s.out)  # honest note, no crash
 
 
 async def test_run_agent_surfaces_harness_bindings_from_this_run(
@@ -451,6 +586,33 @@ def test_ask_commit_single_prompt_carries_star() -> None:
     assert cli.ask_commit(3, input_fn=lambda _: "n", output_fn=out.append, noninteractive=False) == (False, None)
     # Noninteractive auto-commits unrated (parser already gated quality).
     assert cli.ask_commit(3, input_fn=lambda _: "junk", output_fn=out.append, noninteractive=True) == (True, None)
+
+
+def test_gates_expand_truncated_preview_on_d() -> None:
+    """With `detail` (the untruncated post), `d` prints it and the gate
+    re-asks — for both ask_commit's typed fallback and ask_allow; without
+    `detail`, `d` keeps its old meaning (unrecognized / not a decline)."""
+    responses = ["d", ""]
+    out: list[str] = []
+    rc = cli.ask_commit(
+        3, input_fn=lambda _: responses.pop(0), output_fn=out.append, noninteractive=False, detail="FULL POST"
+    )
+    assert rc == (True, 3) and out == ["FULL POST"]
+    responses = ["d", "n"]
+    out = []
+    assert (
+        cli.ask_allow(
+            "commit reply?",
+            input_fn=lambda _: responses.pop(0),
+            output_fn=out.append,
+            noninteractive=False,
+            detail="FULL REPLY",
+        )
+        is False
+    )
+    assert out == ["FULL REPLY"]
+    # no detail ⇒ `d` is not a decline and not an expansion
+    assert cli.ask_allow("go?", input_fn=lambda _: "d", output_fn=out.append, noninteractive=False) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -531,6 +693,25 @@ async def test_end_offers_self_distill_when_session_has_none(
     rc = await cli._do_end(_args("end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
+    assert calls[0]["since"] is None  # bare `oms end`: no run window to scope to
+
+
+async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agent-exit close path hands `_do_end` the run-start clock so the
+    reflection's trace context is scoped to THIS run's bound transcripts."""
+    await fake_bank.put_session("S-END2", goal="speed")
+    await fake_bank.put_agent("S-END2/agent-001-claude", session_id="S-END2", adapter="claude", seq=1)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_self_distill(**kw: Any) -> int:
+        calls.append(kw)
+        return 0
+
+    monkeypatch.setattr("oms._handlers.do_self_distill", fake_self_distill)
+    s = Scripted("")
+    rc = await cli._do_end(argparse.Namespace(session="S-END2", since=123.0), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert len(calls) == 1 and calls[0]["since"] == 123.0
 
 
 async def test_start_nudges_cross_distill_when_goal_is_stale(
@@ -650,13 +831,17 @@ async def test_end_offers_silent_when_noninteractive(fake_bank: FakeBank, monkey
 
 
 # --------------------------------------------------------------------------- #
-# the distill moment fires at agent exit (2026-06-10), `oms end` is fallback
+# agent exit asks ONE question — end? — and `_do_end` owns the distill moment
 # --------------------------------------------------------------------------- #
 
 
-async def test_agent_exit_offers_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exiting the wrapped agent is the natural end-of-work moment: the offer
-    fires right there, without waiting for `oms end`."""
+async def test_agent_exit_asks_only_end_then_do_end_offers_distill(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agent exit asks a single question (end the session?); accepting runs
+    the same `_do_end` close path, whose distill offer fires there. (The
+    separate agent-exit distill ask double-prompted: a failed draft was
+    re-offered moments later inside `_do_end`.)"""
     await fake_bank.put_session("S1", goal="g")
     cli._write_active("S1")
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
@@ -670,44 +855,37 @@ async def test_agent_exit_offers_self_distill(fake_bank: FakeBank, monkeypatch: 
         return 0
 
     monkeypatch.setattr(h, "do_self_distill", fake_self_distill)
-    s = Scripted("", "n")  # Enter = yes at the distill offer; n = keep session open
+    s = Scripted("", "")  # Enter = yes, end the session; Enter = yes at the distill offer
     rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
     assert rc == 0
-    assert len(calls) == 1 and calls[0]["session"] == "S1"
-    assert (await fake_bank.get_session("S1")).get("status") != "ended"  # declined the end offer
-
-
-async def test_agent_exit_decline_remembered_at_end(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Declining at agent exit writes the per-session marker; `oms end` does
-    not re-ask (once per session is enough), and ending clears the marker."""
-    await fake_bank.put_session("S1", goal="g")
-    cli._write_active("S1")
-    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
-    from oms import _handlers as h
-
-    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
-    s = Scripted("n", "n")  # decline the distill offer AND the end offer
-    rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
-    assert rc == 0
-    assert cli._distill_declined_path("S1").is_file()
-
-    end = Scripted()  # would raise on any prompt — none may fire
-    rc = await cli._do_end(_args("end", "--session", "S1"), bank=fake_bank, io=end.io())
-    assert rc == 0
-    assert not cli._distill_declined_path("S1").is_file()  # cleared with the session
-
-
-async def test_agent_exit_offers_to_end_session(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """After the distill moment, agent exit offers to close the session —
-    the whole loop ends without anyone remembering `oms end`."""
-    await fake_bank.put_session("S1", goal="g")
-    cli._write_active("S1")
-    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
-    from oms import _handlers as h
-
-    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
-    s = Scripted("n", "")  # n = skip distill; Enter = yes, end the session
-    rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
-    assert rc == 0
+    assert len(calls) == 1 and calls[0]["session"] == "S1"  # asked ONCE, inside _do_end
     assert (await fake_bank.get_session("S1"))["status"] == "ended"
     assert cli._read_active() is None  # active cleared by the embedded `oms end`
+
+
+async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declining the end offer leaves the session open and asks nothing else —
+    the distill moment belongs to `_do_end`, not to every agent exit."""
+    await fake_bank.put_session("S1", goal="g")
+    cli._write_active("S1")
+    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
+    from oms import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
+    distilled: list[dict[str, Any]] = []
+
+    async def fake_self_distill(**kw: Any) -> int:
+        distilled.append(kw)
+        return 0
+
+    monkeypatch.setattr(h, "do_self_distill", fake_self_distill)
+    s = Scripted("n")  # n = keep the session open; a second prompt would raise (list exhausted)
+    rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert distilled == []
+    assert (await fake_bank.get_session("S1")).get("status") != "ended"
+    assert s._r == []  # the single scripted answer went to the end offer
+    # an extra prompt would exhaust Scripted and be swallowed into this line:
+    assert not any("offers skipped" in line for line in s.out)

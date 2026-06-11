@@ -30,6 +30,7 @@ from __future__ import annotations
 # --------------------------------------------------------------------------- #
 
 ALLOW_SUFFIX = " [Enter=yes / n=no]:"
+ALLOW_SUFFIX_DETAIL = " [Enter=yes / d=full text / n=no]:"
 NONINTERACTIVE_DENIED = "  (OMS_NONINTERACTIVE: '{prompt}' → denied)"
 
 # --------------------------------------------------------------------------- #
@@ -41,10 +42,26 @@ COMMIT_QUESTION = "commit post?"
 COMMIT_TYPED_HINT = "[Enter=commit ★{propose} · 1-5=set ★ (5★ best) · skip=unrated · n=discard]:"
 # Interactive star picker legend (1★ worst … 5★ best is carried by the scale).
 COMMIT_PICKER_HINT = "←/→ or 1-5 to rate · Enter=commit · s=skip ★ · n/Esc=discard"
+# Variants offered when a truncated preview has full text behind `d`.
+COMMIT_PICKER_HINT_DETAIL = "←/→ or 1-5 to rate · Enter=commit · s=skip ★ · d=full text · n/Esc=discard"
+COMMIT_TYPED_HINT_DETAIL = "[Enter=commit ★{propose} · 1-5=set ★ (5★ best) · skip=unrated · d=full text · n=discard]:"
 COMMIT_PICKER_SCALE_LOW = "1★ = poor"
 COMMIT_PICKER_SCALE_HIGH = "5★ = best"
 COMMIT_UNRECOGNIZED = "  (unrecognized — committing unrated)"
 POST_PROPOSED_HEADER = "--- proposed post ---"
+# Labeled rendering of a parser-validated post (``ui.render_post``): the human
+# reading of each schema key. Display order lives with the layout in
+# ``ui._POST_FIELDS``; ``confidence`` is the panel subtitle, not a body field.
+POST_PANEL_TITLE = "proposed {kind}"
+POST_FIELD_LABEL_ASSUMPTION = "assumption"
+POST_FIELD_LABEL_EVIDENCE = "evidence"
+POST_FIELD_LABEL_EVIDENCE_REF = "evidence ref"
+POST_FIELD_LABEL_PROPOSED_NEXT = "proposed next"
+POST_FIELD_LABEL_PREDICTED_OUTCOME = "predicted outcome"
+POST_CONFIDENCE_PREFIX = "confidence: "
+# Appended (dim) to a field cut at OMS_POST_PREVIEW_FIELD_CHARS; the gate's
+# hint advertises `d` for the full text.
+POST_FIELD_MORE = " … (+{n} chars)"
 POST_DISCARDED = "discarded — re-prompt the agent (not stored; C1)"
 POST_REJECTED_BY_DISCIPLINE = "post rejected by the discipline (not stored): {reason}"
 POST_STORED = "stored post {post_id}"
@@ -72,6 +89,7 @@ START_CROSS_NUDGE_OFFER = "/{goal} has {n} insight{n_s} newer than its last bund
 # agent exit / `oms end` — session-end offers
 # --------------------------------------------------------------------------- #
 
+AGENT_TRACE_READY = "view trace at {url}"
 AGENT_EXIT_END_OFFER = "agent finished — end session {session_id} now?"
 
 END_SELF_DISTILL_OFFER = "this session has no saved insight yet — summarize what it learned into a reflection post?"

@@ -245,14 +245,30 @@ async def test_valid_post_round_trips_and_carries_no_preference(fake_bank: FakeB
 
 
 def test_render_post_prompt_embeds_anti_meta_and_schema() -> None:
-    from oms.forum import render_post_prompt
+    from oms.forum import POST_ANTI_META_BLOCK, render_post_prompt
 
     p = render_post_prompt(kind="reflection", goal="speed", guidance="focus on the hot loop")
-    assert ANTI_META_BLOCK in p  # the SAME object the parser filters against
+    assert POST_ANTI_META_BLOCK in p  # the post-flow discipline (2026-06-11)
     for field in ("load_bearing_assumption", "evidence_ref", "proposed_next", "predicted_outcome", "confidence"):
         assert field in p
     assert "speed" in p and "focus on the hot loop" in p
     assert "do NOT cite a post id" in p  # no-history hardening (no prior posts)
+
+
+def test_post_anti_meta_block_shares_blacklist_without_curator_referents() -> None:
+    """The post prompt's discipline carries the parser's banned-phrase list
+    (single source of truth) but none of the curator block's foreign
+    referents — a live run (2026-06-11) showed the headless distiller
+    following ARC/'insights'/'evidence_post_ids' rules into a reflection."""
+    from oms.forum import POST_ANTI_META_BLOCK, render_post_prompt
+    from oms.forum.anti_meta import BANNED_META_PHRASES
+
+    for phrase in BANNED_META_PHRASES:
+        assert phrase in POST_ANTI_META_BLOCK  # the blacklist the parser enforces
+    p = render_post_prompt(kind="reflection", goal="g")
+    for curator_only in ("evidence_post_ids", "ARC", "SWE-bench", "polyglot", "5 insights", "5 pitfalls", "5 checks"):
+        assert curator_only not in p
+    assert "unresolved question is NOT a result" in p  # no fabricated resolutions
 
 
 def test_render_post_prompt_reply_no_history_forbids_citation() -> None:
@@ -265,3 +281,19 @@ def test_render_post_prompt_reply_no_history_forbids_citation() -> None:
         kind="reply", goal="g", prior_posts=[{"id": "S/p1", "structured": {"load_bearing_assumption": "X"}}]
     )
     assert "S/p1" in q and "Engage ONE" in q
+
+
+def test_render_post_prompt_trace_context_section() -> None:
+    """A headless caller's model did not live the session, so the trace must
+    travel inside the prompt (2026-06-10); the in-agent MCP path passes None
+    and gets no section."""
+    from oms.forum import render_post_prompt
+
+    p = render_post_prompt(kind="reflection", goal="g", trace_context="user: profile it\nagent: cumtime 4.2s")
+    assert "--- BEGIN TRACE ---" in p and "cumtime 4.2s" in p and "--- END TRACE ---" in p
+    # The hermetic fence (2026-06-11): the distiller must not treat its own
+    # environment (repo files, git status) as session evidence.
+    assert "your ONLY record of the session" in p
+
+    q = render_post_prompt(kind="reflection", goal="g")
+    assert "BEGIN TRACE" not in q

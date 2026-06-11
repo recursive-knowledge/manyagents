@@ -10,6 +10,7 @@ rebuild via :func:`dataclasses.replace` rather than mutating in place.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # The five event kinds an adapter may emit (oms.capture.md "CanonicalTrace").
 EVENT_KINDS = frozenset({"user", "agent", "tool_call", "tool_result", "system"})
@@ -55,3 +56,8 @@ class CanonicalTrace:
     scrub_report: ScrubReport = field(default_factory=ScrubReport)
     bytes_in: int = 0
     bytes_out: int = 0  # set by bounding (== bytes_in when nothing was reduced)
+    # Terminal geometry at capture time (M12.2): {"cols", "rows", "resizes":
+    # [[offset_s, cols, rows], ...]}. None for non-PTY/legacy traces. The cast
+    # rendition NEEDS the real width — a TUI's layout replayed at a guessed
+    # width wraps every box border (the 2026-06-10 formatting-mess report).
+    term: dict[str, Any] | None = None

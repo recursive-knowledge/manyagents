@@ -15,6 +15,8 @@ persisted and the record never carries ``preference``.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -59,8 +61,10 @@ _GOOD = {
 class FakeModel:
     def __init__(self, payload: str) -> None:
         self.payload = payload
+        self.prompts: list[str] = []
 
-    def complete(self, _prompt: str, *, max_tokens: int | None = None) -> str:
+    def complete(self, prompt: str, *, max_tokens: int | None = None) -> str:
+        self.prompts.append(prompt)
         return self.payload
 
 
@@ -270,6 +274,176 @@ async def test_discuss_packet_not_in_retrieved_refused(
     )
     assert rc == 1
     assert any("not among the retrieved posts" in line for line in s.out)
+
+
+# --------------------------------------------------------------------------- #
+# trace-grounded prompts (2026-06-10): once the wrapped agent exits, the
+# session lives in the bound transcript / raw packet, not in any model's head
+# — the headless distill prompt must carry it (the "no parseable JSON" fix)
+# --------------------------------------------------------------------------- #
+
+
+def _write_binding(
+    tmp_path: Any,
+    *,
+    sid: str = "S1",
+    harness_id: str = "H1",
+    transcript_lines: list[dict[str, Any]],
+    ts: float = 100.0,
+) -> None:
+    tp = tmp_path / f"transcript-{harness_id}.jsonl"
+    tp.write_text("\n".join(json.dumps(ln) for ln in transcript_lines), encoding="utf-8")
+    bindings = Path(os.environ["OMS_HOME"]).expanduser() / "bindings"
+    bindings.mkdir(parents=True, exist_ok=True)
+    rec = {
+        "oms_session": sid,
+        "event": "SessionEnd",
+        "harness_session_id": harness_id,
+        "transcript_path": str(tp),
+        "ts": ts,
+    }
+    with (bindings / f"{sid}.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def _dialogue(*texts: tuple[str, str]) -> list[dict[str, Any]]:
+    """(role, text) pairs → harness-transcript-shaped jsonl records."""
+    return [{"type": role, "message": {"content": text}} for role, text in texts]
+
+
+async def test_self_distill_prompt_grounded_in_bound_transcript(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    await _seed_session(fake_bank)
+    _write_binding(
+        tmp_path,
+        transcript_lines=_dialogue(("user", "profile the tokenizer"), ("assistant", "cumtime 4.2s in tokenize()")),
+    )
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    assert rc == 0
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "--- BEGIN TRACE ---" in prompt
+    assert "user: profile the tokenizer" in prompt
+    assert "agent: cumtime 4.2s in tokenize()" in prompt
+
+
+async def test_self_distill_since_scopes_to_this_runs_transcripts(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A `--resume`d/earlier run's transcript must not be what gets distilled:
+    `since` (the run-start clock) excludes bindings from before this run."""
+    await _seed_session(fake_bank)
+    _write_binding(tmp_path, harness_id="OLD", ts=100.0, transcript_lines=_dialogue(("user", "the OLD run")))
+    _write_binding(tmp_path, harness_id="NEW", ts=200.0, transcript_lines=_dialogue(("user", "the NEW run")))
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    rc = await h.do_self_distill(adapter="claude", since=150.0, bank=fake_bank, io=Scripted("4").io())
+    assert rc == 0
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "the NEW run" in prompt and "the OLD run" not in prompt
+
+
+async def test_self_distill_falls_back_to_raw_packet(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _seed_session(fake_bank)
+    await fake_bank.put_packet({"id": "S1/raw00001", "type": "raw", "session_id": "S1", "agent_id": "S1/a1"})
+    body = json.dumps({"events": [{"ts": 0.0, "kind": "system", "text": "PTY tee: rg failed with exit 2"}]})
+    await fake_bank.put_trace("S1/raw00001", body, scrub_version="v1", complete=True)
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    assert rc == 0
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "rg failed with exit 2" in prompt
+
+
+async def test_trace_context_scrubbed_and_bounded(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OMS_DISTILL_CONTEXT_MAX_BYTES", "600")
+    await _seed_session(fake_bank)
+    secret = "sk-ant-api03-" + "A" * 24
+    _write_binding(
+        tmp_path,
+        transcript_lines=_dialogue(("user", f"key is {secret}"), ("assistant", "x " * 2000)),
+    )
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert secret not in prompt and "[REDACTED:anthropic]" in prompt
+    assert "elided for context budget" in prompt  # head+tail bounded, gap explicit
+
+
+async def test_trace_context_prefers_harness_rendition_with_tool_turns(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The mined rendition wins over the transcript flatten (2026-06-11): it
+    is the only source carrying tool turns — a session whose story is its
+    tool activity otherwise distills into narration-only noise."""
+    await _seed_session(fake_bank)
+    await fake_bank.put_packet({"id": "S1/raw00001", "type": "raw", "session_id": "S1", "agent_id": "S1/a1"})
+    mined = {
+        "miner_version": "claude-v1",
+        "segments": [
+            {
+                "harness_session_id": "H1",
+                "transcript": "t.jsonl",
+                "turns": [
+                    {"role": "user", "text": "profile it"},
+                    {"role": "user", "text": "Base directory for this skill: /x/y"},  # scaffold — dropped
+                    {"role": "tool", "text": "", "tool": {"name": "Bash", "input_preview": '{"command": "cProfile"}'}},
+                    {"role": "assistant", "text": "cumtime 4.2s in tokenize()"},
+                ],
+            }
+        ],
+    }
+    await fake_bank.put_rendition("S1/raw00001", "harness", json.dumps(mined))
+    _write_binding(tmp_path, transcript_lines=_dialogue(("user", "TRANSCRIPT-ONLY LINE")))
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    assert rc == 0
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "tool: Bash" in prompt and "cProfile" in prompt  # tool turns travel
+    assert "cumtime 4.2s in tokenize()" in prompt
+    assert "TRANSCRIPT-ONLY LINE" not in prompt  # rendition wins over flatten
+    assert "Base directory for this skill" not in prompt  # scaffold dropped
+
+
+async def test_trace_context_drops_harness_scaffold_turns(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Slash-command envelopes and injected skill bodies are harness plumbing,
+    not dialogue — left in, they dominate a short session and the distiller
+    reflects on oms itself (observed 2026-06-11)."""
+    await _seed_session(fake_bank)
+    _write_binding(
+        tmp_path,
+        transcript_lines=_dialogue(
+            ("user", "<command-message>self-distill</command-message>\n<command-name>/self-distill</command-name>"),
+            ("user", "Base directory for this skill: /home/u/.claude/skills/self-distill\n\n# procedure"),
+            ("user", "fix the tokenizer"),
+            ("assistant", "hoisted the compiled regex"),
+        ),
+    )
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    assert rc == 0
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "fix the tokenizer" in prompt and "hoisted the compiled regex" in prompt
+    assert "<command-message>" not in prompt and "Base directory for this skill" not in prompt
+
+
+async def test_self_distill_no_trace_no_section(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _seed_session(fake_bank)
+    adapter = FakeAdapter(json.dumps(_GOOD))
+    _patch_adapter(monkeypatch, adapter)
+    await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
+    [prompt] = adapter._model.prompts  # type: ignore[union-attr]
+    assert "BEGIN TRACE" not in prompt  # nothing captured → no fabricated section
 
 
 # --------------------------------------------------------------------------- #

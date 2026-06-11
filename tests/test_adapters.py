@@ -209,3 +209,76 @@ def test_distill_model_is_a_provider_when_binary_present(monkeypatch: pytest.Mon
     assert model is not None and callable(model.complete) and callable(model.rate_limit_signal)  # type: ignore[attr-defined]
     p = provider.resolve(adapter=CodexAdapter())  # picked up via the adapter hook
     assert callable(p.complete) and callable(p.rate_limit_signal)
+
+
+def test_headless_complete_strips_oms_session_from_child_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distiller is NOT the wrapped session: with OMS_SESSION inherited,
+    the user-scope oms._hook inside the spawned CLI would bind the distiller's
+    own harness session into the session's bindings file (the 2026-06-10
+    wrong-session contamination) and receive its inject stash."""
+    import oms.adapters.builtin as builtin
+
+    monkeypatch.setenv("OMS_SESSION", "FA04-ESNF")
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
+        captured["cmd"] = cmd
+        captured["env"] = kw.get("env")
+        return 0, "ok", "", 0.0
+
+    monkeypatch.setattr(builtin, "run_agent_subprocess", fake_run)
+    out = builtin._HeadlessModel("claude", ["claude", "-p"]).complete("hi")
+    assert out == "ok"
+    env = captured["env"]
+    assert isinstance(env, dict) and "OMS_SESSION" not in env
+    assert env.get("PATH")  # the rest of the environment is preserved
+
+
+def test_headless_complete_runs_in_hermetic_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distiller runs from an EMPTY temp cwd (2026-06-11): in the repo
+    cwd the spawned CLI loads its own project context (CLAUDE.md, git status)
+    and blends it into the post as if it were session evidence."""
+    import os as _os
+
+    import oms.adapters.builtin as builtin
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
+        captured["cwd"] = kw.get("cwd")
+        captured["cwd_listing"] = _os.listdir(str(kw.get("cwd")))
+        return 0, "ok", "", 0.0
+
+    monkeypatch.setattr(builtin, "run_agent_subprocess", fake_run)
+    assert builtin._HeadlessModel("claude", ["claude", "-p"]).complete("hi") == "ok"
+    cwd = captured["cwd"]
+    assert isinstance(cwd, str) and cwd != _os.getcwd()
+    assert captured["cwd_listing"] == []  # empty — no CLAUDE.md / .git to load
+    assert not Path(cwd).exists()  # cleaned up after the shell-out
+
+
+def test_claude_distill_prefix_requests_json_envelope() -> None:
+    assert ClaudeAdapter()._distill_cmd_prefix() == ["claude", "-p", "--output-format", "json"]
+
+
+def test_claude_distill_extract_unwraps_result_envelope() -> None:
+    a = ClaudeAdapter()
+    envelope = json.dumps({"type": "result", "subtype": "success", "result": '{"confidence": "high"}'})
+    assert a._distill_extract(envelope) == '{"confidence": "high"}'
+    assert a._distill_extract("plain prose, not an envelope") == "plain prose, not an envelope"
+    assert a._distill_extract('["not", "a", "dict"]') == '["not", "a", "dict"]'
+    # an error envelope with no result text yields "" (→ NO_PARSEABLE_POST, not garbage)
+    assert a._distill_extract(json.dumps({"type": "result", "subtype": "error", "result": None})) == ""
+
+
+def test_headless_complete_applies_adapter_extract(monkeypatch: pytest.MonkeyPatch) -> None:
+    import oms.adapters.builtin as builtin
+
+    monkeypatch.setattr(adapters_base.shutil, "which", lambda b: f"/usr/bin/{b}")
+    monkeypatch.setattr(
+        builtin,
+        "run_agent_subprocess",
+        lambda cmd, **kw: (0, json.dumps({"type": "result", "result": '{"a": 1}'}), "", 0.0),
+    )
+    model = ClaudeAdapter().distill_model()
+    assert model is not None and model.complete("p") == '{"a": 1}'  # type: ignore[attr-defined]

@@ -23,12 +23,13 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from rich.console import Console, RenderableType
+from rich.console import Console, Group, RenderableType
+from rich.panel import Panel
 from rich.text import Text
 
 from oms.utils import config, messages
 
-__all__ = ["console", "pick_star", "read_key", "render", "style_diff", "tilde"]
+__all__ = ["console", "pick_star", "read_key", "render", "render_post", "style_diff", "tilde"]
 
 
 def console(*, stderr: bool = False, min_width: int | None = None) -> Console:
@@ -87,9 +88,13 @@ _KEY_LEFT, _KEY_RIGHT, _KEY_ENTER, _KEY_ESC = "left", "right", "enter", "esc"
 def read_key() -> str:
     """Read one keypress from a TTY stdin in cbreak mode and return a symbolic
     name: ``left``/``right`` (arrows, also ``h``/``l``), ``enter``, ``esc``,
-    a literal digit ``1``-``5``, or the lowercased character. A lone ESC is
-    distinguished from an arrow escape-sequence by a short ``select`` poll
-    (an arrow's ``[X`` bytes arrive within the same keystroke)."""
+    a literal digit ``1``-``5``, or the lowercased character.
+
+    **POSIX only** (termios/tty), same contract as ``cli._pty_spawn`` — the
+    early raise also keeps the termios calls unreachable for mypy's win32
+    platform narrowing on the Windows CI leg."""
+    if sys.platform == "win32":  # pragma: no cover — checked on Windows CI
+        raise NotImplementedError("oms's interactive key reader is POSIX-only (termios/tty)")
     import termios
     import tty
 
@@ -97,23 +102,46 @@ def read_key() -> str:
     saved = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
-        ch = sys.stdin.read(1)
-        if ch in ("\r", "\n"):
-            return _KEY_ENTER
-        if ch == "\x1b":
-            if select.select([sys.stdin], [], [], 0.05)[0]:
-                seq = sys.stdin.read(1)
-                if seq == "[" and select.select([sys.stdin], [], [], 0.05)[0]:
-                    code = sys.stdin.read(1)
-                    if code == "D":
-                        return _KEY_LEFT
-                    if code == "C":
-                        return _KEY_RIGHT
-                return _KEY_ESC
-            return _KEY_ESC
-        return ch.lower()
+        return _read_key_fd(fd)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def _read_key_fd(fd: int) -> str:
+    """Decode one keypress from raw ``fd`` via ``os.read`` — NEVER buffered
+    ``sys.stdin``: the text wrapper's readahead swallows an arrow's trailing
+    ``[X`` bytes into its internal buffer, so the ``select`` poll below would
+    see an empty fd and misread every arrow as a lone ESC (= discard at the
+    commit gate). A lone ESC is distinguished from an arrow escape-sequence
+    by the short poll (an arrow's ``[X`` bytes arrive within the same
+    keystroke)."""
+    ch = os.read(fd, 1).decode(errors="replace")
+    if ch in ("\r", "\n"):
+        return _KEY_ENTER
+    if ch == "\x1b":
+        if select.select([fd], [], [], 0.05)[0]:
+            seq = os.read(fd, 1).decode(errors="replace")
+            if seq == "[":
+                # Drain the WHOLE CSI sequence — parameter bytes end at a
+                # final byte in 0x40-0x7E — so a modified arrow (Shift-Left =
+                # ``\x1b[1;2D``) or Home/End (``\x1b[1~``) never leaks its
+                # tail as spurious literal keypresses (a stray '1' would yank
+                # the picker's rating).
+                final = ""
+                while select.select([fd], [], [], 0.05)[0]:
+                    b = os.read(fd, 1).decode(errors="replace")
+                    if not b:
+                        break
+                    if "\x40" <= b <= "\x7e":
+                        final = b
+                        break
+                if final == "D":
+                    return _KEY_LEFT
+                if final == "C":
+                    return _KEY_RIGHT
+            return _KEY_ESC
+        return _KEY_ESC
+    return ch.lower()
 
 
 def _star_line(question: str, current: int) -> Text:
@@ -138,11 +166,14 @@ def pick_star(
     question: str = messages.COMMIT_QUESTION,
     key_fn: Callable[[], str] | None = None,
     out: Callable[[str], None] | None = None,
+    detail: str | None = None,
 ) -> tuple[bool, int | None]:
     """Interactive ★ number-line for the single commit gate. Arrow keys (or
     ``1``-``5``) move the selection, Enter commits with the selected ★,
-    ``s`` commits unrated, ``n``/Esc discards. Returns ``(commit, rating)``
-    exactly like :func:`oms.cli.ask_commit`'s typed fallback.
+    ``s`` commits unrated, ``n``/Esc discards. When ``detail`` is given
+    (the untruncated post), ``d`` prints it and the picker resumes. Returns
+    ``(commit, rating)`` exactly like :func:`oms.cli.ask_commit`'s typed
+    fallback.
 
     ``key_fn``/``out`` are injectable for tests; the default reads real
     keystrokes via :func:`read_key` and redraws in place with ``\\r``."""
@@ -154,7 +185,8 @@ def pick_star(
         sys.stdout.flush()
 
     write = out or _stdout_write
-    write(render(Text(messages.COMMIT_PICKER_HINT, style="dim")) + "\n")
+    hint = messages.COMMIT_PICKER_HINT_DETAIL if detail is not None else messages.COMMIT_PICKER_HINT
+    write(render(Text(hint, style="dim")) + "\n")
     while True:
         write("\r\x1b[2K" + render(_star_line(question, current)))
         k = keys()
@@ -164,6 +196,9 @@ def pick_star(
             current += 1
         elif k in ("1", "2", "3", "4", "5"):
             current = int(k)
+        elif k == "d" and detail is not None:
+            # Expand: print the full post above, re-anchor the picker below.
+            write("\n" + detail + "\n" + render(Text(hint, style="dim")) + "\n")
         elif k == _KEY_ENTER:
             write("\n")
             return True, current
@@ -173,6 +208,82 @@ def pick_star(
         elif k in ("n", _KEY_ESC):
             write("\n")
             return False, None
+
+
+# --------------------------------------------------------------------------- #
+# the proposed-post panel (the commit gate's preview)
+# --------------------------------------------------------------------------- #
+
+# Confidence → color, matching the picker's "5★ = best" explicitness about
+# which direction is better.
+_CONFIDENCE_STYLE = {"high": "green", "medium": "yellow", "low": "red"}
+# Same floor as the installer panels: below this, long values char-fold into
+# unreadable shreds, so the panel overflows a pathologically narrow terminal
+# instead.
+_POST_PANEL_MIN_WIDTH = 60
+# Display order: schema key → its catalog label (oms.forum.schema's
+# REQUIRED_FIELDS plus the optional evidence_ref; utils cannot import forum).
+_POST_FIELDS: tuple[tuple[str, str], ...] = (
+    ("load_bearing_assumption", messages.POST_FIELD_LABEL_ASSUMPTION),
+    ("evidence", messages.POST_FIELD_LABEL_EVIDENCE),
+    ("evidence_ref", messages.POST_FIELD_LABEL_EVIDENCE_REF),
+    ("proposed_next", messages.POST_FIELD_LABEL_PROPOSED_NEXT),
+    ("predicted_outcome", messages.POST_FIELD_LABEL_PREDICTED_OUTCOME),
+)
+_OPTIONAL_POST_FIELDS = frozenset({"evidence_ref"})
+
+
+def render_post(structured: object, *, kind: str = "reflection", full: bool = False) -> str:
+    """The commit-gate preview of a parser-validated post: a labeled panel
+    (one section per schema field, confidence as the colored subtitle) when
+    the body is the falsifiable post-mortem shape, else — defensively; the
+    parser ran first — syntax-highlighted JSON under the plain header.
+
+    Each field wraps in full up to ``OMS_POST_PREVIEW_FIELD_CHARS`` (280)
+    characters, then is cut at a word boundary with a dim ``… (+N chars)``
+    marker; the commit gate offers the ``full=True`` rendering behind ``d``."""
+    fields = _POST_FIELDS
+    is_post_mortem = (
+        isinstance(structured, dict)
+        and isinstance(structured.get("confidence"), str)
+        and all(
+            isinstance(structured.get(key), str) and str(structured[key]).strip()
+            for key, _ in fields
+            if key not in _OPTIONAL_POST_FIELDS
+        )
+    )
+    if not is_post_mortem or not isinstance(structured, dict):
+        from rich.json import JSON
+
+        return messages.POST_PROPOSED_HEADER + "\n" + render(JSON.from_data(structured))
+    cap = 0 if full else config.resolve("OMS_POST_PREVIEW_FIELD_CHARS", config.OMS_POST_PREVIEW_FIELD_CHARS, cast=int)
+    lines: list[RenderableType] = []
+    for key, label in fields:
+        val = structured.get(key)
+        if val is None or not str(val).strip():
+            continue  # evidence_ref: null is a valid, unrendered state
+        if lines:
+            lines.append(Text())
+        lines.append(Text(label, style="bold cyan"))
+        text = str(val)
+        if 0 < cap < len(text):
+            shown = text[:cap].rsplit(" ", 1)[0] or text[:cap]
+            lines.append(Text.assemble(shown, (messages.POST_FIELD_MORE.format(n=len(text) - len(shown)), "dim")))
+        else:
+            lines.append(Text(text))
+    conf = str(structured.get("confidence", "")).strip().lower()
+    subtitle = Text.assemble((messages.POST_CONFIDENCE_PREFIX, "dim"), (conf, _CONFIDENCE_STYLE.get(conf, "bold")))
+    panel = Panel(
+        Group(*lines),
+        title=messages.POST_PANEL_TITLE.format(kind=kind),
+        title_align="left",
+        subtitle=subtitle,
+        subtitle_align="right",
+        border_style="cyan",
+        expand=False,
+        padding=(1, 2),
+    )
+    return render(panel, soft_wrap=False, min_width=_POST_PANEL_MIN_WIDTH)
 
 
 def style_diff(diff_text: str) -> Text:

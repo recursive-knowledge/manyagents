@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from oms.utils import config, provider, sid, ui
+from oms.utils import config, messages, provider, sid, ui
 from oms.utils.log import get_logger
 from oms.utils.provider import (
     OpenAICompatibleProvider,
@@ -354,6 +354,124 @@ def test_pick_star_legend_says_which_end_is_best() -> None:
 
     _, screen = _run_picker(3, "enter")
     assert messages.COMMIT_PICKER_SCALE_LOW in screen and messages.COMMIT_PICKER_SCALE_HIGH in screen
+
+
+def test_render_post_labels_every_schema_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The commit-gate preview renders the post-mortem as a labeled panel —
+    human field names, values verbatim, confidence as the subtitle — instead
+    of a raw json.dumps blob."""
+    monkeypatch.setenv("OMS_COLOR", "never")
+    structured = {
+        "load_bearing_assumption": "the regex recompiled per call — that's the slowdown",
+        "evidence": "cumtime 4.2s in tokenize()",
+        "evidence_ref": None,
+        "proposed_next": "hoist the compiled pattern to module scope",
+        "predicted_outcome": "p95 drops below 80ms",
+        "confidence": "medium",
+    }
+    out = ui.render_post(structured, kind="reflection")
+    assert "proposed reflection" in out
+    for _, label in ui._POST_FIELDS:
+        if label == "evidence ref":
+            continue
+        assert label in out
+    assert "evidence ref" not in out  # null evidence_ref is a valid, unrendered state
+    assert "cumtime 4.2s in tokenize()" in out
+    assert messages.POST_CONFIDENCE_PREFIX + "medium" in out
+    assert '"confidence"' not in out  # no raw JSON keys in the panel
+
+
+def test_render_post_wraps_to_the_cap_then_truncates_with_a_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A field wraps in full up to OMS_POST_PREVIEW_FIELD_CHARS, then is cut
+    at a word boundary with the dim `… (+N chars)` marker; ``full=True`` (the
+    `d` expansion) renders every character with no marker."""
+    monkeypatch.setenv("OMS_COLOR", "never")
+    long_evidence = ("word " * 200).strip()  # 999 chars, far past the 280 cap
+    structured = {
+        "load_bearing_assumption": "short",
+        "evidence": long_evidence,
+        "evidence_ref": None,
+        "proposed_next": "short",
+        "predicted_outcome": "short",
+        "confidence": "low",
+    }
+    preview = ui.render_post(structured, kind="reflection")
+    assert "chars)" in preview  # the truncation marker
+    assert preview.count("word") < 200  # genuinely cut, not just wrapped
+    full = ui.render_post(structured, kind="reflection", full=True)
+    assert "chars)" not in full
+    assert full.count("word") == 200
+    # the cap is a tunable: 0 disables truncation entirely
+    monkeypatch.setenv("OMS_POST_PREVIEW_FIELD_CHARS", "0")
+    assert "chars)" not in ui.render_post(structured, kind="reflection")
+
+
+def test_pick_star_d_expands_the_full_post() -> None:
+    """With a truncated preview, `d` prints the untruncated rendering and the
+    picker resumes; without one, `d` is a no-op and the hint never offers it."""
+    feed = ["d", "enter"]
+    frames: list[str] = []
+    commit, rating = ui.pick_star(4, key_fn=lambda: feed.pop(0), out=frames.append, detail="THE FULL POST")
+    assert (commit, rating) == (True, 4)
+    screen = "".join(frames)
+    assert "THE FULL POST" in screen
+    assert "d=full text" in screen
+    (commit, rating), screen = _run_picker(4, "d", "enter")  # no detail
+    assert (commit, rating) == (True, 4)
+    assert "d=full text" not in screen
+
+
+def test_render_post_falls_back_to_highlighted_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A body that is not the post-mortem shape (defensive: the parser ran
+    first) falls back to the plain header + JSON — em-dashes and quotes stay
+    human-readable (ensure_ascii=False), never \\u-escaped."""
+    monkeypatch.setenv("OMS_COLOR", "never")
+    out = ui.render_post({"weird": "shape — kept readable"}, kind="reflection")
+    assert out.startswith(messages.POST_PROPOSED_HEADER)
+    assert '"weird"' in out and "shape — kept readable" in out
+    assert "\\u2014" not in out
+
+
+def test_read_key_decodes_arrow_bursts_from_the_raw_fd() -> None:
+    """Regression (2026-06-10): read_key read buffered ``sys.stdin``, whose
+    readahead swallowed an arrow's trailing ``[X`` bytes — the select() poll
+    saw an empty fd and every arrow collapsed to a lone ESC, silently
+    DISCARDING the post at the commit gate. The decoder works on the raw fd
+    (os.read), so the full escape burst is seen even when written in one
+    chunk, exactly as a terminal delivers it."""
+    import os
+
+    r, w = os.pipe()
+    try:
+        os.write(w, b"\x1b[D\x1b[C\r3\x1b")
+        assert ui._read_key_fd(r) == "left"
+        assert ui._read_key_fd(r) == "right"
+        assert ui._read_key_fd(r) == "enter"
+        assert ui._read_key_fd(r) == "3"
+        assert ui._read_key_fd(r) == "esc"  # lone ESC: the 0.05s poll times out
+    finally:
+        os.close(r)
+        os.close(w)
+
+
+def test_read_key_drains_full_csi_sequences_without_leaking_tail_bytes() -> None:
+    """A modified arrow (Shift-Left = ``\\x1b[1;2D``) still decodes by its
+    final byte, and a non-arrow CSI (Home = ``\\x1b[1~``) collapses to esc —
+    in both cases the parameter bytes are DRAINED, never returned as fake
+    literal keypresses on the next call (a leaked '1' would yank the picker's
+    rating to 1★)."""
+    import os
+
+    r, w = os.pipe()
+    try:
+        os.write(w, b"\x1b[1;2D\r\x1b[1~\r")
+        assert ui._read_key_fd(r) == "left"  # Shift-Left is still left
+        assert ui._read_key_fd(r) == "enter"  # ';2D' tail did not leak
+        assert ui._read_key_fd(r) == "esc"  # Home: drained, esc (= no-op/discard)
+        assert ui._read_key_fd(r) == "enter"  # '~' tail did not leak
+    finally:
+        os.close(r)
+        os.close(w)
 
 
 # --------------------------------------------------------------------------- #

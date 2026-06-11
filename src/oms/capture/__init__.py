@@ -52,6 +52,7 @@ def _serialize(trace: CanonicalTrace) -> str:
             "bytes_in": trace.bytes_in,
             "bytes_out": trace.bytes_out,
             "scrub_report": {"counts": trace.scrub_report.counts},
+            "term": trace.term,
             "events": [asdict(e) for e in trace.events],
         },
         ensure_ascii=False,

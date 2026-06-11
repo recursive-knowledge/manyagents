@@ -30,6 +30,9 @@ import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from oms.capture import CanonicalTrace
 from oms.utils.log import get_logger
@@ -219,6 +222,35 @@ class Adapter(ABC):
         Every filesystem write flows through ``oms._installer`` for transparency
         + ``oms uninstall <adapter>`` reversal."""
         return None
+
+    def mine(self, ctx: MineContext) -> dict[str, Any] | None:
+        """Optional (M13): read the harness's LOCAL files — its own transcript
+        of the wrapped session (Claude Code:
+        ``~/.claude/projects/<munged-cwd>/<session-id>.jsonl``) — and return
+        the normalized conversation artifact persisted as the ``harness``
+        rendition (Trace Renditions & Mining §4a shape: ``miner_version`` /
+        ``binding`` / ``completeness`` / ``run_started`` / ``segments``).
+        Default: no miner → None, nothing stored. The CLI wraps the call in a
+        never-fail guard, but implementations must still parse defensively —
+        the on-disk formats are undocumented and drift. Per-adapter overrides
+        delegate to ``oms.adapters.miners.<name>.mine`` (the skills pattern)."""
+        return None
+
+
+@dataclass(frozen=True)
+class MineContext:
+    """Everything :meth:`Adapter.mine` needs to bind a finished wrapped run
+    to the harness's local artifacts (M13).
+
+    ``bindings`` are the ``oms._hook`` lifecycle records for this run
+    (``harness_session_id`` + ``transcript_path`` per SessionStart/End —
+    one PTY run spans several harness sessions across ``/clear``); the
+    ``window`` (wall-clock start/end) powers the mtime-scan fallback when
+    no hooks were installed."""
+
+    cwd: Path
+    window: tuple[float, float]
+    bindings: list[dict[str, Any]] = field(default_factory=list)
 
 
 class PromptPrefixInjector:

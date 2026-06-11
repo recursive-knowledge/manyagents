@@ -11,7 +11,10 @@ real CLI).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,16 +72,31 @@ class _HeadlessModel:
 
     name: str
     cmd_prefix: list[str]  # e.g. ["claude", "-p"] — prompt appended
+    extract: Callable[[str], str] | None = None  # CLI-envelope unwrap, per adapter
 
     def complete(self, prompt: str, *, max_tokens: int | None = None) -> str:
-        rc, out, err, _ = run_agent_subprocess(
-            [*self.cmd_prefix, prompt],
-            timeout=config.OMS_DISTILL_TIMEOUT_S,
-            agent_name=self.name,
-        )
+        # The distiller is NOT the wrapped session: drop OMS_SESSION so the
+        # user-scope oms._hook inside the spawned CLI neither binds the
+        # distiller's own harness session into the session's bindings file nor
+        # receives the session's inject stash (the 2026-06-10 wrong-session
+        # contamination). Run from an EMPTY temp cwd for the same reason
+        # (2026-06-11): in the repo cwd the spawned CLI loads its own project
+        # context (CLAUDE.md, git status) and blends it into the post as if it
+        # were session evidence — the trace in the prompt must be the
+        # distiller's only knowledge of the session.
+        env = {k: v for k, v in os.environ.items() if k != "OMS_SESSION"}
+        with tempfile.TemporaryDirectory(prefix="oms-distill-") as hermetic_cwd:
+            rc, out, err, _ = run_agent_subprocess(
+                [*self.cmd_prefix, prompt],
+                timeout=config.OMS_DISTILL_TIMEOUT_S,
+                agent_name=self.name,
+                cwd=hermetic_cwd,
+                env=env,
+            )
         if rc != 0:
             raise AdapterError(f"{self.name} headless distill failed (rc={rc}): {err[:500]}")
-        return out.strip()
+        out = out.strip()
+        return self.extract(out) if self.extract is not None else out
 
     def rate_limit_signal(self, raw_error: str) -> provider.RateLimit | None:
         return provider.rate_limit_signal(raw_error, provider=self.name)
@@ -109,10 +127,15 @@ class _StructuredBuiltin(PromptPrefixInjector, Adapter):
     def distill_model(self) -> object | None:
         if not self.is_available():
             return None
-        return _HeadlessModel(self.name, self._distill_cmd_prefix())
+        return _HeadlessModel(self.name, self._distill_cmd_prefix(), extract=self._distill_extract)
 
     def _distill_cmd_prefix(self) -> list[str]:  # overridden per agent
         raise NotImplementedError
+
+    def _distill_extract(self, raw: str) -> str:
+        """Unwrap the CLI's headless output envelope (identity by default;
+        claude overrides — its ``--output-format json`` wraps the answer)."""
+        return raw
 
     def _parse(self, raw: str) -> list[TraceEvent]:  # overridden per agent
         raise NotImplementedError

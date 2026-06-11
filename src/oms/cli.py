@@ -136,42 +136,59 @@ def ask_yn(prompt: str, *, input_fn: In, output_fn: Out, noninteractive: bool) -
 _DECLINE = ("n", "no", "q", "esc", "escape")
 
 
-def ask_allow(prompt: str, *, input_fn: In, output_fn: Out, noninteractive: bool) -> bool:
-    """A single allowance gate: **Enter allows**, ``n``/``esc`` declines.
-    Replaces accept/reject two-way questions (user decision 2026-06-10:
-    every gate is one binary allowance, affirmative by default). In
-    ``OMS_NONINTERACTIVE`` it stays deny-by-default like :func:`ask_yn`
+def ask_allow(prompt: str, *, input_fn: In, output_fn: Out, noninteractive: bool, detail: str | None = None) -> bool:
+    """A single allowance gate: **Enter allows**, ``n``/``esc`` declines;
+    when ``detail`` is given (a truncated preview's full text), ``d`` prints
+    it and re-asks. Replaces accept/reject two-way questions (user decision
+    2026-06-10: every gate is one binary allowance, affirmative by default).
+    In ``OMS_NONINTERACTIVE`` it stays deny-by-default like :func:`ask_yn`
     (Open-Q §B5) — affirmative defaults are for present humans only."""
     if noninteractive:
         output_fn(messages.NONINTERACTIVE_DENIED.format(prompt=prompt))
         return False
-    styled = ui.render(Text.assemble((prompt, "bold"), (messages.ALLOW_SUFFIX, "dim"))) + " "
-    return input_fn(styled).strip().lower() not in _DECLINE
+    suffix = messages.ALLOW_SUFFIX_DETAIL if detail is not None else messages.ALLOW_SUFFIX
+    styled = ui.render(Text.assemble((prompt, "bold"), (suffix, "dim"))) + " "
+    while True:
+        raw = input_fn(styled).strip().lower()
+        if raw == "d" and detail is not None:
+            output_fn(detail)
+            continue
+        return raw not in _DECLINE
 
 
-def ask_commit(propose: int | None, *, input_fn: In, output_fn: Out, noninteractive: bool) -> tuple[bool, int | None]:
+def ask_commit(
+    propose: int | None, *, input_fn: In, output_fn: Out, noninteractive: bool, detail: str | None = None
+) -> tuple[bool, int | None]:
     """The single commit gate for a parser-validated post: allowance and ★ in
     one prompt. Enter ⇒ commit with the proposed ★; a bare ``1``-``5`` ⇒
     commit with that ★; ``skip`` ⇒ commit unrated; ``n``/``esc`` ⇒ discard
-    (C1: nothing persisted). ``OMS_NONINTERACTIVE`` ⇒ auto-commit unrated
-    (the mechanical parser already gated quality — oms.cli.md)."""
+    (C1: nothing persisted); when ``detail`` is given (the post's preview was
+    truncated), ``d`` ⇒ print the full post and re-ask. ``OMS_NONINTERACTIVE``
+    ⇒ auto-commit unrated (the mechanical parser already gated quality —
+    oms.cli.md)."""
     if noninteractive:
         return True, None
     # On a real terminal the gate is the ★ number-line picker (arrows / 1-5 /
-    # Enter / s / n-Esc). Scripted callers (tests, Simulation) pass their own
-    # input_fn and get the typed one-liner instead.
+    # Enter / s / d / n-Esc). Scripted callers (tests, Simulation) pass their
+    # own input_fn and get the typed one-liner instead.
     if input_fn is input and sys.stdin.isatty() and sys.stdout.isatty():
-        return ui.pick_star(propose or 3)
+        return ui.pick_star(propose or 3, detail=detail)
+    hint = messages.COMMIT_TYPED_HINT_DETAIL if detail is not None else messages.COMMIT_TYPED_HINT
     prompt = (
         ui.render(
             Text.assemble(
                 (messages.COMMIT_QUESTION + " ", "bold"),
-                (messages.COMMIT_TYPED_HINT.format(propose=propose), "dim"),
+                (hint.format(propose=propose), "dim"),
             )
         )
         + " "
     )
-    raw = input_fn(prompt).strip().lower()
+    while True:
+        raw = input_fn(prompt).strip().lower()
+        if raw == "d" and detail is not None:
+            output_fn(detail)
+            continue
+        break
     if raw in _DECLINE:
         return False, None
     if raw in ("skip", "s"):
@@ -353,13 +370,6 @@ def _inject_stash_path(session_id: str) -> Path:
     return _oms_home() / "inject" / f"{session_id}.json"
 
 
-def _distill_declined_path(session_id: str) -> Path:
-    """Marker: the user declined the session's distill offer once — don't ask
-    again for this session (it would otherwise re-fire at `oms end` after an
-    agent-exit decline). Cleared with the session."""
-    return _oms_home() / "offers" / f"{session_id}.distill-declined"
-
-
 async def _offer_goal_context(session_id: str, goal: str, *, bank: Bank, io: tuple[In, Out]) -> None:
     """Session-start inject offer: when the goal already has curated bundles,
     show how much prior knowledge exists and ask once (Enter=inject). On
@@ -468,69 +478,98 @@ async def _do_run_agent(
     tee_fd, tee_name = tempfile.mkstemp(prefix=f"oms-tee-{sid_}-", suffix=".log")
     os.close(tee_fd)
     tee_path = Path(tee_name)
+    # M12.1: the spawn loops also write a timing sidecar next to the tee
+    # (derived path — no signature change, so monkeypatched spawn stubs that
+    # never write it just land on the untimed fallback in _timed_events).
+    timing_path = Path(tee_name + ".timing")
     run_started = time.time()
     try:
         # Monkeypatched test/Simulation stubs return None — treat as 0.
         agent_rc = _pty_spawn(argv, tee=tee_path) or 0
         tee_bytes = tee_path.read_bytes() if tee_path.is_file() else b""
+        timing_text = timing_path.read_text(encoding="utf-8") if timing_path.is_file() else ""
     finally:
         tee_path.unlink(missing_ok=True)
+        timing_path.unlink(missing_ok=True)
 
+    pid: str | None = None  # the raw packet id; mining (below) hangs off it
+    # Cast-timing facts the Conversation tab needs to align/seek the replay:
+    # whether the cast is real-timed (vs synthetic pacing → no markers), and
+    # the wall-clock instant the cast's t0 (first event) maps to. Defaults are
+    # the safe "untimed" values used when capture fails.
+    cast_timed = False
+    cast_t0 = run_started
     try:
         from oms.capture import persist
-        from oms.capture.models import CanonicalTrace, TraceEvent
+        from oms.capture.models import CanonicalTrace
 
+        events, term = _timed_capture(tee_bytes, timing_text)
+        cast_timed = len(events) > 1 and len({e.ts for e in events}) > 1
+        cast_t0 = run_started + min((e.ts for e in events), default=0.0)
         trace = CanonicalTrace(
             session_id=sid_,
             agent_id=agent_id,
             adapter=name,
-            events=[TraceEvent(ts=0.0, kind="system", text=tee_bytes.decode("utf-8", errors="replace"))],
+            events=events,
             source_fidelity="pty",
             bytes_in=len(tee_bytes),
+            term=term,
         )
         pid = await persist(trace, bank=bank)
-        io[1](
-            ui.render(
-                Text.assemble(
-                    ("oms: captured raw packet ", "green"), (pid, "bold"), (f" ({len(tee_bytes):,} bytes)", "dim")
-                )
-            )
-        )
     except Exception as exc:
         io[1](ui.render(Text(f"oms: trace capture failed ({type(exc).__name__}: {exc})", style="red")))
 
     # M12 groundwork: surface what the lifecycle hooks bound during this run
     # (harness session ids + transcript paths appended by `oms._hook`). One
     # PTY run can span several harness sessions (`/clear` rolls a fresh id).
-    # Consumed for real by Adapter.mine() in M13.
     bindings = _harness_bindings(sid_, since=run_started)
-    if bindings:
-        ids = sorted({str(b.get("harness_session_id") or "?") for b in bindings})
-        io[1](
-            ui.render(
-                Text.assemble(
-                    ("oms: harness session(s) bound: ", "dim"),
-                    (", ".join(ids), "bold"),
-                    (f" ({len(bindings)} hook event(s))", "dim"),
+
+    # M13.1: mine the harness's own transcript of this run into the `harness`
+    # rendition (the viewer's Conversation tab). Bindings first, mtime-window
+    # scan as fallback — both inside the adapter's mine(). Never-fail, like
+    # capture: a mining problem must not disturb the session close.
+    if pid is not None and callable(getattr(adapter, "mine", None)):
+        try:
+            from oms.adapters.base import MineContext
+
+            mined = adapter.mine(MineContext(cwd=Path.cwd(), window=(run_started, time.time()), bindings=bindings))
+            if mined:
+                # The cli owns the raw-trace↔rendition relationship, so it
+                # stamps the cast-timing alignment the viewer can't derive
+                # from the conversation alone (markers/seek gate on `timed`).
+                mined["timed"] = cast_timed
+                mined["cast_t0"] = cast_t0
+                await bank.put_rendition(
+                    pid,
+                    "harness",
+                    json.dumps(mined, ensure_ascii=False),
+                    miner_version=str(mined.get("miner_version") or "") or None,
                 )
-            )
-        )
-    # The session-close moments fire HERE (2026-06-10): the wrapped agent
-    # exiting is the natural "I'm done working" point — first the distill
-    # offer, then the offer to end the session itself, so the whole loop can
-    # close without anyone remembering `oms end` (which remains the fallback
-    # and does the same things). Clean exits only (after a crash or Ctrl-C
-    # the user is dealing with the failure, not reflecting on it).
+        except Exception as exc:
+            io[1](ui.render(Text(f"oms: conversation mining skipped ({type(exc).__name__}: {exc})", style="yellow")))
+
+    # Show the trace link to the user
+    io[1](ui.render(Text.assemble(("trace: ", "dim"), (_session_url(sid_), "underline cyan"))))
+    # The session-close moment fires HERE (2026-06-10; revised same day): the
+    # wrapped agent exiting asks ONE question — end the session? — and
+    # `_do_end` owns the distill offer + ★, so the identical close path runs
+    # whether the user accepts here or types `oms end` later. (A separate
+    # distill ask before this gate double-prompted: a failed draft was
+    # re-offered moments later inside `_do_end`.) Clean exits only (after a
+    # crash or Ctrl-C the user is dealing with the failure, not reflecting
+    # on it).
     if agent_rc == 0 and not _noninteractive():
         try:
-            await _offer_end_distill(sid_, bank=bank, io=io)
             if ask_allow(
                 messages.AGENT_EXIT_END_OFFER.format(session_id=sid_),
                 input_fn=io[0],
                 output_fn=io[1],
                 noninteractive=False,
             ):
-                await _do_end(argparse.Namespace(session=sid_), bank=bank, io=io)
+                # `since` scopes the end-offer reflection's trace context to
+                # the harness sessions bound during THIS run — a `--resume`d
+                # or earlier run's transcript must not be what gets distilled.
+                await _do_end(argparse.Namespace(session=sid_, since=run_started), bank=bank, io=io)
         except Exception as exc:
             io[1](ui.render(Text(f"oms: session-close offers skipped ({type(exc).__name__}: {exc})", style="yellow")))
     # The agent's own exit code is the run's exit code (the pre-M12 execvp
@@ -608,6 +647,87 @@ def _shell_exit_code(rc: int) -> int:
     return rc if rc >= 0 else 128 - rc
 
 
+def _timed_capture(  # noqa: C901 — one linear parse with four documented fallback exits; splitting it would scatter the contract
+    tee_bytes: bytes, timing_text: str
+) -> tuple[list[Any], dict[str, Any] | None]:
+    """Build the CanonicalTrace event list + terminal geometry for a run
+    (M12.1 timing, M12.2 geometry).
+
+    The spawn loops write a timing sidecar alongside the byte-exact tee.
+    Lines are either ``"<offset_s> <n_bytes>"`` (one per master/pipe read) or
+    ``"<offset_s> r <cols>x<rows>"`` (the initial terminal size + every
+    SIGWINCH). When present and consistent, the trace carries one timestamped
+    event per read chunk — the viewer's asciinema rendition replays the
+    session's REAL cadence — and ``term`` carries the geometry the TUI
+    actually laid itself out for (without it the replay guesses a width and
+    every box border wraps). Chunks are decoded with one incremental UTF-8
+    decoder so a multi-byte glyph split across reads never shreds into
+    U+FFFD.
+
+    Returns ``(events, term)``; ``term`` is ``{"cols", "rows", "resizes":
+    [[offset_s, cols, rows], …]}`` or ``None`` when the sidecar carried no
+    size records. Fallbacks keep the pre-M12 event shape (one event at ts=0):
+    a missing/garbled sidecar (monkeypatched test stubs never write one), a
+    byte-count mismatch, or a credential hit in the *joined* text — a secret
+    split across two read chunks would defeat ``oms.capture``'s per-event
+    scrub regexes, so any joined-text hit collapses the trace to a single
+    event and lets ``persist()`` scrub it whole. Timing is sacrificed for
+    safety on exactly the traces that need redaction; geometry is kept (it
+    is never secret-bearing).
+    """
+    import codecs
+
+    from oms.capture.models import CanonicalTrace, TraceEvent
+    from oms.capture.scrub import scrub
+
+    whole = tee_bytes.decode("utf-8", errors="replace")
+    single: list[Any] = [TraceEvent(ts=0.0, kind="system", text=whole)]
+    if not tee_bytes or not timing_text:
+        return single, None
+    chunks: list[tuple[float, int]] = []
+    sizes: list[tuple[float, int, int]] = []
+    try:
+        for line in timing_text.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[1] == "r":
+                cols_s, _, rows_s = parts[2].partition("x")
+                sizes.append((float(parts[0]), int(cols_s), int(rows_s)))
+            elif len(parts) == 2:
+                chunks.append((float(parts[0]), int(parts[1])))
+            else:  # unrecognized line shape — same handling as a parse failure
+                return single, None
+    except ValueError:
+        return single, None  # garbled sidecar — distrust it wholesale
+
+    term: dict[str, Any] | None = None
+    if sizes:
+        term = {
+            "cols": sizes[0][1],
+            "rows": sizes[0][2],
+            "resizes": [[round(off, 6), c, r] for off, c, r in sizes[1:]],
+        }
+    if sum(n for _off, n in chunks) != len(tee_bytes):
+        return single, term  # torn/partial sidecar — trust the bytes, drop timing
+    probe = CanonicalTrace(
+        session_id="probe", agent_id="probe/a", adapter="probe", events=single, source_fidelity="pty"
+    )
+    _scrubbed, report = scrub(probe)
+    if report.counts:
+        return single, term
+    dec = codecs.getincrementaldecoder("utf-8")("replace")
+    events: list[Any] = []
+    pos = 0
+    for off, n in chunks:
+        text = dec.decode(tee_bytes[pos : pos + n])
+        pos += n
+        if text:
+            events.append(TraceEvent(ts=round(off, 6), kind="system", text=text))
+    tail = dec.decode(b"", True)
+    if tail and chunks:
+        events.append(TraceEvent(ts=round(chunks[-1][0], 6), kind="system", text=tail))
+    return events or single, term
+
+
 def _pipe_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C901 — pump + cleanup are irreducibly stateful
     """Non-PTY fallback for redirected stdin: run ``argv`` as a plain
     subprocess — stdin and the controlling terminal are inherited so piped
@@ -635,9 +755,30 @@ def _pipe_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C9
     from oms.adapters.base import _register_proc, _unregister_proc
 
     tee_fd: int | None = None
+    timing_fd: int | None = None
     if tee is not None:
         with contextlib.suppress(OSError):
             tee_fd = os.open(str(tee), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # M12.1 timing sidecar: one "<offset_s> <n_bytes>" line per read;
+            # _timed_events turns it into timestamped TraceEvents so the
+            # viewer replays real cadence.
+            timing_fd = os.open(str(tee) + ".timing", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    t0 = time.monotonic()
+    # M12.2 best-effort geometry: stdin is a pipe here, but stdout/stderr is
+    # often still the terminal (`echo prompt | oms claude`). Without a size
+    # record the cast rendition has to guess a width.
+    if timing_fd is not None:
+        with contextlib.suppress(Exception):
+            import fcntl
+            import struct
+            import termios
+
+            for stream in (sys.stdout, sys.stderr):
+                if stream.isatty():
+                    sz = fcntl.ioctl(stream.fileno(), termios.TIOCGWINSZ, b"\x00" * 8)
+                    rows, cols = struct.unpack("HHHH", sz)[:2]
+                    os.write(timing_fd, f"0.000000 r {cols}x{rows}\n".encode())
+                    break
     proc: subprocess.Popen[bytes] | None = None
     try:
         proc = subprocess.Popen(
@@ -669,6 +810,9 @@ def _pipe_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C9
                 if tee_fd is not None:
                     with contextlib.suppress(OSError):
                         os.write(tee_fd, data)
+                if timing_fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.write(timing_fd, f"{time.monotonic() - t0:.6f} {len(data)}\n".encode())
             elif gone_at is not None:
                 break  # child exited and the pipe has drained
             if gone_at is None:
@@ -690,9 +834,10 @@ def _pipe_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C9
                     with contextlib.suppress(OSError, subprocess.TimeoutExpired):
                         proc.wait(timeout=5)
             _unregister_proc(cast("subprocess.Popen[str]", proc))
-        if tee_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(tee_fd)
+        for fd in (tee_fd, timing_fd):
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
 
 def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C901 — a PTY bridge is irreducibly stateful
@@ -741,25 +886,40 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
         os.execvp(argv[0], argv)  # noqa: S606 — exec'ing the user-named adapter binary is the point
         return 0  # unreachable, but mypy doesn't know
 
-    # parent: copy our winsize to the child PTY, and re-sync on every SIGWINCH.
+    # Optional tee: every byte the master fd emits is also written to ``tee``,
+    # so ``_do_run_agent`` can persist a ``raw`` packet via the M4 capture
+    # pipeline (closes the M8 "capture plumbing (trace tee) is M10 integration"
+    # deferral — M11.6). Opened BEFORE the winsize sync so the sidecar's first
+    # record is the initial terminal size.
+    tee_fd: int | None = None
+    timing_fd: int | None = None
+    if tee is not None:
+        with contextlib.suppress(OSError):
+            tee_fd = os.open(str(tee), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # M12.1 timing sidecar (see _pipe_spawn): real per-read offsets so
+            # the stored trace replays the session's actual cadence.
+            timing_fd = os.open(str(tee) + ".timing", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    t0 = time.monotonic()
+
+    # parent: copy our winsize to the child PTY, re-sync on every SIGWINCH,
+    # and record each size into the sidecar (`<offset> r <cols>x<rows>`) —
+    # M12.2: the cast rendition needs the REAL geometry the TUI laid itself
+    # out for, or the replay wraps every box border.
     def _sync_winsize(*_: object) -> None:
         try:
             sz = fcntl.ioctl(sys.stdin.fileno(), termios.TIOCGWINSZ, b"\x00" * 8)
             fcntl.ioctl(master_fd, termios.TIOCSWINSZ, sz)
         except OSError:
-            pass  # best-effort; a closed terminal shouldn't bring us down
+            return  # best-effort; a closed terminal shouldn't bring us down
+        if timing_fd is not None:
+            import struct
+
+            rows, cols = struct.unpack("HHHH", sz)[:2]
+            with contextlib.suppress(OSError):
+                os.write(timing_fd, f"{time.monotonic() - t0:.6f} r {cols}x{rows}\n".encode())
 
     _sync_winsize()
     signal.signal(signal.SIGWINCH, _sync_winsize)
-
-    # Optional tee: every byte the master fd emits is also written to ``tee``,
-    # so ``_do_run_agent`` can persist a ``raw`` packet via the M4 capture
-    # pipeline (closes the M8 "capture plumbing (trace tee) is M10 integration"
-    # deferral — M11.6).
-    tee_fd: int | None = None
-    if tee is not None:
-        with contextlib.suppress(OSError):
-            tee_fd = os.open(str(tee), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 
     # Bridge stdin <-> master in raw mode so the child sees keystrokes (not
     # cooked lines). Restore terminal attrs on the way out no matter what.
@@ -783,6 +943,9 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
                 if tee_fd is not None:
                     with contextlib.suppress(OSError):
                         os.write(tee_fd, data)
+                if timing_fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.write(timing_fd, f"{time.monotonic() - t0:.6f} {len(data)}\n".encode())
             if sys.stdin in rfds:
                 try:
                     data = os.read(sys.stdin.fileno(), 65536)
@@ -794,9 +957,10 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSANOW, old_attrs)
         signal.signal(signal.SIGWINCH, signal.SIG_DFL)
-        if tee_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(tee_fd)
+        for fd in (tee_fd, timing_fd):
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
         with contextlib.suppress(OSError):
             _, wait_status = os.waitpid(pid, 0)
             exit_code = _shell_exit_code(os.waitstatus_to_exitcode(wait_status))
@@ -815,7 +979,7 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
     # distillation moments instead of relying on the human remembering the
     # verbs mid-session. One allowance gate each; never blocks `oms end`.
     try:
-        await _offer_end_distill(sid_, bank=bank, io=io)
+        await _offer_end_distill(sid_, since=getattr(args, "since", None), bank=bank, io=io)
     except Exception as exc:
         io[1](ui.render(Text(f"oms: distill offer skipped ({type(exc).__name__}: {exc})", style="yellow")))
     await bank.put_session(sid_, status="ended")
@@ -836,12 +1000,11 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
             )
     _clear_active()
     _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
-    _distill_declined_path(sid_).unlink(missing_ok=True)
     io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
     return 0
 
 
-async def _offer_end_distill(sid_: str, *, bank: Bank, io: tuple[In, Out]) -> None:
+async def _offer_end_distill(sid_: str, *, since: float | None = None, bank: Bank, io: tuple[In, Out]) -> None:
     """End-of-session self-distill offer (sensible default, 2026-06-10).
 
     Fires only when the session did work (an agent registered) but committed
@@ -862,8 +1025,6 @@ async def _offer_end_distill(sid_: str, *, bank: Bank, io: tuple[In, Out]) -> No
         return
     from oms._handlers import do_self_distill
 
-    if _distill_declined_path(sid_).is_file():
-        return  # asked at agent exit, declined — once per session is enough
     posts = await bank.list_packets(session_id=sid_, type="post")
     reflections = [p for p in posts if p.get("kind") == "reflection"]
     agents = await bank.list_agents(sid_)
@@ -880,11 +1041,7 @@ async def _offer_end_distill(sid_: str, *, bank: Bank, io: tuple[In, Out]) -> No
     if ask_allow(offer, input_fn=io[0], output_fn=io[1], noninteractive=False):
         adapter = str(agents[-1].get("adapter") or "")
         if adapter:
-            await do_self_distill(adapter=adapter, guidance=guidance, session=sid_, bank=bank, io=io)
-    else:
-        marker = _distill_declined_path(sid_)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.touch()
+            await do_self_distill(adapter=adapter, guidance=guidance, session=sid_, since=since, bank=bank, io=io)
 
 
 def _noninteractive() -> bool:

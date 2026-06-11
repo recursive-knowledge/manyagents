@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 from oms.bank import Bank
-from oms.utils import config, messages, sid
+from oms.utils import config, messages, sid, ui
 
 # These three helpers stay in oms.cli (CLI-state and prompt helpers); import
 # them lazily inside handlers to avoid circular import at module load.
@@ -54,6 +55,162 @@ async def _agent_json(adapter: Any, prompt: str) -> Any:
             except json.JSONDecodeError:
                 return None
     return None
+
+
+def _head_tail(text: str, budget: int) -> str:
+    """Byte-bounded head+tail with one explicit elision marker (the
+    ``oms.capture.bound`` discipline, applied to prompt context)."""
+    raw = text.encode("utf-8")
+    if len(raw) <= budget:
+        return text
+    half = max(1, (budget - 96) // 2)  # reserve room for the marker itself
+    head = raw[:half].decode("utf-8", "ignore")
+    tail = raw[-half:].decode("utf-8", "ignore")
+    elided = len(raw) - half * 2
+    return f"{head}\n[... {elided} bytes elided for context budget {budget} ...]\n{tail}"
+
+
+def _is_harness_scaffold(text: str) -> bool:
+    """Harness plumbing masquerading as dialogue: slash-command envelopes and
+    injected skill bodies are Claude-Code/oms scaffolding, not the user's or
+    agent's words. Left in the distill context they dominate a short session
+    and the distiller reflects on oms itself (observed 2026-06-11: over half
+    the rendered trace was the /self-distill skill body)."""
+    head = text.lstrip()
+    return head.startswith((
+        "<command-message>",
+        "<command-name>",
+        "<local-command-stdout>",
+        "Base directory for this skill:",
+    ))
+
+
+def _transcript_text(path: str) -> str:
+    """Flatten one harness transcript (jsonl) into ``role: text`` dialogue
+    lines. Defensive: a missing/unreadable/odd-shaped file yields ``""``."""
+    from oms.adapters.builtin import _jsonl, _msg_text
+
+    try:
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    lines: list[str] = []
+    for obj in _jsonl(raw):
+        t = str(obj.get("type", ""))
+        if t in ("user", "assistant"):
+            txt = _msg_text(obj.get("message", ""))
+            if txt and not _is_harness_scaffold(txt):
+                lines.append(f"{'user' if t == 'user' else 'agent'}: {txt}")
+    return "\n".join(lines)
+
+
+def _rendition_text(body: Any) -> str:
+    """Flatten a mined ``harness`` rendition (oms.adapters.miners) into
+    dialogue lines, TOOL TURNS INCLUDED — the transcript-only flatten drops
+    tool_use/tool_result blocks, so a session whose story is its tool activity
+    (observed 2026-06-11: an MCP flail invisible to the distiller) distills
+    into noise. Defensive: any odd shape yields ``""``."""
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return ""
+    if not isinstance(body, dict):
+        return ""
+    lines: list[str] = []
+    for seg in body.get("segments") or []:
+        if not isinstance(seg, dict):
+            continue
+        for turn in seg.get("turns") or []:
+            if not isinstance(turn, dict):
+                continue
+            role = str(turn.get("role") or "")
+            text = str(turn.get("text") or "")
+            tool = turn.get("tool")
+            if role == "tool" and isinstance(tool, dict):
+                lines.append(f"tool: {tool.get('name', '?')} {tool.get('input_preview') or ''}".rstrip())
+            elif text.strip() and not _is_harness_scaffold(text):
+                lines.append(f"{'agent' if role == 'assistant' else 'user'}: {text}")
+    return "\n".join(lines)
+
+
+def _bound_transcripts_text(sid_: str, *, since: float | None, budget: int) -> str:
+    """Flatten the run's bound transcript(s): newest binding first, deduped by
+    path, stopping once ``budget`` is reached; chronological order restored."""
+    from oms.cli import _harness_bindings
+
+    parts: list[str] = []
+    seen: set[str] = set()
+    for rec in reversed(_harness_bindings(sid_, since=since or 0.0)):  # newest first
+        tp = str(rec.get("transcript_path") or "")
+        if not tp or tp in seen:
+            continue
+        seen.add(tp)
+        part = _transcript_text(tp)
+        if part:
+            parts.append(part)
+        if sum(len(p.encode("utf-8")) for p in parts) >= budget:
+            break
+    parts.reverse()  # back to chronological order
+    return "\n\n".join(parts)
+
+
+async def _raw_packet_text(bank: Bank, raw_id: str) -> str:
+    """The scrubbed ``raw`` packet body's event text, defensively parsed."""
+    trace_row = await bank.get_trace(raw_id)
+    try:
+        body = json.loads(str((trace_row or {}).get("body") or "{}"))
+        events = body.get("events", []) if isinstance(body, dict) else []
+        return "\n".join(str(e.get("text", "")) for e in events if isinstance(e, dict))
+    except (ValueError, TypeError):
+        return ""
+
+
+async def _trace_context(sid_: str, *, bank: Bank, since: float | None = None) -> str | None:
+    """The session content rendered into a post prompt (2026-06-10): once the
+    wrapped agent exits, the conversation lives only in the bound harness
+    transcript(s) (``$OMS_HOME/bindings/<sid>.jsonl``, appended by
+    ``oms._hook``) and the captured ``raw`` packet — NOT in any model's head,
+    so the headless ``distill_model()`` shell-out must be handed it.
+
+    The mined ``harness`` rendition of the newest ``raw`` packet wins
+    (2026-06-11): it is the only source that carries TOOL TURNS (the
+    transcript flatten keeps text blocks only), it is run-scoped by the miner
+    (``MineContext.window`` starts at the same run-start clock ``since``
+    carries), and it is already scrubbed + capped. Bound transcripts are the
+    fallback (newest binding first, deduped by path, ``since``-scoped when
+    several wrapped runs share the session); the scrubbed ``raw`` packet body
+    is last. ``None`` when the session left no trace at all — the prompt then
+    carries no trace section."""
+    from oms.capture import CanonicalTrace, TraceEvent, scrub
+
+    budget = config.resolve("OMS_DISTILL_CONTEXT_MAX_BYTES", config.OMS_DISTILL_CONTEXT_MAX_BYTES, cast=int)
+
+    raws = await bank.list_packets(session_id=sid_, type="raw")
+    text = ""
+    if raws:  # the mined conversation view, tool turns included
+        rend = await bank.get_rendition(str(raws[-1]["id"]), "harness")
+        if rend:
+            text = _rendition_text(rend.get("body"))
+    if not text.strip():  # no rendition — flatten the bound transcript(s)
+        text = _bound_transcripts_text(sid_, since=since, budget=budget)
+    if not text.strip() and raws:  # last resort — the scrubbed raw packet body
+        text = await _raw_packet_text(bank, str(raws[-1]["id"]))
+    if not text.strip():
+        return None
+
+    # Transcripts carry full tool outputs and are NOT pre-scrubbed (the raw
+    # packet is, but re-scrubbing is free) — never put a secret in a prompt.
+    scrubbed, _ = scrub(
+        CanonicalTrace(
+            session_id=sid_,
+            agent_id="",
+            adapter="",
+            events=[TraceEvent(0.0, "system", text)],
+            source_fidelity="pty",
+        )
+    )
+    return _head_tail(scrubbed.events[0].text, budget)
 
 
 def _adapter_cls(name: str) -> Any:
@@ -133,8 +290,12 @@ async def _emit_post(
         io[1](messages.POST_REJECTED_BY_DISCIPLINE.format(reason=res))
         return 1  # caller re-prompts (C1: nothing persisted)
 
-    io[1](messages.POST_PROPOSED_HEADER)
-    io[1](json.dumps(res.get("structured", {}), indent=2))
+    body = res.get("structured", {})
+    preview = ui.render_post(body, kind=kind)
+    io[1](preview)
+    # Truncated preview ⇒ the untruncated rendering is one `d` away at the gate.
+    expanded = ui.render_post(body, kind=kind, full=True)
+    detail = expanded if expanded != preview else None
     # The commit gate is NOT deny-by-default: the mechanical parser already
     # gated quality, so an unattended (OMS_NONINTERACTIVE) run auto-commits —
     # the open-ended loop must keep running with no human present. Deny-by-
@@ -142,14 +303,16 @@ async def _emit_post(
     # the agent's own parser-validated post (oms.cli.md: noninteractive →
     # unrated + no inject; it does not gate /self-distill).
     if ask_star:
-        proposed = res.get("structured", {}).get("confidence")
+        proposed = body.get("confidence")
         prop = {"high": 5, "medium": 3, "low": 2}.get(str(proposed), 3)
-        accepted, rating = ask_commit(prop, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive())
+        accepted, rating = ask_commit(
+            prop, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive(), detail=detail
+        )
         if accepted and rating is not None:
             res["rating"] = rating
     else:
         accepted = _noninteractive() or ask_allow(
-            messages.REPLY_COMMIT_OFFER, input_fn=io[0], output_fn=io[1], noninteractive=False
+            messages.REPLY_COMMIT_OFFER, input_fn=io[0], output_fn=io[1], noninteractive=False, detail=detail
         )
     if not accepted:
         io[1](messages.POST_DISCARDED)
@@ -171,6 +334,7 @@ async def do_self_distill(
     adapter: str,
     guidance: str | None = None,
     session: str | None = None,
+    since: float | None = None,
     bank: Bank,
     io: tuple[Any, Any],
 ) -> int:
@@ -182,7 +346,8 @@ async def do_self_distill(
     goal = (session_row or {}).get("goal")
     agent_id = await _resolve_agent(sid_, adapter, bank=bank)
     adapter_obj = _adapter_for(adapter, session_id=sid_, agent_id=agent_id)
-    prompt = render_post_prompt(kind="reflection", goal=goal, guidance=guidance)
+    trace_ctx = await _trace_context(sid_, bank=bank, since=since)
+    prompt = render_post_prompt(kind="reflection", goal=goal, guidance=guidance, trace_context=trace_ctx)
     structured = await _agent_json(adapter_obj, prompt)
     if structured is None:
         io[1](messages.NO_PARSEABLE_POST)
@@ -228,7 +393,8 @@ async def do_discuss(
     if reason is not None:
         io[1](messages.DISCUSS_REFUSED.format(reason=reason))
         return 1  # not persisted (C1)
-    prompt = render_post_prompt(kind="reply", goal=goal, prior_posts=ranked)
+    trace_ctx = await _trace_context(sid_, bank=bank)
+    prompt = render_post_prompt(kind="reply", goal=goal, prior_posts=ranked, trace_context=trace_ctx)
     structured = await _agent_json(adapter_obj, prompt)
     if structured is None:
         io[1](messages.NO_PARSEABLE_REPLY)

@@ -246,3 +246,23 @@ async def test_traces_body_roundtrips_to_canonicaltrace(fake_bank: FakeBank) -> 
 
 def test_marker_reserve_is_sane() -> None:
     assert 0 < _MARKER_RESERVE < 2 * 1024 * 1024  # leaves room for the elision marker
+
+
+async def test_persist_serializes_terminal_geometry(fake_bank: FakeBank) -> None:
+    """M12.2: the envelope carries `term` (cols/rows/resizes) end-to-end —
+    the cast rendition needs the real geometry the TUI laid itself out for.
+    Legacy traces (term=None) keep the old shape."""
+    import json
+
+    await fake_bank.put_session("S")
+    term = {"cols": 159, "rows": 37, "resizes": [[3.5, 100, 37]]}
+    pid = await persist(_trace([TraceEvent(0.0, "system", "x")], fidelity="pty", term=term), bank=fake_bank)
+    tr = await fake_bank.get_trace(pid)
+    assert tr is not None
+    body = json.loads(tr["body"])
+    assert body["term"] == term
+
+    pid2 = await persist(_trace([TraceEvent(0.0, "system", "y")], fidelity="pty"), bank=fake_bank)
+    tr2 = await fake_bank.get_trace(pid2)
+    assert tr2 is not None
+    assert json.loads(tr2["body"])["term"] is None

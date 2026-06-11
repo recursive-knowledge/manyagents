@@ -2,10 +2,13 @@
 *rendered into the agent-side post prompt*).
 
 This lives in ``oms.forum`` on purpose: the module that owns the parser also
-owns the rendered rule, so the rule the agent writes against is byte-for-byte
-the rule the parser filters against (it embeds the *same* ``ANTI_META_BLOCK``
-object). Structure is an agent tax, never a human tax (Design Principles §11):
-the CLI renders this for the agent; the practitioner never sees it.
+owns the rendered rule, so the rule the agent writes against is the rule the
+parser filters against — it embeds ``POST_ANTI_META_BLOCK``, whose banned
+phrases are built from the *same* ``BANNED_META_PHRASES`` tuple the parser
+enforces (the curator-worded ``ANTI_META_BLOCK`` stays the curator's;
+decision 2026-06-11). Structure is an agent tax, never a human tax (Design
+Principles §11): the CLI renders this for the agent; the practitioner never
+sees it.
 
 No-history hardening (oms.forum.md "Forge protection"): when a ``goal`` has no
 prior posts the prompt explicitly forbids citing post ids, because a
@@ -16,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from oms.forum.anti_meta import ANTI_META_BLOCK
+from oms.forum.anti_meta import POST_ANTI_META_BLOCK
 
 _SCHEMA = (
     "Emit ONE JSON object, nothing else, with exactly these keys:\n"
@@ -48,16 +51,24 @@ def render_post_prompt(
     goal: str | None,
     guidance: str | None = None,
     prior_posts: list[dict[str, Any]] | None = None,
+    trace_context: str | None = None,
 ) -> str:
     """Render the agent-side prompt for a ``reflection`` (``/self-distill``)
-    or ``reply`` (``/discuss``) post. Embeds the shared ``ANTI_META_BLOCK``."""
+    or ``reply`` (``/discuss``) post. Embeds ``POST_ANTI_META_BLOCK``.
+
+    ``trace_context`` carries the session's mined trace excerpt for callers
+    whose model did NOT live the session (the headless post-exit path in
+    ``oms._handlers``): the schema demands a verbatim excerpt from "THIS
+    session's trace", and a fresh headless model has no trace unless the
+    prompt brings it. The in-agent MCP path passes None — the host LLM is
+    the agent and already holds the conversation."""
     head = (
         "You are writing one structured forum post about the session you just "
         "completed. This is not a chat reply to a human — it is a falsifiable "
         "post-mortem a future agent will be seeded with."
     )
     scope = f"Goal scope: {goal}." if goal else "No goal scope (ungoaled)."
-    parts = [head, scope, "", ANTI_META_BLOCK, "", _SCHEMA]
+    parts = [head, scope, "", POST_ANTI_META_BLOCK, "", _SCHEMA]
 
     if kind == "reply":
         prior = prior_posts or []
@@ -77,6 +88,19 @@ def render_post_prompt(
             ]
     elif not (prior_posts or []):
         parts += ["", "No prior posts exist under this goal — set evidence_ref to null; do NOT cite a post id."]
+
+    if trace_context:
+        parts += [
+            "",
+            "Session trace (mined from the completed session). This trace is "
+            "your ONLY record of the session — do not treat files, git "
+            "status, project instructions, or anything else in your current "
+            "environment as session evidence. `evidence` MUST be a verbatim "
+            "excerpt from this trace, not a paraphrase:",
+            "--- BEGIN TRACE ---",
+            trace_context,
+            "--- END TRACE ---",
+        ]
 
     if guidance:
         parts += ["", f"Operator guidance: {guidance}"]
