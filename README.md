@@ -252,4 +252,4 @@ Build state: M0–M10 + M11 (in-agent surface) + M17 (multi-OS CI) shipped;
 
 ## License
 
-See repository.
+MIT — see [LICENSE](LICENSE).

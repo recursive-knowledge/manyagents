@@ -240,7 +240,7 @@ agent state.
 When you land a fifth adapter:
 
 1. Add a dated entry to **both** `manyagent.adapters.md` copies (source-of-truth
-   `Oh-My-Swarm/components/manyagent.adapters.md` AND the repo copy
+   `docs/design/components/manyagent.adapters.md` AND the repo copy
    `docs/design/components/manyagent.adapters.md`), byte-identical.
 2. Update the README transparency table to add a row for the new adapter
    (every absolute path, CREATE-vs-MERGE, reversal).

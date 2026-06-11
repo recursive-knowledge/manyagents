@@ -332,7 +332,7 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
 
 **BUILD COMPLETE (M0–M10).** Every milestone left the tree green
 (`make check && make test`); the four corrections C1–C4 are folded in and
-doc-synced; the design docs (`Oh-My-Swarm/components/manyagent.*.md`) and their
+doc-synced; the design docs (`docs/design/components/manyagent.*.md`) and their
 in-repo copies are byte-identical with dated Decision-log entries for every
 build-forced clarification. The remaining open items are research, not
 build: downstream-reuse-as-signal (the headline experiment), goal-inference,
