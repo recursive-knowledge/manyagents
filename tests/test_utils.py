@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import sys
 
 import httpx
 import pytest
@@ -18,6 +19,11 @@ from manyagent.utils.provider import (
     RateLimit,
     rate_limit_signal,
 )
+
+# The raw-fd key reader is POSIX-only (termios/tty; select + os.read on a raw
+# pipe fd), like ``cli._pty_spawn``. The public ``read_key()`` already raises
+# NotImplementedError on Windows; these decorate the helper's direct tests.
+_posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX raw-fd key reader (select/os.read on pipes)")
 
 # --------------------------------------------------------------------------- #
 # sid codec
@@ -432,6 +438,7 @@ def test_render_post_falls_back_to_highlighted_json(monkeypatch: pytest.MonkeyPa
     assert "\\u2014" not in out
 
 
+@_posix_only
 def test_read_key_decodes_arrow_bursts_from_the_raw_fd() -> None:
     """Regression (2026-06-10): read_key read buffered ``sys.stdin``, whose
     readahead swallowed an arrow's trailing ``[X`` bytes — the select() poll
@@ -454,6 +461,7 @@ def test_read_key_decodes_arrow_bursts_from_the_raw_fd() -> None:
         os.close(w)
 
 
+@_posix_only
 def test_read_key_drains_full_csi_sequences_without_leaking_tail_bytes() -> None:
     """A modified arrow (Shift-Left = ``\\x1b[1;2D``) still decodes by its
     final byte, and a non-arrow CSI (Home = ``\\x1b[1~``) collapses to esc —

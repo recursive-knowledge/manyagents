@@ -73,7 +73,9 @@ def tilde(path: Path | str) -> str:
     try:
         rel = Path(path).relative_to(Path.home())
     except ValueError:
-        return str(path)
+        # Outside $HOME: still a forward-slash human label (never an OS path),
+        # so it reads identically on Windows and POSIX.
+        return Path(path).as_posix()
     return "~" if rel == Path(".") else "~/" + rel.as_posix()
 
 

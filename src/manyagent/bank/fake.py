@@ -16,9 +16,21 @@ import datetime
 import uuid
 from typing import Any
 
+_last_now = ""
+
 
 def _now() -> str:
-    return datetime.datetime.now(tz=datetime.UTC).isoformat()
+    """A strictly-increasing ISO timestamp. Wall-clock, but bumped by 1µs when
+    the clock hasn't advanced since the last call — Windows' ~15ms clock
+    resolution otherwise gives several inserts the *same* ``created_at``, and
+    tests that rely on insertion order being reflected in timestamps (e.g. the
+    cross-distill nudge's strict newer-than-bundle count) flake there."""
+    global _last_now
+    t = datetime.datetime.now(tz=datetime.UTC).isoformat()
+    if t <= _last_now:
+        t = (datetime.datetime.fromisoformat(_last_now) + datetime.timedelta(microseconds=1)).isoformat()
+    _last_now = t
+    return t
 
 
 class FakeBank:
