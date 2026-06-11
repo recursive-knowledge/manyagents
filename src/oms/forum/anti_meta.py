@@ -1,16 +1,20 @@
-"""The byte-identical ``ANTI_META_BLOCK`` — *the single source of truth*
+"""The anti-meta discipline — *the single source of truth*
 (oms.forum.md "Write-time discipline").
 
-Ported verbatim from ``swarms/discussion/concreteness.py:20-51`` (the
-empirically-measured anti-meta discipline: live audits found cross-task
-bundles were ~74% process meta-advice). ``oms.forum`` renders it into the
-agent-side post prompt; ``oms.distill`` (M7) imports **this same object** so
-the rule the agent writes against is byte-for-byte the rule the curator
-filters against. The contract is identity (``is``), not equality — there is
-exactly one definition, here.
+``ANTI_META_BLOCK`` is ported verbatim from
+``swarms/discussion/concreteness.py:20-51`` (the empirically-measured
+anti-meta discipline: live audits found cross-task bundles were ~74% process
+meta-advice); ``oms.distill`` (M7) imports **this same object** for the
+curator prompt — identity (``is``), not equality. The *post* prompt
+(``oms.forum.prompt``) renders ``POST_ANTI_META_BLOCK`` instead (decision
+2026-06-11): the curator block's referents ("bullets", "insights/pitfalls/
+checks", "evidence_post_ids", ARC/SWE-bench/polyglot) don't exist in the
+single-post flow and a live distiller followed them into a reflection. The
+single-source contract holds at the level of ``BANNED_META_PHRASES`` and the
+mechanical primitives below, which both blocks and both parsers share.
 
-Structure is an agent tax, never a human tax (Design Principles §11): this
-block lives in the agent-side skill prompt `oms` injects, not in anything the
+Structure is an agent tax, never a human tax (Design Principles §11): these
+blocks live in the agent-side prompts `oms` injects, not in anything the
 practitioner sees.
 """
 
@@ -69,6 +73,37 @@ BANNED_META_PHRASES: tuple[str, ...] = (
 # Abstract nouns that do NOT count as concrete grounding (oms.forum.md:62 /
 # the ANTI_META_BLOCK "Abstract nouns alone" clause).
 ABSTRACT_NOUNS: tuple[str, ...] = ("structure", "pattern", "approach")
+
+# The write-time discipline rendered into the *post* prompt (`/self-distill` /
+# `/discuss` — `oms.forum.prompt.render_post_prompt`). ``ANTI_META_BLOCK``
+# above is the CURATOR's block: it speaks in curator referents ("bullets",
+# "insights/pitfalls/checks", "evidence_post_ids", ARC/SWE-bench/polyglot
+# domains) that do not exist in the single-post reflection/reply flow, and a
+# live run (2026-06-11) showed the headless distiller following those foreign
+# rules into the post. This block carries the SAME banned-phrase blacklist —
+# built from ``BANNED_META_PHRASES``, the single source of truth the parser
+# enforces — reworded for one post. Byte-identity with swarms is preserved
+# where it matters: the phrase list and the mechanical enforcement primitives
+# below are shared objects; only the prose wrapper differs per flow.
+POST_ANTI_META_BLOCK = (
+    "STRICT ANTI-META RULES (applied before you write anything):\n"
+    "- REJECT generic process meta-advice. Wording of the form "
+    + ", ".join(f'"{p}"' for p in BANNED_META_PHRASES)
+    + ", or anything that could be lifted into a software-engineering "
+    "tutorial unchanged, is rejected mechanically by the parser.\n"
+    "- REQUIRE concrete grounding. Every field must name a concrete "
+    "primitive: a specific API call, function/class name, import, file "
+    "path, CLI flag, or code pattern actually touched in the session. "
+    'Abstract nouns alone ("structure", "pattern", "approach") do NOT '
+    "count as concrete.\n"
+    "- REQUIRE evidence grounding. `evidence` is a verbatim excerpt from "
+    "this session's trace, or a cited prior post resolved via "
+    "`evidence_ref` — never an invented citation.\n"
+    "- An unresolved question is NOT a result. If the session ended with a "
+    "question unanswered or a step blocked, write the post about what "
+    "blocked it; do NOT assert an answer the session never established, "
+    'and set confidence to "low".\n'
+)
 
 # Rendered-prompt CI guard (mirrors swarms ``_REQUIRED_PHRASES``): if any
 # clause is missing from the injected prompt the agent cannot see the

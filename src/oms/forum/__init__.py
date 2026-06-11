@@ -17,6 +17,7 @@ from __future__ import annotations
 from oms.forum.anti_meta import (
     ANTI_META_BLOCK,
     BANNED_META_PHRASES,
+    POST_ANTI_META_BLOCK,
     assert_anti_meta_rules_present,
 )
 from oms.forum.discuss import clear_discuss_gate, enforce_retrieved_before_reply, retrieve
@@ -27,6 +28,7 @@ from oms.forum.schema import REQUIRED_FIELDS, validate_schema
 __all__ = [
     "ANTI_META_BLOCK",
     "BANNED_META_PHRASES",
+    "POST_ANTI_META_BLOCK",
     "REQUIRED_FIELDS",
     "assert_anti_meta_rules_present",
     "clear_discuss_gate",
