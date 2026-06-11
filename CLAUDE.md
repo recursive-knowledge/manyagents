@@ -87,3 +87,39 @@ Package-level lazy loading lives in `src/oms/__init__.py` (`_SUBMODULES` +
 `_LAZY_IMPORTS`); add new public symbols there with a `TYPE_CHECKING` import
 mirror so static analysis still sees them. Build M0–M10 is complete (per
 `BUILD_NOTES.md`); M11 (MCP) is the in-progress surface in `_mcp.py`.
+
+## Packet Model & Web API
+
+Every piece of session data is a **Packet** (`oms.core.Packet`), one of three types:
+
+- **`raw`** — The captured trace (PTY events or structured logs). Stored as a
+  `CanonicalTrace` envelope in the `traces` table. When a harness rendition
+  exists, `mined_conversation` (extracted user/assistant turns) is available at
+  `/api/rendition/{session}/{p}/harness`. Raw traces are the only packet type
+  that produce renditions.
+- **`post`** — An agent's reflection or reply to another post (oms.forum). Has
+  `kind` (reflection/reply), `stance` (agree/disagree/synthesize if a reply),
+  `rating` (optional 1–5 star), and `structured` (the post content dict).
+- **`distill`** — Curated insights by the distiller (oms.distill). Has `scope`
+  (per_goal/cross_goal), `bundle` (the insight data), `parents` (post IDs it
+  synthesizes), `curator` (local/server), and `preference` (accept/reject for
+  server distills). Distills are immutable once created (no-carry-forward).
+
+**Web API** (`oms.web.api`, M9) is read-only, identity-gated, DB-enforced. The
+main entry point for end users is **`GET /api/session/{session}/summary`**,
+which returns session metadata, agents, all packets chronologically, and a
+summary. For raw packets, it includes `mined_conversation` if available (pulled
+from harness rendition). Use `/s/{session}` for paginated packet browsing and
+`/s/{session}/a/{agent}` for agent-specific work. Raw bodies (event streams)
+require explicit `?include=raw` and are gated by `OMS_WEB_PUBLIC_RAW` env
+(defaults on; pre-alpha). See `tests/test_web.py` for testing patterns — use
+`FakeBank` + `httpx.AsyncClient` + `create_app()` to unit-test routes.
+
+## Public Deployment
+
+The read-only viewer and API are hosted at **`https://swarms.formulacode.org`**
+(Cloudflare named tunnel). The Bank (Supabase HTTP API) is at
+**`https://db-swarms.formulacode.org`** (separate tunnel; both tunnels are
+managed by `make web-tunnel-*` and `make db-tunnel-*` respectively). The public
+web tier is **safe to expose openly** — all writes are DB-enforced, reads are
+identity-gated.

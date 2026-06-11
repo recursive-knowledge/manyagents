@@ -85,6 +85,15 @@ arbitrary chunk boundaries, including escape sequences split across events.
 Goal: every wrapped run leaves a playable `.cast` rendition in the Bank,
 with the raw blob unchanged as backup.
 
+> **M12.1 shipped early (2026-06-10, oms.cli.md):** both spawn loops write a
+> timing sidecar (`<tee>.timing`, one `"<offset_s> <n_bytes>"` line per
+> read), and `_timed_events` builds timestamped `TraceEvent`s (incremental
+> UTF-8 decode; collapse-to-single-event safety valve when the joined text
+> scrub-hits). New ≤2 MiB captures already replay real cadence end-to-end
+> via `/api/cast`. Remaining for M12 proper: the asciicast-at-source second
+> tee, the `trace_renditions` table, and >2 MiB timing survival (today
+> `_bound_pty` still flattens those).
+
 1. **Timestamp at the source** (`cli.py::_pty_spawn`): timing cannot be
    reconstructed post-hoc — this is the one structural change.
    - Before the bridge loop: `t0 = time.monotonic()`; rows/cols from the
@@ -123,7 +132,64 @@ with the raw blob unchanged as backup.
    now; if a separate `stream` fidelity is wanted it is a one-line
    `SOURCE_FIDELITIES` addition + conformance test, decided in M12 review.
 
-## 4. M13 — `Adapter.mine()` + the Claude miner
+## 4a. M13 concrete plan — the "Conversation" tab (added 2026-06-10; **SHIPPED same day** — M13.0–M13.3 all landed, see the four component-doc Decision-log entries dated 2026-06-10)
+
+The user-facing goal, stated plainly: a raw-trace page shows **three tabs**
+— Replay (asciinema, shipped) · Terminal text (pyte projection, shipped) ·
+**Conversation** (the harness's own transcript from
+`~/.claude/projects/<munged-cwd>/<session-id>.jsonl`, mined and stored).
+Sequenced so each step lands green on its own:
+
+1. **M13.0 — storage (migration `00009`).** `trace_renditions(packet_id →
+   packets, format text check in ('harness'), body text, miner_version,
+   complete, created_at, primary key (packet_id, format))` + anon SELECT
+   gated the same way as 00008 (quarantine-joined policy). Bank methods
+   `put_rendition` (upsert on the PK — idempotent re-mining) /
+   `get_rendition`, with **FakeBank parity in the same commit** (the
+   curator-23502 and quarantine lessons both came from fake/live drift).
+2. **M13.1 — the miner.** `Adapter.mine(ctx) -> MinedConversation | None`
+   as the third optional ABC hook (the `install_skills` pattern;
+   `oms.adapters.skills.claude` delegation precedent). `MineContext =
+   {cwd, window: (run_started, run_ended), bindings}` — `_do_run_agent`
+   already has all three (bindings via `_harness_bindings`, shipped). The
+   Claude miner reads every bound `transcript_path` (one PTY run spans
+   several harness sessions across `/clear` — observed live), falls back
+   to the munged-cwd + mtime-window scan when no bindings exist, and
+   parses defensively (`_text`-fallback precedent in
+   `adapters/builtin/__init__.py`) into the normalized shape:
+
+   ```json
+   {"miner_version": "claude-v1", "binding": "hook|scan",
+    "completeness": "full|partial|none",
+    "segments": [{"harness_session_id": "...", "turns": [
+      {"role": "user|assistant|tool", "ts": "...", "text": "...",
+       "tool": {"name": "...", "input_preview": "..."} }]}]}
+   ```
+
+   Mining runs in `_do_run_agent` right after `persist()` (it has the new
+   packet id), wrapped in the same never-fail try/except as capture, and
+   the body is **scrubbed** (transcripts carry full tool outputs) before
+   `put_rendition(pid, 'harness', …)`.
+3. **M13.2 — the API + tab.** `GET /api/rendition/{session}/{p}/harness`
+   behind the existing `_gated_trace_body`-style gate (public switch +
+   quarantine + 404-not-oracle + projection cache header). `TraceView`
+   gains the Conversation tab: turns rendered like the forum's
+   `StructuredView` pattern (role badge, timestamp, collapsed tool
+   calls), `completeness` surfaced honestly ("transcript partially
+   recovered") rather than silently truncated.
+4. **M13.3 — the payoff loop.** Turn timestamps + the cast header's start
+   time → `markers` option on the player: click a turn in Conversation →
+   seek the Replay to that moment (±1 s). Mid-session refresh (the MCP /
+   `PostToolUse` trigger) stays deferred until exit-time mining proves
+   insufficient.
+
+Decisions deliberately NOT made yet (decide at M13.0 review): whether the
+rendition row also serves `oms.distill` as a structured-fidelity input for
+PTY sessions (it is exactly the `structured` trace the curator wishes it
+had), and whether `mine()` failures should quarantine-flag the raw packet
+or merely log.
+
+## 4b. M13 — `Adapter.mine()` + the Claude miner (original sketch)
 
 Goal: every wrapped run also leaves a `harness` rendition — the structured
 conversation (turns, tool calls, files touched, timestamps) mined from the
@@ -180,17 +246,18 @@ harness's own local files.
 
 ## 5. M14 — viewer: replay + structured conversation
 
-1. `oms.web`: `GET /s/{session}/p/{packet}/rendition/{format}` inside
-   `create_app`, honoring the construction-time identity gate. **Security
-   gate (deliberate decision, not plumbing):** `anon` currently has *zero*
-   grant on trace bodies (migration `00004`; `api.py` `_RAW_IDENTITIES`).
-   Exposing renditions to the public viewer is a new leak surface; default
-   to trusted-only and make the anon grant an explicit opt-in migration.
-2. `web/viewer`: `npm i asciinema-player`; client-only mount (the player
-   is DOM+WASM, SSR-unsafe — dynamic `onMount` import + static CSS
-   import); plugs into `PacketDrawer` for `type=raw` packets. Options:
-   `{fit: 'width', idleTimeLimit: 2, preload: true}` — `idleTimeLimit` is
-   the documented remedy for long thinking pauses.
+1. ~~Security gate decision~~ **Decided + shipped early (2026-06-10,
+   pre-alpha):** scrubbed raw trace bodies are PUBLIC — `OMS_WEB_PUBLIC_RAW`
+   tunable (default on) + migration `00008` anon grant on `traces`; the M9
+   anon-exclusion is the switch's off position (oms.web.md Decision log).
+   `GET /api/cast/{session}/{p}` already serves an asciicast v2 rendition
+   synthesized from the stored envelope (synthetic pacing pre-M12; the same
+   endpoint replays real timing once M12 lands timestamped chunks). M14
+   re-points it at the `trace_renditions` table instead of synthesizing.
+2. ~~`web/viewer`: asciinema-player~~ **Shipped early (same date):**
+   `TraceView.svelte` on the `/t/` trace pages — client-only player
+   (`fit: 'width'`, `idleTimeLimit: 2`), plain-text inspection tab,
+   envelope download.
 3. A structured-conversation component for the `harness` rendition,
    following `StructuredView.svelte`'s ordered-fields-with-JSON-fallback
    pattern.
