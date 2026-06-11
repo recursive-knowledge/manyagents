@@ -67,9 +67,10 @@
 	function threadHref(p) {
 		// A reply links to its parent thread when reply_to is known.
 		const target = p.kind === "reply" && p.reply_to ? p.reply_to : p.id;
+		// The wire shape carries no session_id field — derive it from p.id.
 		const [sid, uuid] = target.includes("/")
 			? target.split("/")
-			: [p.session_id, target];
+			: [p.id.split("/")[0], target];
 		return `/t/${encodeURIComponent(sid)}/${encodeURIComponent(uuid ?? "")}`;
 	}
 
@@ -206,7 +207,8 @@
 					{/each}
 				</ul>
 				<p class="trace-note muted">
-					Trace bodies are not public — the viewer shows capture metadata only.
+					Trace bodies are scrubbed before storage and public in this
+					pre-alpha viewer — open a trace to replay it or read the text.
 				</p>
 			{/if}
 		</section>

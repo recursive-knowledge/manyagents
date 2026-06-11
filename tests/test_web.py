@@ -165,15 +165,17 @@ async def test_curate_url_roundtrips_without_a_session_row(fake_bank: FakeBank) 
 
 
 # --------------------------------------------------------------------------- #
-# the load-bearing invariant: anon never gets a raw body, even ?include=raw
+# the trace-body gate: pre-alpha default is PUBLIC (OMS_WEB_PUBLIC_RAW=1 +
+# migration 00008); OMS_WEB_PUBLIC_RAW=0 restores the original M9 invariant
+# (anon never gets a raw body, even ?include=raw — the datasmith lesson).
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize(
     ("identity", "include", "expect_body"),
     [
-        ("public", "raw", False),  # anon + explicit ask → still nothing (silently ignored)
-        ("public", None, False),
+        ("public", "raw", True),  # pre-alpha: anon + explicit ask → scrubbed body
+        ("public", None, False),  # didn't ask → never attached
         ("trusted", "raw", True),  # trusted + explicit ask → body
         ("trusted", None, False),  # trusted but didn't ask → no body
         ("admin", "raw", True),
@@ -182,7 +184,7 @@ async def test_curate_url_roundtrips_without_a_session_row(fake_bank: FakeBank) 
 async def test_raw_body_gate(fake_bank: FakeBank, identity: str, include: str | None, expect_body: bool) -> None:
     await fake_bank.put_session("S1")
     await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
-    await fake_bank.put_trace("S1/r1", "SECRET-TRACE-BODY", scrub_version="v1")
+    await fake_bank.put_trace("S1/r1", "SCRUBBED-TRACE-BODY", scrub_version="v1")
 
     params = {"p": "r1"}
     if include is not None:
@@ -192,10 +194,315 @@ async def test_raw_body_gate(fake_bank: FakeBank, identity: str, include: str | 
     assert r.status_code == 200
     payload = r.json()
     if expect_body:
-        assert payload["trace"] == "SECRET-TRACE-BODY"
+        assert payload["trace"] == "SCRUBBED-TRACE-BODY"
     else:
         assert "trace" not in payload
+        assert "SCRUBBED-TRACE-BODY" not in r.text
+
+
+@pytest.mark.parametrize("identity", ["public"])
+async def test_raw_body_gate_switch_off_restores_anon_exclusion(
+    fake_bank: FakeBank, identity: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OMS_WEB_PUBLIC_RAW=0 is the app-layer kill switch: anon loses the body
+    AND the cast endpoint, even with the explicit ask; trusted is unaffected."""
+    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    body = _envelope([{"ts": 0.0, "kind": "system", "text": "SECRET-TRACE-BODY"}])
+    await fake_bank.put_trace("S1/r1", body, scrub_version="v1")
+
+    async with _client(fake_bank, identity=identity) as c:
+        r = await c.get("/s/S1", params={"p": "r1", "include": "raw"})
+        assert r.status_code == 200
         assert "SECRET-TRACE-BODY" not in r.text
+        assert (await c.get("/api/cast/S1/r1")).status_code == 404
+    async with _client(fake_bank, identity="trusted") as c:
+        r = await c.get("/s/S1", params={"p": "r1", "include": "raw"})
+        assert r.json()["trace"] == body
+        cast = await c.get("/api/cast/S1/r1")
+        assert cast.status_code == 200 and "SECRET-TRACE-BODY" in cast.text
+
+
+# --------------------------------------------------------------------------- #
+# /api/cast — the asciinema rendition (synthesized pre-M12)
+# --------------------------------------------------------------------------- #
+
+
+def _envelope(events: list[dict[str, Any]]) -> str:
+    import json
+
+    return json.dumps({
+        "session_id": "S1",
+        "agent_id": "S1/agent-001-claude",
+        "adapter": "claude",
+        "source_fidelity": "pty",
+        "events": events,
+    })
+
+
+async def test_cast_synthesizes_v2_from_untimed_envelope(fake_bank: FakeBank) -> None:
+    import json
+
+    text = "\x1b[1mhello\x1b[0m world — " * 200  # multi-chunk, with ANSI + non-ASCII
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope([{"ts": 0.0, "kind": "system", "text": text}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:  # public identity — the pre-alpha default
+        r = await c.get("/api/cast/S1/r1", params={"cols": 100, "rows": 40})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/x-asciicast")
+    lines = r.text.strip().splitlines()
+    header = json.loads(lines[0])
+    assert header["version"] == 2 and header["width"] == 100 and header["height"] == 40
+    events = [json.loads(line) for line in lines[1:]]
+    assert all(code == "o" for _t, code, _d in events)
+    assert "".join(d for _t, _c, d in events) == text  # lossless reassembly
+    times = [t for t, _c, _d in events]
+    assert times == sorted(times) and times[0] == 0.0
+    assert len(events) > 1  # synthetic pacing actually chunked it
+
+
+async def test_cast_replays_real_timing_for_timed_envelopes(fake_bank: FakeBank) -> None:
+    """M12-ready: an envelope with per-chunk timestamps replays real timing
+    (normalized to t0) instead of synthetic pacing."""
+    import json
+
+    events = [
+        {"ts": 5.0, "kind": "system", "text": "a"},
+        {"ts": 6.5, "kind": "system", "text": "b"},
+        {"ts": 9.25, "kind": "system", "text": "c"},
+    ]
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope(events), scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/cast/S1/r1")
+    cast_events = [json.loads(line) for line in r.text.strip().splitlines()[1:]]
+    assert [(t, d) for t, _c, d in cast_events] == [(0.0, "a"), (1.5, "b"), (4.25, "c")]
+
+
+async def test_cast_header_uses_recorded_terminal_geometry(fake_bank: FakeBank) -> None:
+    """M12.2: the envelope's `term` drives the header (the formatting-mess
+    fix — a TUI replayed at a guessed width wraps every box border); explicit
+    query params still override; mid-run resizes become `r` events."""
+    import json
+
+    body = json.dumps({
+        "session_id": "S1",
+        "agent_id": "S1/agent-001-claude",
+        "adapter": "claude",
+        "source_fidelity": "pty",
+        "term": {"cols": 159, "rows": 37, "resizes": [[6.0, 100, 37]]},
+        "events": [
+            {"ts": 1.0, "kind": "system", "text": "a"},
+            {"ts": 8.0, "kind": "system", "text": "b"},
+        ],
+    })
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", body, scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        lines = (await c.get("/api/cast/S1/r1")).text.strip().splitlines()
+        header = json.loads(lines[0])
+        assert (header["width"], header["height"]) == (159, 37)  # recorded geometry
+        events = [json.loads(line) for line in lines[1:]]
+        assert [e for e in events if e[1] == "r"] == [[5.0, "r", "100x37"]]  # resize, t0-normalized
+        assert [e[2] for e in events if e[1] == "o"] == ["a", "b"]
+
+        override = json.loads((await c.get("/api/cast/S1/r1", params={"cols": 80, "rows": 24})).text.splitlines()[0])
+        assert (override["width"], override["height"]) == (80, 24)  # explicit wins
+
+
+async def test_cast_guesses_width_from_rule_runs_for_legacy_traces(fake_bank: FakeBank) -> None:
+    """Legacy envelopes (no `term`): Claude-Code-style TUIs draw horizontal
+    rules exactly one terminal width wide — the longest ─-run sizes the
+    header instead of a blind 120."""
+    import json
+
+    text = "some output\r\n" + "─" * 106 + "\r\nmore output\r\n" + "─" * 80 + "\r\n"
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope([{"ts": 0.0, "kind": "system", "text": text}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        header = json.loads((await c.get("/api/cast/S1/r1")).text.splitlines()[0])
+    assert header["width"] == 106
+
+
+async def test_terminal_text_renders_through_a_real_screen_model(fake_bank: FakeBank) -> None:
+    """/api/cast/{s}/{p}/text replays the stream through a VT emulator at the
+    recorded geometry — colors drop, carriage-return overwrites resolve, long
+    lines wrap at the recorded width. A regex strip can do none of these."""
+    import json as _json
+
+    body = _json.dumps({
+        "session_id": "S1",
+        "agent_id": "S1/agent-001-claude",
+        "adapter": "claude",
+        "source_fidelity": "pty",
+        "term": {"cols": 20, "rows": 6, "resizes": []},
+        "events": [
+            {"ts": 0.0, "kind": "system", "text": "\x1b[1mhello\x1b[0m world\r\n"},
+            {"ts": 1.0, "kind": "system", "text": "XXXX\rYY\r\n"},  # in-place overwrite
+            {"ts": 2.0, "kind": "system", "text": "a" * 25 + "\r\n"},  # wraps at 20 cols
+        ],
+    })
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", body, scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/cast/S1/r1/text")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "max-age" in r.headers.get("cache-control", "")
+    lines = r.text.splitlines()
+    assert lines[0] == "hello world"  # bold dropped, not regex-mangled
+    assert lines[1] == "YYXX"  # \r overwrite resolved by the screen model
+    assert lines[2] == "a" * 20 and lines[3] == "a" * 5  # wrapped at term cols
+
+
+async def test_terminal_text_shares_the_raw_gates(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same gates as the cast: quarantine pulls it from the public surface,
+    and the kill switch makes it vanish for anon."""
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/q1", created_at="2026-05-19T00:00:01+00:00", quarantined=True))
+    await fake_bank.put_trace("S1/q1", _envelope([{"ts": 0.0, "kind": "system", "text": "LEAK"}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        assert (await c.get("/api/cast/S1/q1/text")).status_code == 404  # quarantined → gone for anon
+    async with _client(fake_bank, identity="trusted") as c:
+        assert "LEAK" in (await c.get("/api/cast/S1/q1/text")).text  # auditing path
+
+    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    await fake_bank.put_packet(_raw("S1/r2", created_at="2026-05-19T00:00:02+00:00"))
+    await fake_bank.put_trace("S1/r2", _envelope([{"ts": 0.0, "kind": "system", "text": "x"}]), scrub_version="v1")
+    async with _client(fake_bank) as c:
+        assert (await c.get("/api/cast/S1/r2/text")).status_code == 404  # kill switch
+
+
+async def test_rendition_endpoint_serves_mined_conversation(fake_bank: FakeBank) -> None:
+    """M13.2: /api/rendition/{s}/{p}/harness returns the parsed artifact with
+    the projection cache header; absent renditions (older runs) 404 with an
+    explanatory detail; unknown formats 404."""
+    import json as _json
+
+    artifact = {
+        "miner_version": "claude-v1",
+        "binding": "hook",
+        "completeness": "full",
+        "run_started": 1000.0,
+        "segments": [{"harness_session_id": "hs-1", "turns": [{"role": "user", "ts": None, "text": "hi"}]}],
+    }
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_rendition("S1/r1", "harness", _json.dumps(artifact), miner_version="claude-v1")
+    await fake_bank.put_packet(_raw("S1/r2", created_at="2026-05-19T00:00:02+00:00"))  # no rendition
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/rendition/S1/r1/harness")
+        assert r.status_code == 200
+        assert "max-age" in r.headers.get("cache-control", "")
+        assert r.json()["segments"][0]["turns"][0]["text"] == "hi"
+
+        r2 = await c.get("/api/rendition/S1/r2/harness")
+        assert r2.status_code == 404 and "predate mining" in r2.text
+
+        assert (await c.get("/api/rendition/S1/r1/cast")).status_code == 404  # unknown format
+
+
+async def test_rendition_endpoint_shares_the_raw_gates(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Quarantine pulls the rendition from the public surface (trusted still
+    audits); the kill switch makes it vanish for anon."""
+    import json as _json
+
+    body = _json.dumps({"segments": [{"harness_session_id": "h", "turns": []}]})
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/q1", created_at="2026-05-19T00:00:01+00:00", quarantined=True))
+    await fake_bank.put_rendition("S1/q1", "harness", body)
+
+    async with _client(fake_bank) as c:
+        assert (await c.get("/api/rendition/S1/q1/harness")).status_code == 404
+    async with _client(fake_bank, identity="trusted") as c:
+        assert (await c.get("/api/rendition/S1/q1/harness")).status_code == 200
+
+    monkeypatch.setenv("OMS_WEB_PUBLIC_RAW", "0")
+    await fake_bank.put_packet(_raw("S1/r3", created_at="2026-05-19T00:00:03+00:00"))
+    await fake_bank.put_rendition("S1/r3", "harness", body)
+    async with _client(fake_bank) as c:
+        assert (await c.get("/api/rendition/S1/r3/harness")).status_code == 404
+
+
+async def test_cast_404s_for_missing_nonraw_or_bodyless(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_post("S1/p1", goal="g", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_raw("S1/r2", created_at="2026-05-19T00:00:02+00:00"))  # no trace row
+
+    async with _client(fake_bank) as c:
+        assert (await c.get("/api/cast/S1/nope")).status_code == 404  # no packet
+        assert (await c.get("/api/cast/S1/p1")).status_code == 404  # not a raw packet
+        assert (await c.get("/api/cast/S1/r2")).status_code == 404  # no stored body
+
+
+async def test_cast_422_on_non_envelope_body(fake_bank: FakeBank) -> None:
+    """Every malformed-body shape maps to 422, never a 500: bad JSON, a
+    non-object document, events as a non-list, events holding non-dicts."""
+    await fake_bank.put_session("S1")
+    bodies = {
+        "r1": "not a json envelope",
+        "r2": '["a", "list"]',
+        "r3": '{"events": {"not": "a list"}}',
+        "r4": '{"events": ["just a string"]}',
+    }
+    for i, (tail, body) in enumerate(bodies.items()):
+        await fake_bank.put_packet(_raw(f"S1/{tail}", created_at=f"2026-05-19T00:00:0{i + 1}+00:00"))
+        await fake_bank.put_trace(f"S1/{tail}", body, scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        for tail in bodies:
+            assert (await c.get(f"/api/cast/S1/{tail}")).status_code == 422, tail
+
+
+async def test_quarantine_pulls_body_from_public_surface_but_not_from_trusted(fake_bank: FakeBank) -> None:
+    """Retro-quarantine is the scrub leak-recovery seam: a quarantined raw
+    packet's body must vanish from the PUBLIC surface (both ?include=raw and
+    /api/cast), while trusted/admin keep reading it for auditing."""
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00", quarantined=True))
+    body = _envelope([{"ts": 0.0, "kind": "system", "text": "LEAKED-SECRET-CONTENT"}])
+    await fake_bank.put_trace("S1/r1", body, scrub_version="v1")
+
+    async with _client(fake_bank) as c:  # public
+        r = await c.get("/s/S1", params={"p": "r1", "include": "raw"})
+        assert r.status_code == 200 and r.json()["quarantined"] is True  # visible-but-flagged metadata
+        assert "LEAKED-SECRET-CONTENT" not in r.text  # ...but the body is gone
+        assert (await c.get("/api/cast/S1/r1")).status_code == 404
+    async with _client(fake_bank, identity="trusted") as c:  # auditing path
+        r = await c.get("/s/S1", params={"p": "r1", "include": "raw"})
+        assert r.json()["trace"] == body
+        assert (await c.get("/api/cast/S1/r1")).status_code == 200
+
+
+async def test_cast_sets_edge_cache_header_and_pacing_floor(fake_bank: FakeBank) -> None:
+    """Casts are immutable → cacheable (bounded max-age so retro-quarantine
+    propagates); and a small untimed blob gets the watchability floor instead
+    of blinking past in under a second (the 12 KB report)."""
+    import json
+
+    text = "x" * (13 * 1024)  # ~13 chunks — the size class that played in <1s
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope([{"ts": 0.0, "kind": "system", "text": text}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/cast/S1/r1")
+    assert "max-age" in r.headers.get("cache-control", "")
+    last_t = json.loads(r.text.strip().splitlines()[-1])[0]
+    assert last_t >= 3.0  # floored pacing — was ~0.5s before the floor
 
 
 # --------------------------------------------------------------------------- #
@@ -328,6 +635,118 @@ async def test_agent_view_404s_unknown_agent(fake_bank: FakeBank) -> None:
     await fake_bank.put_session("S1")
     async with _client(fake_bank) as c:
         r = await c.get("/s/S1/a/agent-999-nope")
+    assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# /api/session/{session}/conversation — full conversation text retrieval
+# --------------------------------------------------------------------------- #
+
+
+async def test_session_summary_endpoint_returns_complete_data(fake_bank: FakeBank) -> None:
+    """Summary endpoint returns all session data in chronological order."""
+    import json as _json
+
+    await fake_bank.put_session("S1", goal="ship it")
+    await fake_bank.put_agent("S1/agent-001-claude", session_id="S1", adapter="claude", seq=1)
+    # Raw trace with events
+    raw_body = _envelope([
+        {"ts": 0.0, "kind": "user", "text": "what should I do?"},
+        {"ts": 1.0, "kind": "agent", "text": "I recommend this approach"},
+        {"ts": 2.0, "kind": "system", "text": "operation complete"},
+    ])
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", raw_body, scrub_version="v1")
+    # Add a harness rendition with mined conversation
+    harness_body = _json.dumps({
+        "segments": [
+            {
+                "turns": [
+                    {"role": "user", "ts": "2026-05-19T00:00:01Z", "text": "what should I do?"},
+                    {"role": "assistant", "ts": "2026-05-19T00:00:02Z", "text": "I recommend this approach"},
+                ]
+            }
+        ]
+    })
+    await fake_bank.put_rendition("S1/r1", "harness", harness_body, miner_version="claude-v1")
+
+    # A post (reflection)
+    await fake_bank.put_packet(_post("S1/p1", goal="ship it", created_at="2026-05-19T00:00:02+00:00"))
+
+    # A distill
+    distill_bundle = {"transferable_insights": [{"text": "key insight", "confidence": "high"}]}
+    await fake_bank.put_packet({
+        "id": "S1/d1",
+        "session_id": "S1",
+        "type": "distill",
+        "agent_id": "S1/agent-001-claude",
+        "goal": "ship it",
+        "created_at": "2026-05-19T00:00:03+00:00",
+        "scope": "per_goal",
+        "bundle": distill_bundle,
+    })
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/session/S1/summary")
+    assert r.status_code == 200
+    data = r.json()
+
+    # Session metadata
+    assert data["session"]["id"] == "S1"
+    assert data["session"]["goal"] == "ship it"
+    assert data["session"]["status"] == "active"
+
+    # Summary stats
+    assert data["summary"]["total_items"] == 3
+    assert data["summary"]["raw_traces"] == 1
+    assert data["summary"]["posts"] == 1
+    assert data["summary"]["distills"] == 1
+
+    # Agents list
+    assert len(data["agents"]) == 1
+    assert data["agents"][0]["id"] == "S1/agent-001-claude"
+
+    # Conversation items in chronological order
+    conv = data["conversation"]
+    assert len(conv) == 3
+    assert conv[0]["type"] == "raw" and conv[0]["packet_id"] == "S1/r1"
+    assert conv[1]["type"] == "post" and conv[1]["packet_id"] == "S1/p1"
+    assert conv[2]["type"] == "distill" and conv[2]["packet_id"] == "S1/d1"
+
+    # Raw trace metadata and events
+    assert "trace_metadata" in conv[0]
+    assert conv[0]["trace_metadata"]["adapter"] == "claude"
+    assert conv[0]["trace_metadata"]["source_fidelity"] == "pty"
+    assert len(conv[0]["events"]) == 3
+    assert conv[0]["events"][0]["kind"] == "user"
+    assert conv[0]["events"][0]["text"] == "what should I do?"
+    assert conv[0]["events"][1]["kind"] == "agent"
+    assert conv[0]["events"][2]["kind"] == "system"
+    # Conversation turns excludes system events
+    assert len(conv[0]["conversation_turns"]) == 2
+    assert conv[0]["conversation_turns"][0]["kind"] == "user"
+    assert conv[0]["conversation_turns"][1]["kind"] == "agent"
+    # Mined conversation from harness rendition
+    assert "mined_conversation" in conv[0]
+    assert len(conv[0]["mined_conversation"]) == 2
+    assert conv[0]["mined_conversation"][0]["role"] == "user"
+    assert conv[0]["mined_conversation"][0]["text"] == "what should I do?"
+    assert conv[0]["mined_conversation"][1]["role"] == "assistant"
+    assert conv[0]["mined_conversation"][1]["text"] == "I recommend this approach"
+
+    # Post content
+    assert conv[1]["kind"] == "reflection"
+    assert conv[1]["content"]["load_bearing_assumption"] == "x"
+    assert conv[1]["content"]["confidence"] == "low"
+
+    # Distill content
+    assert conv[2]["scope"] == "per_goal"
+    assert conv[2]["bundle"]["transferable_insights"][0]["text"] == "key insight"
+
+
+async def test_session_summary_404s_unknown_session(fake_bank: FakeBank) -> None:
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/session/NOPE/summary")
     assert r.status_code == 404
 
 

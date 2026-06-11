@@ -3,6 +3,7 @@
 	import { getSession, getPacket, listPackets } from "$lib/api.js";
 	import { packetHeadline, timeAgo } from "$lib/explorer.js";
 	import StructuredView from "$components/StructuredView.svelte";
+	import TraceView from "$components/TraceView.svelte";
 	import QuarantineBanner from "$components/QuarantineBanner.svelte";
 	import AgentLink from "$components/AgentLink.svelte";
 	import Stars from "$components/Stars.svelte";
@@ -77,6 +78,10 @@
 	}
 
 	$: isRaw = root?.type === "raw";
+	// The public KnowledgePacket wire shape has no session_id field (it is a
+	// derived property server-side) — derive it from the id, falling back to
+	// the URL param. Fixes the "session undefined" meta line.
+	$: rootSession = root?.id?.includes("/") ? root.id.split("/")[0] : sessionId;
 	$: title = root ? (isRaw ? `trace ${uuid.slice(0, 8)}` : packetHeadline(root)) : "…";
 	$: tally = replies.reduce(
 		(acc, r) => {
@@ -139,8 +144,8 @@
 					<span>curator={root.curator ?? "?"}</span>
 					<span class="dot">•</span>
 				{/if}
-				<a class="session mono" href="/s/{encodeURIComponent(root.session_id)}">
-					session {root.session_id}
+				<a class="session mono" href="/s/{encodeURIComponent(rootSession)}">
+					session {rootSession}
 				</a>
 				<span class="dot">•</span>
 				<span>{timeAgo(root.created_at)}</span>
@@ -160,11 +165,7 @@
 
 			<div class="body-view">
 				{#if isRaw}
-					<p class="raw-note muted">
-						This is a complete trajectory capture from the agent's wrapped
-						session. The scrubbed body is stored in the Bank but is not
-						public in this viewer.
-					</p>
+					<TraceView sessionId={rootSession} {uuid} />
 				{:else}
 					<StructuredView packet={root} />
 				{/if}
@@ -370,16 +371,6 @@
 
 	.body-view {
 		margin-top: var(--space-sm);
-	}
-
-	.raw-note {
-		font-size: 0.85rem;
-		line-height: 1.6;
-		margin: 0;
-		padding: var(--space-sm) var(--space-md);
-		background: var(--type-raw-soft);
-		border: 1px solid var(--border-primary);
-		border-radius: var(--radius);
 	}
 
 	.cites {

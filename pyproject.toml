@@ -33,6 +33,7 @@ dependencies = [
     # status/uninstall/preflight styling) renders via rich in oms.utils.ui;
     # output degrades to plain text when piped (OMS_COLOR=auto|always|never).
     "rich>=13.7",
+    "pyte>=0.8.2",
 ]
 
 [project.scripts]
