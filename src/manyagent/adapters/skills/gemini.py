@@ -47,7 +47,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
 
 
 _GEMINI_MD = """\
-# manyagent — Oh My Swarm
+# manyagent — ManyAgent
 
 This extension lets the user run `manyagent`'s knowledge-curation loop from inside
 Gemini CLI. The four slash commands (`/self-distill`, `/discuss`,
@@ -158,7 +158,7 @@ def _manifest_payload() -> dict[str, Any]:
     return {
         "name": "manyagent",
         "version": "0.1.0",
-        "description": "Oh My Swarm — in-agent knowledge curation. Type /self-distill, /discuss, /cross-distill, /inject inside Gemini CLI.",
+        "description": "ManyAgent — in-agent knowledge curation. Type /self-distill, /discuss, /cross-distill, /inject inside Gemini CLI.",
         "mcpServers": {
             "manyagent": {
                 "command": sys.executable,

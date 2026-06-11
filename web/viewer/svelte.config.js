@@ -13,7 +13,7 @@ const config = {
 		// are populated at runtime from the read API. `fallback: "index.html"`
 		// makes the static adapter emit the SPA shell under `index.html` so
 		// FastAPI's `StaticFiles(html=True)` mount serves it for `/`, and the
-		// SPA-negotiation middleware in `oms.web.server.build_app` serves it
+		// SPA-negotiation middleware in `manyagent.web.server.build_app` serves it
 		// for `/s/*`, `/g/*`, `/about` HTML requests (the read API's
 		// `/s/{session}` JSON route still wins for programmatic callers).
 		adapter: adapterStatic({ fallback: "index.html" }),

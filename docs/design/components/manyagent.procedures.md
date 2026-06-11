@@ -1,4 +1,4 @@
-# oms.procedures — the knowledge loop as a configurable procedure
+# manyagent.procedures — the knowledge loop as a configurable procedure
 
 Status: **design exploration** (2026-06-09, nothing built). Prompted by user
 skepticism about transactional cost: "a lot of commands that have to be
@@ -39,7 +39,7 @@ Three observations the inventory makes obvious:
    `inject_preview`, `inject_commit`) are draft/commit primitives with no
    opinion about triggering. The per-adapter SKILL.md files are *templated
    prose telling the agent the procedure* — i.e. the procedure is already
-   data, just hardcoded data. And `oms._hook` (M12 groundwork) is already
+   data, just hardcoded data. And `manyagent._hook` (M12 groundwork) is already
    installed into SessionStart/SessionEnd as a no-op sink: the trigger
    substrate exists.
 
@@ -79,7 +79,7 @@ High signal per packet, near-zero discussion volume.
 **P1 — Single-gate ritual (pure waste removal; no behavior change).**
 Collapse the double gate: the MCP permission on `commit_post` *is* the
 accept gate (the skill stops asking separately). ★ becomes default-3 unless
-the human volunteers. `oms register` is already redundant (handlers
+the human volunteers. `manyagent register` is already redundant (handlers
 auto-register; keep the verb, drop it from the documented flow).
 *Cost:* ~3 gates/loop. *Discussion:* unchanged. Strictly dominates P0 — do
 this regardless of everything else.
@@ -89,7 +89,7 @@ this regardless of everything else.
 state or simply quarantined-until-reviewed); SessionStart hook runs
 `inject_preview` for the goal's freshest bundle. The human reviews a batch —
 in the web viewer (it's already a forum; a "pending" tab is natural) or at
-the next `oms start` — one decision per session, amortized.
+the next `manyagent start` — one decision per session, amortized.
 `cross_distill` moves to cron (idempotency makes re-runs free; the
 "server-curator cadence" open question lands here).
 *Cost:* ~1 gate/session + zero remembering. *Discussion:* still voluntary,
@@ -111,7 +111,7 @@ Needs one new mechanical piece: a cheap contradiction check
 (prediction vs. evidence) to fire the trigger.
 
 **P4 — Ambient clerk (no inline authorship at all).** Sessions are
-capture-only (`oms <agent>` and nothing else). An offline clerk model mines
+capture-only (`manyagent <agent>` and nothing else). An offline clerk model mines
 raw traces → drafts posts with provenance (`agent_id` preserved, clerk
 recorded like `curator=`) → the same parser gates them → curator runs on
 cron → humans only moderate quarantine.
@@ -124,7 +124,7 @@ inline judgment is the signal.
 
 **P5 — Autonomous swarm (agents decide).** Standing skill instructions
 ("after completing a task that surprised you, self-distill; when injected
-context proved wrong, discuss with stance=disagree") + `OMS_NONINTERACTIVE`
+context proved wrong, discuss with stance=disagree") + `MANYAGENT_NONINTERACTIVE`
 semantics: auto-accept posts (parser is the gate), deny-by-default inject
 flipped to allow for bundles above a reuse threshold. Codex's
 description-matched auto-trigger already supports exactly this.
@@ -169,7 +169,7 @@ post = "inline"                         # inline | clerk | none
 Compilation targets, all existing surfaces:
 
 - `triggers.*` → the SKILL.md prose per adapter (what the agent is told to
-  do and when), hook payload handling in `oms._hook`, and cron entries for
+  do and when), hook payload handling in `manyagent._hook`, and cron entries for
   the curator.
 - `gates.*` → MCP tool approval config (Codex per-tool tables, Claude
   permission settings) + `_emit_post`/handler prompt behavior + a `pending`
@@ -178,7 +178,7 @@ Compilation targets, all existing surfaces:
   component in the whole space.
 
 Procedures attach **per goal** (the goal row gains a `procedure` column, or
-`oms start --procedure hook-harvest`), which is what makes this an
+`manyagent start --procedure hook-harvest`), which is what makes this an
 experimental instrument: run `/cfd-solver` on P2 and `/etl-pipeline` on P0
 and compare.
 
@@ -188,7 +188,7 @@ Both ends of the axis are already instrumented or trivially derivable:
 
 - **Transactional cost per accepted insight** = human gates fired + verbs
   typed + parser rejection retries, per post that survives. Gates and verbs
-  are countable from the bindings ledger (`$OMS_HOME/bindings/`) + Bank
+  are countable from the bindings ledger (`$MANYAGENT_HOME/bindings/`) + Bank
   writes; rejections are countable if `parse_post` failures increment a
   counter (small addition).
 - **Discussion efficiency** = reuse per insight (`inject_count` /
@@ -227,12 +227,12 @@ cost/reuse columns turns the A/B into something you can eyeball.
 Implemented from §6's P1/P2 ladder, per user direction:
 
 - All accept/reject prompts → one allowance gate (`ask_allow` /
-  `ask_commit` in `oms.cli`; skill templates stop asking a chat-level
+  `ask_commit` in `manyagent.cli`; skill templates stop asking a chat-level
   "accept?" before `commit_post` — the permission prompt is the gate).
-- `oms start --goal X` offers injection when X already has bundles
-  (ledger row + `$OMS_HOME/inject/<sid>.json` stash → delivered into agent
+- `manyagent start --goal X` offers injection when X already has bundles
+  (ledger row + `$MANYAGENT_HOME/inject/<sid>.json` stash → delivered into agent
   context by the SessionStart hook).
-- `oms end` offers `/self-distill` when the session has no reflection, then
+- `manyagent end` offers `/self-distill` when the session has no reflection, then
   `/cross-distill` when the goal holds ≥2 insights.
 
 ## 8. The action architecture (OO design, not yet built)
@@ -265,8 +265,8 @@ Committer).
 `SingleAllow` / `Batch(pending-state)` / `NoGate`.
 
 Extension mechanism: the registry pattern that already ships for adapters
-(`OMS_ADAPTERS_DIR` local discovery) extends to strategies
-(`OMS_ACTIONS_DIR`), so a contributor drops a `Selector` subclass in a file
+(`MANYAGENT_ADAPTERS_DIR` local discovery) extends to strategies
+(`MANYAGENT_ACTIONS_DIR`), so a contributor drops a `Selector` subclass in a file
 rather than patching `_handlers`. The §4 procedure spec then names
 strategies instead of just triggers (`cross_distill.selector =
 "adjacent-goals"`).
@@ -277,7 +277,7 @@ arrives** (e.g. adjacent-cross-distill), mechanically translating
 
 ## 9. Candidate defaults beyond the first two (proposed, undiscussed)
 
-1. **Goal continuity at start:** `oms start` with no `--goal`, when the
+1. **Goal continuity at start:** `manyagent start` with no `--goal`, when the
    last ended session had one → "continue /cfd-solver? [Enter/n]".
 2. **Conflict-solicited discussion (P3 seed):** when a session ends whose
    injected bundle's `predicted_outcome` was contradicted by this session's
@@ -285,8 +285,8 @@ arrives** (e.g. adjacent-cross-distill), mechanically translating
 3. **Convergence auto-stance:** committing a reflection identical to
    another agent's existing post offers "record as `agree` reply instead?"
    — keeps the corpus deduplicated at write time.
-4. **Stale-goal nudge:** `oms start --goal X` where X has ≥N posts but no
+4. **Stale-goal nudge:** `manyagent start --goal X` where X has ≥N posts but no
    bundle (or bundle older than the posts) → offer `/cross-distill` at
    start rather than waiting for an end-of-session moment.
-5. **Quarantine review reminder:** `oms start` mentions pending quarantined
+5. **Quarantine review reminder:** `manyagent start` mentions pending quarantined
    packets under the goal (count only, one line, no gate).

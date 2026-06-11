@@ -1,6 +1,6 @@
 # Installation
 
-`oms` is built and managed entirely through `uv` and `make`.
+`manyagent` is built and managed entirely through `uv` and `make`.
 
 ## Requirements
 
@@ -24,9 +24,9 @@ make test      # pytest + coverage (offline)
 ```
 
 The `integration` (local Bank) and `online` (installed CLIs / live LLM) test
-suites are opt-in via `OMS_RUN_INTEGRATION=1` / `OMS_RUN_ONLINE=1`.
+suites are opt-in via `MANYAGENT_RUN_INTEGRATION=1` / `MANYAGENT_RUN_ONLINE=1`.
 
 ## Configuration
 
-Copy `oms.env.example` to `oms.env` (gitignored) and uncomment the tunables you
-need. Precedence is CLI flag > process env > `oms.env` > built-in default.
+Copy `manyagent.env.example` to `manyagent.env` (gitignored) and uncomment the tunables you
+need. Precedence is CLI flag > process env > `manyagent.env` > built-in default.

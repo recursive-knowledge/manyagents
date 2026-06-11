@@ -1,5 +1,5 @@
 """Outcome weighting — the swarms ``native_score`` replacement (manyagent.distill.md
-"Outcome / confidence model"). OMA has no objective evaluator, so a single
+"Outcome / confidence model"). ManyAgent has no objective evaluator, so a single
 score becomes a triple, computed **mechanically**:
 
 | signal | source | role |

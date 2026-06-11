@@ -1,6 +1,6 @@
 -- 00002_packet_quarantine
 -- Quarantine is a first-class, non-hiding state: visible, provenance kept,
--- excluded from curation / /inject (oms.bank.md "Quarantine — Settled").
+-- excluded from curation / /inject (manyagent.bank.md "Quarantine — Settled").
 
 alter table packets add column if not exists quarantined        boolean not null default false;
 alter table packets add column if not exists quarantine_reason  text;

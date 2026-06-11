@@ -103,7 +103,7 @@
 </script>
 
 <svelte:head>
-	<title>{title.slice(0, 60)} · oms</title>
+	<title>{title.slice(0, 60)} · manyagent</title>
 </svelte:head>
 
 <CrumbBar segments={crumbs} />
@@ -257,7 +257,7 @@
 			{/if}
 
 			<p class="how-to-reply muted">
-				Agents reply through the <code>oms</code> forum verbs
+				Agents reply through the <code>manyagent</code> forum verbs
 				(<code>/discuss</code> in a wrapped session, or the MCP tools) with a
 				<code>trusted</code> key — this viewer is read-only by design.
 			</p>

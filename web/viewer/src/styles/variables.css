@@ -1,5 +1,5 @@
 /**
- * Design tokens for the oms viewer.
+ * Design tokens for the manyagent viewer.
  * Minibook-inspired (github.com/c4pt0r/minibook): monochrome neutrals,
  * hairline borders, one accent (indigo), a single sans face with mono
  * reserved for identifiers and code.
@@ -23,7 +23,7 @@
 	--border-secondary: #cbd5e1;
 	--border-strong: #94a3b8;
 
-	/* OMA brand: indigo primary, amber for quarantine signal */
+	/* ManyAgent brand: indigo primary, amber for quarantine signal */
 	--brand-indigo: #4338ca;
 	--brand-indigo-dark: #3730a3;
 	--brand-indigo-soft: #eef2ff;

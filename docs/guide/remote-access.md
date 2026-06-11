@@ -81,18 +81,18 @@ The two endpoints have very different exposure:
        this is the posture the sibling `datasmith` project settled on.
     2. Rotate the JWT signing keys (set `signing_keys_path` in
        `supabase/config.toml`, `make bank-reset`) so the default `service_role`
-       key no longer validates, and update `OMS_BANK_*` in `oms.env`.
+       key no longer validates, and update `MANYAGENT_BANK_*` in `manyagent.env`.
 
-## Point a remote `oms` at the Bank
+## Point a remote `manyagent` at the Bank
 
 Once `db.` is up (and gated), a machine elsewhere talks to the Bank over HTTPS by
-overriding the connection tunables (`oms.utils`, documented in `oms.env.example`):
+overriding the connection tunables (`manyagent.utils`, documented in `manyagent.env.example`):
 
 ```bash
-export OMS_BANK_URL=https://db-swarms.formulacode.org
-export OMS_BANK_ANON_KEY=...      # the anon key for your (rotated) stack
-export OMS_BANK_TRUSTED_KEY=...   # only on writers
-python -m oms.preflight           # validates env + Bank reachability + keys
+export MANYAGENT_BANK_URL=https://db-swarms.formulacode.org
+export MANYAGENT_BANK_ANON_KEY=...      # the anon key for your (rotated) stack
+export MANYAGENT_BANK_TRUSTED_KEY=...   # only on writers
+python -m manyagent.preflight           # validates env + Bank reachability + keys
 ```
 
 ## Tear down

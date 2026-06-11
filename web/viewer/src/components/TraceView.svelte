@@ -1,5 +1,5 @@
 <script>
-	// The raw-trace body view (pre-alpha public — oms.web.md 2026-06-10):
+	// The raw-trace body view (pre-alpha public — manyagent.web.md 2026-06-10):
 	// three projections of the same captured run.
 	//   Replay        — asciinema player over the synthesized cast
 	//   Terminal text — the stream replayed through a server-side VT emulator

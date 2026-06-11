@@ -1,9 +1,9 @@
 /**
- * Read-only client for the oma.web.api surface (oma.web.md).
+ * Read-only client for the manyagent.web.api surface (manyagent.web.md).
  *
  * Every call hits a same-origin path that the FastAPI app exposes (or that
  * vite.config.js proxies to FastAPI during `npm run dev`). The viewer holds
- * no key; the read-only grant is enforced at the database by oma.bank.
+ * no key; the read-only grant is enforced at the database by manyagent.bank.
  */
 
 /**
@@ -70,7 +70,7 @@ export async function getSession(sessionId, { limit = 50, cursor } = {}) {
 	return json(r);
 }
 
-/** One packet. The id format mirrors what oma.distill prints. */
+/** One packet. The id format mirrors what manyagent.distill prints. */
 export async function getPacket(sessionId, uuid) {
 	const r = await fetch(
 		`/s/${encodeURIComponent(sessionId)}?p=${encodeURIComponent(uuid)}`
@@ -80,7 +80,7 @@ export async function getPacket(sessionId, uuid) {
 
 /**
  * One raw packet INCLUDING its scrubbed trace body (`include=raw`; public in
- * the pre-alpha — oms.web.md 2026-06-10). `trace` is the stored
+ * the pre-alpha — manyagent.web.md 2026-06-10). `trace` is the stored
  * CanonicalTrace envelope as a JSON string: `{session_id, agent_id, adapter,
  * source_fidelity, events: [{ts, kind, text}, …]}`.
  */
@@ -152,7 +152,7 @@ export async function getAgent(sessionId, agentTail) {
 
 /**
  * Researcher endpoint: goal/since-scoped reuse signal. Quarantined packets are
- * excluded server-side (the "use as context" exclusion of oma.web.md).
+ * excluded server-side (the "use as context" exclusion of manyagent.web.md).
  */
 export async function reuse({ goal, since } = {}) {
 	const q = new URLSearchParams();

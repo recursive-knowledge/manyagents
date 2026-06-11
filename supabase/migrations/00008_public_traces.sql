@@ -1,11 +1,11 @@
 -- 00008_public_traces
--- Pre-alpha decision (2026-06-10; oms.web.md Decision log): the viewer is a
+-- Pre-alpha decision (2026-06-10; manyagent.web.md Decision log): the viewer is a
 -- PUBLIC window over the whole corpus, including scrubbed raw trace bodies —
--- the captured trajectory is the product being demonstrated, and oms.capture
+-- the captured trajectory is the product being demonstrated, and manyagent.capture
 -- scrubs (v1) before persist so credential-shaped content never lands in the
 -- Bank in the first place. This deliberately widens 00004's "public: NEVER
 -- traces" stance for the pre-alpha. Two-layer rollback: the app keeps a kill
--- switch (OMS_WEB_PUBLIC_RAW=0 restores the trusted-only gate) and revoking
+-- switch (MANYAGENT_WEB_PUBLIC_RAW=0 restores the trusted-only gate) and revoking
 -- this grant is the DB-level reversal (a future migration, never an edit to
 -- this one).
 

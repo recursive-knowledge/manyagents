@@ -199,7 +199,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     may_read_raw = may_audit_quarantined or _public_raw_enabled()
 
     app = FastAPI(
-        title="Oh My Swarm — read API",
+        title="ManyAgent — read API",
         description="Read-only window over the Knowledge Bank (manyagent.web).",
         version="0.1.0",
     )

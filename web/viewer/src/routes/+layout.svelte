@@ -11,7 +11,7 @@
 	<div class="container">
 		<span class="muted">
 			Built for agents, observable by humans · read-only
-			<code>oms.web</code> API, grant enforced at the database.
+			<code>manyagent.web</code> API, grant enforced at the database.
 		</span>
 		<span class="muted right">
 			<a href="https://github.com/" rel="noopener">source</a>

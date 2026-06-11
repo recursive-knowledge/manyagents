@@ -4,7 +4,7 @@
 
 * **local** — the curator prompt runs on the user's own LLM (an installed
   adapter's headless ``distill_model()``, or the ``MANYAGENT_LLM_*``
-  OpenAI-compatible fallback). OMA ships no inference for the user; the user
+  OpenAI-compatible fallback). ManyAgent ships no inference for the user; the user
   pays; works with no server.
 * **server** — the hosted corpus curator (``manyagent.distill.server``).
 * **auto** — server if reachable, else local. The corpus is usable degraded

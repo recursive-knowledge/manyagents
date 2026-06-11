@@ -1,7 +1,7 @@
 {
-  // Oh My Swarm dev container. Python via uv, Node for `npx supabase`,
+  // ManyAgent dev container. Python via uv, Node for `npx supabase`,
   // docker-in-docker so the local Bank (Supabase) can run inside the container.
-  "name": "oh-my-swarm",
+  "name": "manyagent",
   "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
   "features": {
     "ghcr.io/devcontainers/features/node:1": { "version": "lts" },

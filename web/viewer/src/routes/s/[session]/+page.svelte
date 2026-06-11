@@ -67,7 +67,7 @@
 </script>
 
 <svelte:head>
-	<title>session {sessionId} · oms</title>
+	<title>session {sessionId} · manyagent</title>
 </svelte:head>
 
 <CrumbBar segments={crumbs} meta={session?.status ? `status: ${session.status}` : null} />

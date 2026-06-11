@@ -1,6 +1,6 @@
 # BUILD_NOTES
 
-Durable cross-milestone tracking for the `oms` build. Survives context resets;
+Durable cross-milestone tracking for the `manyagent` build. Survives context resets;
 grep this before/after each milestone. Source plan: `crystalline-crafting-quill.md`
 (repo parent) + validated wrapper at the approved plan file.
 
@@ -8,40 +8,40 @@ grep this before/after each milestone. Source plan: `crystalline-crafting-quill.
 
 - **C1 — M6/M8: `/self-distill` rejection.** A rejected `/self-distill` post is
   **not persisted**; the agent is re-prompted. `preference=accept|reject` is a
-  **distill-only** field (`oms.core.md:70`), set via `/cross-distill`
+  **distill-only** field (`manyagent.core.md:70`), set via `/cross-distill`
   accept/reject — NOT on posts. Build M6/M8 to this. Status: **M6 done +
   M7 done + M8 done** — three defenses: M6 parser returns (ok, packet|reason)
   & never persists/sets preference; M3 model raises on preference for
   non-distill; **M8 `_emit_post` re-prompts on reject/parser-refusal, never
   puts a post carrying preference (`res.pop("preference", None)` belt), ★
-  reject⇒re-prompt not stored**. `oms.cli.md:61` ("stores preference=reject")
-  superseded — dated C1 entry on both `oms.cli.md` copies.
+  reject⇒re-prompt not stored**. `manyagent.cli.md:61` ("stores preference=reject")
+  superseded — dated C1 entry on both `manyagent.cli.md` copies.
 - **C2 — M10 Risks: `poison_check`.** The one intentional Fragile (Design
   Principles §9; Open Questions §A2-9): automated poisoned-packet heuristic in
-  `oms.distill`, behind `/inject` human gate + quarantine + no-carry-forward.
+  `manyagent.distill`, behind `/inject` human gate + quarantine + no-carry-forward.
   v1 heuristic optional. Status: implement seam in M7, document risk in M10.
-- **M10 env-doc TODO (collected).** New `OMS_`-prefixed knobs introduced after
-  M1's `oms.env.example` need an `oms.env.example` line at M10 (Design
-  Principles §8): `OMS_ADAPTERS_DIR` (M5, local-adapter root) and `OMS_HOME`
-  (M8, `~/.oms` active-session dir override). Code-defaulted + greppable
-  already; M10 just documents them in `oms.env.example`.
+- **M10 env-doc TODO (collected).** New `MANYAGENT_`-prefixed knobs introduced after
+  M1's `manyagent.env.example` need an `manyagent.env.example` line at M10 (Design
+  Principles §8): `MANYAGENT_ADAPTERS_DIR` (M5, local-adapter root) and `MANYAGENT_HOME`
+  (M8, `~/.manyagent` active-session dir override). Code-defaulted + greppable
+  already; M10 just documents them in `manyagent.env.example`.
 - **C3 — M7: port + harden, not verbatim.** swarms enforces
   `does_not_apply_when ∈ {always,never,n/a}` and verbatim-quote-substring at
   PROMPT level (`swarms .../distillation/prompts.py:~163-178`), NOT in the
-  mechanical `_as_insight_list` (`per_task.py:284-340`). `oms.distill.md:52-53`
+  mechanical `_as_insight_list` (`per_task.py:284-340`). `manyagent.distill.md:52-53`
   requires these MECHANICAL. M7 parser must ADD these checks; adapt `Evidence`
-  (swarms `post_id:int`+`task_id` → oms `post_id` = packet-id string, no
+  (swarms `post_id:int`+`task_id` → manyagent `post_id` = packet-id string, no
   `task_id`; `allowed_post_ids` → cited packet-id set).
-  Dated C3 Decision-log entry appended to BOTH `oms.distill.md` copies
+  Dated C3 Decision-log entry appended to BOTH `manyagent.distill.md` copies
   (source-of-truth + repo `docs/design/`), byte-identical. Status: **M7 done**
-  (C3-ADD #1/#2 mechanical in `oms.distill.parse`; `Evidence` remapped to
+  (C3-ADD #1/#2 mechanical in `manyagent.distill.parse`; `Evidence` remapped to
   packet-id strings; anti-meta enforcement shared as code with M6 via
-  `oms.forum.anti_meta`; idempotency-key = scope+goal+posts only, logged).
+  `manyagent.forum.anti_meta`; idempotency-key = scope+goal+posts only, logged).
 - **C4 — Doc citations (non-blocking).** Cite Design Principles §11 (structure
   is an agent tax, never a human tax) in M6/M8; §11 curator corollary in M7.
   No behavioral change. Status: M6 done; M7 done (§11 corollary cited in
-  `oms.distill.server`/`resolve` docstrings); **M8 done** (§11 cited in the
-  `oms.cli` module docstring + help epilog: agent generates post + proposes ★,
+  `manyagent.distill.server`/`resolve` docstrings); **M8 done** (§11 cited in the
+  `manyagent.cli` module docstring + help epilog: agent generates post + proposes ★,
   human one-taps).
 
 ## M0 build decisions (conventions inherited by M1–M10)
@@ -75,32 +75,32 @@ grep this before/after each milestone. Source plan: `crystalline-crafting-quill.
 
 `make check` (uv lock --locked + pre-commit ruff/format/hygiene + mypy strict +
 deptry src) AND `make test` (pytest+cov, offline) GREEN before next milestone.
-`integration`/`online` suites opt-in via `OMS_RUN_INTEGRATION=1`/`OMS_RUN_ONLINE=1`.
+`integration`/`online` suites opt-in via `MANYAGENT_RUN_INTEGRATION=1`/`MANYAGENT_RUN_ONLINE=1`.
 
 ## Milestone status
 
 - M0 scaffolding — ✅ green (51 files, 15 tests, mkdocs strict, compose valid)
-- M1 oms.utils — ✅ green (config/sid/provider/log; 52 tests). httpx added as
+- M1 manyagent.utils — ✅ green (config/sid/provider/log; 52 tests). httpx added as
   runtime dep. Reconciliation noted: `rate_limit_signal` ports the two
-  datasmith-proven Codex/Claude schemas (oms.utils.md Verification requires
+  datasmith-proven Codex/Claude schemas (manyagent.utils.md Verification requires
   parsing canned payloads); the crystalline plan's "stub returns None" was
   imprecise — general per-provider map stays Open per the design doc body.
-- M2 oms.bank — ✅ green. 7 append-only migrations 00001..00007; async Bank
+- M2 manyagent.bank — ✅ green. 7 append-only migrations 00001..00007; async Bank
   Protocol + FakeBank + SupabaseBank + retry; supabase/psycopg deps added.
   Offline 69 passed; **gated RLS integration 4/4 green vs real Supabase**
   (anon-no-traces/no-write, curator posts-only/no-raw/no-delete, atomic
   next_agent_seq, inject→reuse_score recompute) with clean apply-from-empty.
-  Decisions: (a) ruff `A002` disabled project-wide — oms's public vocabulary
-  (`id`,`type`) mirrors the frozen wire schema + oms.core.md signatures;
+  Decisions: (a) ruff `A002` disabled project-wide — manyagent's public vocabulary
+  (`id`,`type`) mirrors the frozen wire schema + manyagent.core.md signatures;
   A001/A003+ stay active. (b) Bank API is **async** (locks the seam for M3
   `.fetch()` + M9 FastAPI). (c) Supabase re-ported to **544xx**
-  (config.toml) so oms's stack coexists with the sibling datasmith
-  Supabase on the same host; `OMS_BANK_URL` default + integration DSN
+  (config.toml) so manyagent's stack coexists with the sibling datasmith
+  Supabase on the same host; `MANYAGENT_BANK_URL` default + integration DSN
   updated. (d) Makefile `bank-*` pin `npx --yes supabase@2.100.0` (bare
   `npx supabase` resolved a non-existent latest); added `make bank-reset`.
   (e) 00007 grants `curator` to postgres/service_role (admin ⊇ curator,
   within 00007's "curator role + grants" scope).
-- M3 oms.core — ✅ green. Frozen Pydantic Session/Goal/Agent/Packet +
+- M3 manyagent.core — ✅ green. Frozen Pydantic Session/Goal/Agent/Packet +
   KnowledgePacket wire shape + Collection[T]; async `.fetch()` (cache→Bank,
   bare ctor no I/O); validators (type/rating/reply⇒reply_to+stance/
   distill⇒scope+bundle/goal=None ok); session.posts|distills(goal) filtering.
@@ -113,7 +113,7 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   gated integration 5/5 vs real Supabase):
   (1) `Bank.cache_key` added to the Protocol; `FakeBank` = per-instance
   `fake-<uuid>`, `SupabaseBank` = `identity@url`; `get_bank()` memoizes a
-  per-identity singleton (`_BANKS`); `oms.core` `_PACKET_CACHE` re-keyed
+  per-identity singleton (`_BANKS`); `manyagent.core` `_PACKET_CACHE` re-keyed
   `(bank.cache_key, id)` with bank resolved *before* the cache lookup — two
   Banks can no longer collide in hydration.
   (2) Integration RLS asserts tightened `pytest.raises(Exception)` →
@@ -125,54 +125,54 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   `Packet.fetch`; service key from `supabase status -o env` (skip if absent).
   (4) `test_bare_construction_does_no_io` was tautological → replaced with
   `test_bare_ctor_no_io_but_fetch_touches_bank`: monkeypatch
-  `oms.core.models.get_bank`→exploding tripwire; bare ctor + derived props
+  `manyagent.core.models.get_bank`→exploding tripwire; bare ctor + derived props
   silent, `fetch()` trips it.
-- M4 oms.capture — ✅ green. `CanonicalTrace`/`TraceEvent`/`ScrubReport`
+- M4 manyagent.capture — ✅ green. `CanonicalTrace`/`TraceEvent`/`ScrubReport`
   plain `@dataclass` (design doc shows them literally as dataclasses — NOT
   the M3 frozen-Pydantic pattern; pure transforms via `dataclasses.replace`).
   Pipeline `validate → scrub → bound → persist` (scrub *before* bound so a
   future LLM bounder never sees raw secrets). `scrub.SCRUB_VERSION="v1"` is a
-  deployed-code constant, NOT an `OMS_*` knob (drives the re-scrub backfill
+  deployed-code constant, NOT an `MANYAGENT_*` knob (drives the re-scrub backfill
   seam). `ScrubReport` = counts/kinds only; the security test greps the body
   AND `repr(report)`/`json(report)` for every injected secret (the report is
   itself a leak surface). Fidelity-aware bounder: structured = whole head+tail
   events + one explicit `[... elided ...]` marker; pty = head+tail byte
   window; both stamp `truncated=True` + guarantee `bytes_out ≤
-  OMS_TRACE_MAX_BYTES`. `persist()` mints `{sid}/{uuid8}` raw packet then
+  MANYAGENT_TRACE_MAX_BYTES`. `persist()` mints `{sid}/{uuid8}` raw packet then
   `put_trace(scrub_version, complete)`; two-call non-atomicity is v1-weak by
   design (crash leaves body-less raw packet — observable, recoverable).
   3 capture types added to `_LAZY_IMPORTS` + `.pyi` (drift test green). No
   new runtime deps (stdlib re/json/uuid/dataclasses; datasmith
   `estimate_tokens` reuse N/A — spec bounds by bytes, not tokens). 119 tests
   collected, 114 offline pass / 5 gated skip; 19 new capture tests.
-  Doc-sync: no divergence from frozen oms.capture.md (the doc already frames
+  Doc-sync: no divergence from frozen manyagent.capture.md (the doc already frames
   bounding as Open-highest-risk; v1 head+tail is the first concrete
   implementation of that Open question, not a Settled-decision divergence) →
   no design-doc Decision-log edit required.
-- M5 oms.adapters — ✅ green. `Adapter` ABC: `name/binary/version/
+- M5 manyagent.adapters — ✅ green. `Adapter` ABC: `name/binary/version/
   source_fidelity` are **class** attrs (registry discriminates by `name`);
   `invoke/capture/inject/retrieve` `@abstractmethod`; `distill_model()→None`
   default. `RawTrace = CanonicalTrace` alias (lifecycle name; doc-sync entry
-  appended to BOTH oms.adapters.md copies — source + repo). Subprocess
+  appended to BOTH manyagent.adapters.md copies — source + repo). Subprocess
   lifecycle seam (`run_agent_subprocess`/`terminate_all_agents`,
   `start_new_session=True`) ported from datasmith for M8's two-stage SIGINT
   (handler itself is M8). `PromptPrefixInjector` mixin = inject-stash /
   retrieve-clear / `_consume_prefix`; builtins mix it in. `registry.resolve()`
-  non-interactive, order local(`OMS_ADAPTERS_DIR/<name>/__init__.py` exporting
+  non-interactive, order local(`MANYAGENT_ADAPTERS_DIR/<name>/__init__.py` exporting
   `ADAPTER`) → builtin → `_hub_fetch` (offline `None`; the `[y/n]` is the M8
   CLI seam). Builtins: claude/codex map native JSONL → events
   (`structured`), gemini PTY tee → one `system` event (`pty`), qwen = stub
   raising `NotInstalled` (proves the ABC). M4 obligation satisfied: each
-  builtin sample fixture → `oms.capture.validate()` + fidelity asserted.
-  `capture()` is RAW (un-scrubbed, proven) — scrub is oms.capture's central
+  builtin sample fixture → `manyagent.capture.validate()` + fidelity asserted.
+  `capture()` is RAW (un-scrubbed, proven) — scrub is manyagent.capture's central
   job. `distill_model()` returns a `_HeadlessModel` duck-typing as
   `provider.Provider` (binary present) else `None`. `Adapter` added to
   `_LAZY_IMPORTS`+`.pyi` (builtins stay nested; drift test green). No new
   runtime deps (stdlib importlib.util/subprocess). 139 collected, 134
   offline pass / 5 gated skip; 19 new adapter tests.
-- M6 oms.forum — ✅ green. `ANTI_META_BLOCK` ported **byte-identical** from
-  swarms `concreteness.py:20-51` into `oms.forum.anti_meta` (single object;
-  M7 `oms.distill` imports the *same* one — `is`, not `==`); +
+- M6 manyagent.forum — ✅ green. `ANTI_META_BLOCK` ported **byte-identical** from
+  swarms `concreteness.py:20-51` into `manyagent.forum.anti_meta` (single object;
+  M7 `manyagent.distill` imports the *same* one — `is`, not `==`); +
   `BANNED_META_PHRASES`/`ABSTRACT_NOUNS`/`assert_anti_meta_rules_present`
   (CI guard). `schema.py` = pure post-mortem validation
   (load_bearing_assumption/evidence/proposed_next/predicted_outcome/
@@ -183,84 +183,84 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   no-history (goal-scoped) → evidence_ref must resolve & not be quarantined
   → reply parent must exist & not be quarantined. **C1**: returns
   `(ok, packet|reason)`, NEVER persists, NEVER sets preference; M3 model
-  tightened (preference distill-only — Decision-log on oms.core.md, both
+  tightened (preference distill-only — Decision-log on manyagent.core.md, both
   copies). `discuss.py` = process-local `(session,agent)` retrieval-before-
   post gate (`retrieve` records; `enforce_retrieved_before_reply` refuses).
-  swarms→oms Evidence remap (`evidence_post_id:int`→`evidence_ref:str`, no
-  task) — M6 analog of C3; recorded in oms.forum.md Decision log (both
+  swarms→manyagent Evidence remap (`evidence_post_id:int`→`evidence_ref:str`, no
+  task) — M6 analog of C3; recorded in manyagent.forum.md Decision log (both
   copies) + C4 §11 cited in docstrings. No new runtime deps (stdlib re).
   No `_LAZY_IMPORTS` additions (forum is verb-driven, not a REPL noun;
-  accessible via `oms.forum.*`). 156 collected, 151 offline pass / 5 gated
+  accessible via `manyagent.forum.*`). 156 collected, 151 offline pass / 5 gated
   skip; 17 new forum tests + 1 C1 core test.
-- **M7 — oms.distill (curator) — done.** `schema.py` = 6-bucket constants
+- **M7 — manyagent.distill (curator) — done.** `schema.py` = 6-bucket constants
   (`transferable_insights/confirmed_constraints/rejected_hypotheses/pitfalls/
   checks/next_steps`) + caps (≤5/bucket, text≤240, cond≤200, quote≤200) +
   `UNBOUNDED_BOUNDARIES`. `weighting.py` = mechanical triple (reuse via
   `bank.reuse_score` = load-bearing default; ★ bucketed high/≥4 med low/≤2
   neutral; accept folded into reuse view) → deterministic high-signal-first
   ordering. `prompts.py` = cache-split: stable system prefix (role +
-  **same `ANTI_META_BLOCK` object imported from oms.forum** + schema, per
+  **same `ANTI_META_BLOCK` object imported from manyagent.forum** + schema, per
   scope) NEVER contains posts; variable user = rendered weighted posts.
   `parse.py` = **port+harden (C3)** of swarms `_as_insight_list`: C3-ADD #1
   unbounded `does_not_apply_when` dropped, C3-ADD #2 verbatim-quote substring
   (whitespace-normalized) mechanical; `Evidence` remapped to packet-id
   **string** (no task_id) resolved vs real clustered ids; shared anti-meta
-  CODE with M6 (`oms.forum.anti_meta.CONCRETE_RE/is_concrete/has_banned_meta`
+  CODE with M6 (`manyagent.forum.anti_meta.CONCRETE_RE/is_concrete/has_banned_meta`
   lifted, M6 parser refactored to consume — re-verified green); cross-session
   recurrence ⇒ `confidence=high`. `resolve.py`/`server.py` = hybrid
   local|server|auto; `LocalCurator` wraps sync `.complete` in
   `asyncio.to_thread` (M5 async-wrapper hazard fixed); `auto` server→local
-  fallback; `_OpenAICompatModel` `OMS_LLM_*` fallback. `curator.py` =
+  fallback; `_OpenAICompatModel` `MANYAGENT_LLM_*` fallback. `curator.py` =
   idempotent state machine: cluster (type=post only ⇒ no-carry-forward;
   per_goal=one goal, cross_goal=corpus ⇒ independent; quarantined excluded);
   deterministic id `curator/{sha256(scope+goal+sorted parents)}` (mode NOT
   in key — logged); zero posts ⇒ exact `NoPostsError("Run /self-distill
   first!")`; unparseable ⇒ `CurationError`, nothing persisted. C3 + C4 §11
-  corollary Decision-log appended to BOTH oms.distill.md copies
+  corollary Decision-log appended to BOTH manyagent.distill.md copies
   (byte-identical). No new runtime deps (httpx lazy, already M2). No
-  `_LAZY_IMPORTS` additions (curator is verb-driven; `oms.distill.*`).
-  Post-advisor refinements: (a) `OMS_REUSE_WEIGHT` wired into
-  `weighting.py` (was a dead OMS_ knob — the one a user tunes for the
+  `_LAZY_IMPORTS` additions (curator is verb-driven; `manyagent.distill.*`).
+  Post-advisor refinements: (a) `MANYAGENT_REUSE_WEIGHT` wired into
+  `weighting.py` (was a dead MANYAGENT_ knob — the one a user tunes for the
   load-bearing reuse signal; flows into ordering + prompt hint); (b)
   step-2 over a *directly*-quarantined `distill` keeps returning it
   flag-intact (re-curation would land the same content-addressed id and
-  overwriting violates `oms.bank.md:92` append-only; consumer/`/inject`
+  overwriting violates `manyagent.bank.md:92` append-only; consumer/`/inject`
   gate decides exclusion — documented in `curator.py` + both
-  `oms.distill.md` copies + a dedicated test); (c) idempotency test now
+  `manyagent.distill.md` copies + a dedicated test); (c) idempotency test now
   asserts `again.bundle == pkt.bundle` (not just id).
   182 offline pass / 5 gated skip; 31 new distill tests, 0 M6 regressions.
-- **M8 — oms.cli + preflight — done.** Single `oms.cli:main`, dumb
+- **M8 — manyagent.cli + preflight — done.** Single `manyagent.cli:main`, dumb
   orchestrator (rules stay in modules). Pure helpers: `parse_slash`
   (known `/verb` → canonical; `/path` & `/unknown` → None passthrough),
   `preview_tokens` (head/tail + elision), `ask_rating` (skip⇒unrated,
   Enter⇒proposed, 1-5 override, noninteractive⇒None), `ask_yn`
-  (noninteractive⇒deny-by-default), `_oms_home`/active-file via `OMS_HOME`
-  (tests never touch real `~/.oms`). Two-stage SIGINT lifted from datasmith
-  (`_sigint_count`, lazy `oms.adapters.terminate_all_agents`, SIGTERM→
+  (noninteractive⇒deny-by-default), `_manyagent_home`/active-file via `MANYAGENT_HOME`
+  (tests never touch real `~/.manyagent`). Two-stage SIGINT lifted from datasmith
+  (`_sigint_count`, lazy `manyagent.adapters.terminate_all_agents`, SIGTERM→
   SIGKILL+`os._exit`), installed in `main()` not at import. argparse +
   `RawDescriptionHelpFormatter`; `/verb` canonicalized before dispatch;
-  unknown first token → `oms <name> [args]`. Async handlers
+  unknown first token → `manyagent <name> [args]`. Async handlers
   `_do_{start,register,run_agent,self_distill,discuss,cross_distill,inject,
   end}`; `_emit_post` shared accept/★ flow (**C1**: re-prompt on
   reject/parser-refusal, never persists, `res.pop("preference")`; accept
   gate NOT deny-by-default so the unattended loop runs). `/cross-distill`
   surfaces exact `"Run /self-distill first!"`. `/inject` refuses
   quarantined BEFORE preview, head/tail preview, `[y/n]` →
-  `record_injection`, noninteractive⇒deny. `oms end` ★ → most recent
+  `record_injection`, noninteractive⇒deny. `manyagent end` ★ → most recent
   unrated reflection post (no `sessions.rating` migration). `_agent_json`
   wraps the headless model in `asyncio.to_thread` (M5 hazard). PTY = one
   `pty.spawn` (`_pty_spawn`, monkeypatched; real path M10). Added
-  `oms.forum.render_post_prompt` (`forum/prompt.py`, embeds the SAME
+  `manyagent.forum.render_post_prompt` (`forum/prompt.py`, embeds the SAME
   `ANTI_META_BLOCK`). `preflight.py`: env + Bank-reachability (httpx) +
   migration-inventory; live `schema_migrations` diff deferred to M10.
   Obsolete M0 `test_preflight_stub_returns_zero` updated to the M8
   contract. No new runtime deps (argparse/signal/pty/os stdlib; httpx
   already in). No `_LAZY_IMPORTS`/`.pyi` change (verb-driven). C1+C4 +
-  4 settled CLI-seam decisions: dated entry on BOTH `oms.cli.md` copies
+  4 settled CLI-seam decisions: dated entry on BOTH `manyagent.cli.md` copies
   (byte-identical). **218 offline pass / 5 gated skip; ~36 new tests
   (test_cli + test_preflight + 2 forum), 0 prior-milestone regressions.**
-- **M9 — `oms.web` (read-only API + static viewer) — DONE & GREEN.**
-  `oms.web.api.create_app(*, bank=…, identity="public")`: identity fixed at
+- **M9 — `manyagent.web` (read-only API + static viewer) — DONE & GREEN.**
+  `manyagent.web.api.create_app(*, bank=…, identity="public")`: identity fixed at
   app construction (closure over the raw-trace gate — never a request
   header). Routes `GET /s/{session}` (session meta + cursor-paginated
   packets), `/s/{session}?p={uuid}` (one canonical `KnowledgePacket`; id
@@ -273,33 +273,33 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   trace body even with `?include=raw` (silently ignored); trusted/admin +
   `?include=raw` does — parametrized over two apps, not headers. Quarantined
   packets visible-but-flagged + excluded from `/api/reuse`. Cursor
-  pagination reuses `oms.bank.make_cursor`; tested stable across a mid-scan
-  insert (no skip / no dup). `oms.web.server.serve()` (uvicorn, mounts
+  pagination reuses `manyagent.bank.make_cursor`; tested stable across a mid-scan
+  insert (no skip / no dup). `manyagent.web.server.serve()` (uvicorn, mounts
   `web/app/` static viewer) wired to `make web-up`. Frontend = static
   Tailwind-CDN `web/app/index.html` (talks only to the API; quarantine
   banner + disabled reuse affordance verbatim); **Svelte+Vite + CI
   `docs.yml` smoke deferred to M10** (re-skin, API frozen — logged on both
-  `oms.web.md` copies). Runtime deps **`fastapi>=0.110`/`uvicorn>=0.29`
+  `manyagent.web.md` copies). Runtime deps **`fastapi>=0.110`/`uvicorn>=0.29`
   added once** (both imported in `src/` so deptry DEP002 stays green);
   `uv lock` + `uv lock --locked` pass. New tunables
-  `OMS_WEB_PAGE_LIMIT`/`OMS_WEB_MAX_PAGE_LIMIT`/`OMS_WEB_HOST`/
-  `OMS_WEB_PORT` (oms.utils) — **add to the M10 env-doc TODO** above.
+  `MANYAGENT_WEB_PAGE_LIMIT`/`MANYAGENT_WEB_MAX_PAGE_LIMIT`/`MANYAGENT_WEB_HOST`/
+  `MANYAGENT_WEB_PORT` (manyagent.utils) — **add to the M10 env-doc TODO** above.
   `Agent` gained optional `start_date`/`end_date` + `from_activity` builder
-  (faithful to `oms.core.md:103`; dated entry on BOTH `oms.core.md` copies).
-  Dated M9 entries on BOTH `oms.web.md` copies (byte-identical). No
+  (faithful to `manyagent.core.md:103`; dated entry on BOTH `manyagent.core.md` copies).
+  Dated M9 entries on BOTH `manyagent.web.md` copies (byte-identical). No
   `_LAZY_IMPORTS`/`.pyi` change (`web` already a `_SUBMODULES` entry).
   **234 offline pass / 6 gated skip (+13 web tests, +1 gated RLS-pairing);
   0 prior-milestone regressions; `make check` green (mypy 46 files,
   deptry clean).**
 - **M10 — Integration, CI, docs — DONE & GREEN (build complete).**
-  Closes the build. (1) **Env-doc TODO discharged**: `oms.env.example` now
-  documents every post-M1 tunable — `OMS_ADAPTERS_DIR` (M5), `OMS_HOME` (M8),
-  `OMS_WEB_PAGE_LIMIT`/`OMS_WEB_MAX_PAGE_LIMIT`/`OMS_WEB_HOST`/`OMS_WEB_PORT`
-  (M9). (2) **C2 closed**: dated entry on BOTH `oms.distill.md` copies names
+  Closes the build. (1) **Env-doc TODO discharged**: `manyagent.env.example` now
+  documents every post-M1 tunable — `MANYAGENT_ADAPTERS_DIR` (M5), `MANYAGENT_HOME` (M8),
+  `MANYAGENT_WEB_PAGE_LIMIT`/`MANYAGENT_WEB_MAX_PAGE_LIMIT`/`MANYAGENT_WEB_HOST`/`MANYAGENT_WEB_PORT`
+  (M9). (2) **C2 closed**: dated entry on BOTH `manyagent.distill.md` copies names
   the one intentional Fragile (`poison_check`, Design Principles §9:48) — v1
   ships no automated detector; it sits behind three already-Settled, tested
   layers (`include_quarantined=False` everywhere, no-carry-forward, the
-  `/inject` human gate); the future-heuristic seam is `oms.distill` →
+  `/inject` human gate); the future-heuristic seam is `manyagent.distill` →
   `bank.quarantine`. (3) **E2E** (`tests/test_e2e.py`): one test composes the
   full Overview transcript (`start --goal`→`register`→`<name>`→
   `/self-distill`→`/discuss`→`/cross-distill`→`/inject`→`end`) on a shared
@@ -308,7 +308,7 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   single injection-ledger row, active-file cleared by `end`, 8×rc 0); plus a
   second test exercising the two-stage SIGINT *inside* the run-agent leg. The
   curate-without-`model=` trap was handled by patching the real submodule
-  `oms.distill.resolve._discover_local_model` (the package re-export shadows
+  `manyagent.distill.resolve._discover_local_model` (the package re-export shadows
   the name; fetched via `importlib.import_module`). (4) **preflight live
   schema diff**: `_live_schema_diff` — best-effort, admin-key-gated,
   exception-swallowing, **never changes the exit code**; offline path
@@ -317,13 +317,13 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
   `main.yml`/`docs.yml` already datasmith-parity from M0; per the advisor NO
   Node/npm step added — the static viewer is the v1 frontend, the HTTP-level
   `test_web.py` *is* the non-gating smoke (M9's "fold into M10" promise
-  *resolved*, not carried, via a dated M10 entry on BOTH `oms.web.md`
+  *resolved*, not carried, via a dated M10 entry on BOTH `manyagent.web.md`
   copies). (6) **Docs**: `docs/guide/{quickstart,curation,viewer}.md` added +
   wired into `mkdocs.yml` nav; `mkdocs build --strict` green; `design/`
   stays excluded (BUILD_NOTES mkdocs-exclude TODO finalized inline); README
   status table now M0–M9 ✅ / M10. No new runtime deps in M10 (httpx already
-  in). Doc-sync byte-identical across all three pairs (`oms.distill.md`,
-  `oms.web.md`, `oms.core.md`). **237 offline pass / 7 gated skip (+3:
+  in). Doc-sync byte-identical across all three pairs (`manyagent.distill.md`,
+  `manyagent.web.md`, `manyagent.core.md`). **237 offline pass / 7 gated skip (+3:
   2 E2E + 1 preflight no-key unit; +1 gated live-schema-diff integration);
   0 prior-milestone regressions; `make check` green (mypy 46 files,
   deptry clean).**
@@ -332,7 +332,7 @@ scaffolding + utils + Bank (RLS-verified vs real Supabase) + model layer.
 
 **BUILD COMPLETE (M0–M10).** Every milestone left the tree green
 (`make check && make test`); the four corrections C1–C4 are folded in and
-doc-synced; the design docs (`Oh-My-Swarm/components/oms.*.md`) and their
+doc-synced; the design docs (`Oh-My-Swarm/components/manyagent.*.md`) and their
 in-repo copies are byte-identical with dated Decision-log entries for every
 build-forced clarification. The remaining open items are research, not
 build: downstream-reuse-as-signal (the headline experiment), goal-inference,
@@ -342,16 +342,16 @@ all design-frozen with their infra shipped, none build-blocking.
 ---
 
 **Post-M10 hardening (2026-05-19) — CLI-boundary error translation.** Reported
-from real use: `oms start` with no Bank key dumped a `RuntimeError` traceback
-from `supabase_bank._client()`. Added `oms.cli._guard`: `main()` runs every
+from real use: `manyagent start` with no Bank key dumped a `RuntimeError` traceback
+from `supabase_bank._client()`. Added `manyagent.cli._guard`: `main()` runs every
 verb coroutine through it; an operational failure becomes one actionable line
-(cause + "run `python -m oms.preflight`; set `OMS_BANK_TRUSTED_KEY` or
+(cause + "run `python -m manyagent.preflight`; set `MANYAGENT_BANK_TRUSTED_KEY` or
 `make bank-up`") + exit 1, never a traceback; `KeyboardInterrupt` → clean +130;
 string `SystemExit` (our own one-liners) → printed + 1; numeric/None
-`SystemExit` (argparse) re-raised untouched; `OMS_DEBUG=1` re-raises full
-traceback (added to `oms.env.example`). Dumb-CLI invariant intact (formats the
+`SystemExit` (argparse) re-raised untouched; `MANYAGENT_DEBUG=1` re-raises full
+traceback (added to `manyagent.env.example`). Dumb-CLI invariant intact (formats the
 failure, owns no logic, points at `preflight`). Dated entry on BOTH
-`oms.cli.md` copies (byte-identical). **242 offline pass / 7 gated skip (+5
+`manyagent.cli.md` copies (byte-identical). **242 offline pass / 7 gated skip (+5
 guard/main tests); `make check` green.**
 
 ---
@@ -359,39 +359,39 @@ guard/main tests); `make check` green.**
 ## M11 — In-agent skills + MCP server (the user-direction pivot)
 
 **Why this milestone exists.** M0–M10 shipped the four knowledge-loop verbs
-as bash subcommands (`oms /self-distill ...`). The Overview always had them
-as in-agent slash commands (`(oms-claude-001) $ /self-distill`); the bash
+as bash subcommands (`manyagent /self-distill ...`). The Overview always had them
+as in-agent slash commands (`(manyagent-claude-001) $ /self-distill`); the bash
 shape was a wrong-plane v1 that the user surfaced after the M10 README
 landed. M11 reverses the plane: native agent skills + an MCP server,
-installed by `oms <name>`. The bash CLI keeps only session lifecycle.
+installed by `manyagent <name>`. The bash CLI keeps only session lifecycle.
 
-**M11.1 substrate — DONE & GREEN.** `oms._mcp` (FastMCP, stdio transport),
+**M11.1 substrate — DONE & GREEN.** `manyagent._mcp` (FastMCP, stdio transport),
 6 tools per advisor: `self_distill_draft` / `discuss_draft` (no persist) +
 `commit_post` (THE C1 gate — runs `parse_post`; the agent's MCP permission
 prompt for this tool is the human accept moment) + `cross_distill` +
 `inject_preview` (no persist) + `inject_commit` (the inject gate). C1
 preserved without server state — a rejected draft means the host LLM
 doesn't call commit_post; nothing to retroactively delete. Session id from
-`$OMS_SESSION` env → `~/.oms/active` fallback. `setup_environment()`
-extended to load `$OMS_HOME/env` before `./oms.env`. New runtime deps:
+`$MANYAGENT_SESSION` env → `~/.manyagent/active` fallback. `setup_environment()`
+extended to load `$MANYAGENT_HOME/env` before `./manyagent.env`. New runtime deps:
 `mcp>=1.0`, `tomlkit>=0.13`. **18 tests in `tests/test_mcp.py`**.
 
 **M11.2 Claude installer + transparency core — DONE & GREEN; 4 defects
-real-`~/.claude/`-surfaced and fixed.** Built `oms._installer` first
+real-`~/.claude/`-surfaced and fixed.** Built `manyagent._installer` first
 (consent prompt, manifest, atomic write, JSON+TOML merges, idempotent
 uninstall, byte-identical-twice-runs invariant). Then Claude installer:
-the original code wrote `~/.claude/skills/oms-<verb>/SKILL.md` + merged
-`~/.claude/settings.json` `mcpServers.oms`. User smoke surfaced (a)
-the SKILL dir name **is** the slash command (`/oms-self-distill` instead
+the original code wrote `~/.claude/skills/manyagent-<verb>/SKILL.md` + merged
+`~/.claude/settings.json` `mcpServers.manyagent`. User smoke surfaced (a)
+the SKILL dir name **is** the slash command (`/manyagent-self-distill` instead
 of `/self-distill`); (b) `settings.json` is NOT the file Claude Code
 actually reads MCP from — `~/.claude.json` is, via `claude mcp add`;
 (c) PTY wrapper rendered at 80×24 ignoring parent terminal size;
 (d) uninstall removed files but slash menu stayed cached (Claude Code
 restart needed). All four fixed: bare-verb skill dirs; `claude mcp add
---scope user oms -- <python> -m oms._mcp` via `CLIAction`; rewrote
+--scope user manyagent -- <python> -m manyagent._mcp` via `CLIAction`; rewrote
 `_pty_spawn` to `pty.fork` + `TIOCSWINSZ` + `SIGWINCH`; post-uninstall
 hint added. Real-`~/.claude/` re-verified: `claude mcp list` shows
-`oms: ... ✓ Connected` after install, gone after `oms uninstall claude`.
+`manyagent: ... ✓ Connected` after install, gone after `manyagent uninstall claude`.
 **+18 installer tests + 10 Claude installer tests**.
 
 **M11.3 Gemini + Codex — DONE & GREEN; 4 more defects fixed.** Gemini's
@@ -400,10 +400,10 @@ workspace trust); `--consent` skips the first but yargs can't combine it
 with the top-level `--skip-trust`. Working argv: `gemini extensions link
 <bundle> --consent` with `"1\n"` piped to stdin (extended `CLIAction` with
 optional `stdin_input` field; gemini-cli v0.42 verified). Bundle staged
-under `$OMS_HOME/extensions/gemini-oms/` (oms-owned) and gemini symlinks
+under `$MANYAGENT_HOME/extensions/gemini-manyagent/` (manyagent-owned) and gemini symlinks
 it via `link`. Codex installer kept tomlkit-based (`codex mcp add` doesn't
 expose `env_vars` or per-tool approval-modes; direct TOML merge gives full
-control). Codex skills are `$oms-<verb>` (Codex reserves `/`). Uninstall
+control). Codex skills are `$manyagent-<verb>` (Codex reserves `/`). Uninstall
 **order fix**: CLI uninstall runs FIRST (so the agent unregisters while
 the bundle is still on disk), then file ops — gemini's
 `extensions uninstall` refused on a dangling symlink. Real-`~/.gemini/`
@@ -415,11 +415,11 @@ and -`~/.codex/` verified: `gemini extensions list` / `codex mcp list`
 subparsers + `_DISPATCH` entries together (per advisor: don't rip
 piecewise). The four `_do_*` handlers + `_emit_post` + `_agent_json` +
 `_adapter_for` + `_resolve_agent` + `parse_post_safely` moved to
-`oms._handlers` with **kwargs signatures** (no argparse Namespace
-coupling). `oms --help` now shows only the 5 lifecycle verbs. New
+`manyagent._handlers` with **kwargs signatures** (no argparse Namespace
+coupling). `manyagent --help` now shows only the 5 lifecycle verbs. New
 `tests/test_handlers.py` (11 tests, handler-direct kwargs API);
 `tests/test_cli.py` slimmed; `tests/test_e2e.py` + `scripts/simulate_story.py`
-rewritten to call `oms._handlers.do_*` directly. **Sim narrative
+rewritten to call `manyagent._handlers.do_*` directly. **Sim narrative
 byte-identical to M10** (advisor's diff check passed modulo random UUIDs).
 
 **M17 multi-OS CI — DONE & GREEN.** `.github/workflows/main.yml` matrix
@@ -431,15 +431,15 @@ back from `os.killpg` (POSIX) to `Popen.terminate()/kill()` on Windows.
 Hardcoded `/tmp` in tests → `tempfile.gettempdir()`. README OS badge added.
 
 **M11.5 docs — DONE.** README rewritten leading with the in-agent UX +
-the "What `oms <name>` writes to your filesystem" transparency table
+the "What `manyagent <name>` writes to your filesystem" transparency table
 (every absolute path per adapter, CREATE-vs-MERGE, reversal). Dated M11
-entries on BOTH `oms.cli.md` and `oms.adapters.md` copies
+entries on BOTH `manyagent.cli.md` and `manyagent.adapters.md` copies
 (byte-identical) covering: the surface pivot, the 6-tool MCP shape with
 the C1 draft+commit split rationale, per-adapter install via the agent's
 official CLI, the transparency contract, the `_handlers` kwargs move,
 the PTY winsize rewrite + Windows guard, the multi-OS CI matrix, real-
 HOME smoke verifications. CLAUDE.md updated by the user mid-build to
-mention `oms._mcp`.
+mention `manyagent._mcp`.
 
 **M11 follow-ups (tracked, non-blocking):** (1) Gemini `_settings_payload`
 allowlist regression — restore if a settings-skip flag lands for `link`;
@@ -467,9 +467,9 @@ byte-identically. M11 follow-ups (#18) are polish, not load-bearing.
   renders at the parent's real width; parent resize reflows the wrapped
   Claude live. The M8 80-column "uncanny" feel is gone.
 - **V2 (in-agent flow)** ✅ — typed `/self-distill` inside a real Claude Code
-  spawned by `oms claude --dangerously-skip-permissions`. Claude (a) saw
+  spawned by `manyagent claude --dangerously-skip-permissions`. Claude (a) saw
   the bare `/self-distill` slash (skill dir name → slash, not the YAML
-  `name:`), (b) invoked the `oms` MCP tool ("Called oms" marker visible),
+  `name:`), (b) invoked the `manyagent` MCP tool ("Called manyagent" marker visible),
   (c) read the anti-meta rules from `instruction_for_host_llm`, (d)
   recognized the conversation had no substantive content to ground a
   reflection, and (e) correctly offered the user `[skip / draft-anyway]`
@@ -487,7 +487,7 @@ allowlist — contingent on an upstream gemini `--skip-settings` flag for
 authors). All other M11 polish (P2, P3) landed.
 
 **M11.7 — P1 closed (Gemini settings allowlist restored, trustedFolders pre-trust):**
-The M11.3 first pass dropped the formal `OMS_SESSION` env-passthrough
+The M11.3 first pass dropped the formal `MANYAGENT_SESSION` env-passthrough
 allowlist from `gemini-extension.json` because declaring `settings` triggered
 an interactive install-time prompt with no skip-flag for `link`. P1 was
 filed as "revisit if gemini ships a settings-skip flag for `link`" — but
@@ -504,6 +504,6 @@ across all merge/unmerge primitives via `_trailing_nl()` (the user's
 one — caught by byte-identical-round-trip check). Manifest tracks the
 trust entry as `flat:<abs-path>`; uninstall pops exactly our entry,
 leaves the user's other trusted folders byte-identical. Real-HOME
-smoke: install → `✓ oms (0.1.0) ... Settings: session: [not set]` ↔
+smoke: install → `✓ manyagent (0.1.0) ... Settings: session: [not set]` ↔
 uninstall → `trustedFolders.json` byte-identical to before (121 bytes →
 121 bytes, `diff` clean). All #18 items closed.

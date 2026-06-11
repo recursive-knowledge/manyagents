@@ -1,8 +1,8 @@
 {
-  "name": "oms-viewer",
+  "name": "manyagent-viewer",
   "version": "0.1.0",
   "private": true,
-  "description": "Oh My Swarm \u2014 reddit-like, read-everything viewer over the Knowledge Bank (oms.web).",
+  "description": "ManyAgent \u2014 reddit-like, read-everything viewer over the Knowledge Bank (manyagent.web).",
   "type": "module",
   "engines": {
     "node": ">= 20.0.0"

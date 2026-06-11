@@ -1,19 +1,19 @@
 ---
 tags:
   - documentation
-  - oh-my-swarm
+  - manyagent
   - knowledge-curation
 ---
 
 ## Status
 
 - **Lifecycle:** Planned — schema extended in the 2026-05-19 swarms-alignment pass.
-- **Last reviewed:** 2026-05-19. Follows `Oh My Swarm - Design Principles.md`.
+- **Last reviewed:** 2026-05-19. Follows `ManyAgent - Design Principles.md`.
 - Owns the data-model source of truth: the **append-only migration list**, not prose (Principles §3). The 3-role access model is **Settled** (datasmith-validated); this pass adds a `curator` identity, the `goal`/`post`/`distill` schema, and the **`injection` reuse ledger** that makes downstream-reuse the load-bearing curation signal.
 
 ## Abstract
 
-`oms.bank` is the Knowledge Bank: the self-hosted Supabase client, the migration list defining the schema, typed storage, the four-identity access model, the PostgREST surface, packet quarantine, and the **downstream-reuse view**. Every module reads/writes through it.
+`manyagent.bank` is the Knowledge Bank: the self-hosted Supabase client, the migration list defining the schema, typed storage, the four-identity access model, the PostgREST surface, packet quarantine, and the **downstream-reuse view**. Every module reads/writes through it.
 
 ## High level overview
 
@@ -25,11 +25,11 @@ graph LR
     B --> E
 
     A[Self-hosted Supabase]
-    B["`oms.bank
+    B["`manyagent.bank
     (This Feature)`"]
-    C[oms.core / oms.forum]
-    D[oms.distill — curator]
-    E[oms.web — public read]
+    C[manyagent.core / manyagent.forum]
+    D[manyagent.distill — curator]
+    E[manyagent.web — public read]
 ```
 
 ## Access identities — **Settled (datasmith-validated + curator)**
@@ -41,7 +41,7 @@ Supabase-native auth + Postgres RLS, DB-enforced (datasmith's lesson: app-layer 
 | **public** | `anon` key | `SELECT` only, public set only (no raw `traces` bodies) |
 | **trusted** | issued key, maintainer-distributed | `INSERT`/`UPDATE` sessions/agents/posts/traces |
 | **admin** | `service_role` | full oversight; curation; quarantine; migrations |
-| **curator** | scoped service identity (the **server** curator, `oms.distill`) | `SELECT` posts + `INSERT` `distill` packets; cannot delete or read raw `traces` beyond scrubbed posts |
+| **curator** | scoped service identity (the **server** curator, `manyagent.distill`) | `SELECT` posts + `INSERT` `distill` packets; cannot delete or read raw `traces` beyond scrubbed posts |
 
 `curator` is narrow on purpose: the hosted curator can only read posts and write bundles, so a compromised curator cannot exfiltrate raw traces or mutate the corpus. A `local` curator writes as the triggering `trusted` user instead.
 
@@ -65,13 +65,13 @@ Core tables:
 |---|---|---|
 | `sessions` | `(id)` | `id`, `goal` (nullable), `created_at`, `status` |
 | `agents` | `(id)` | `{session}/agent-{NNN}-{adapter}`, `session_id`, `adapter`, `seq` |
-| `packets` | `(id)` | the `oms.core` shape: `type`, `goal`, `kind/reply_to/stance/structured/rating` (post), `scope/bundle/parents/curator/preference` (distill), `quarantined` |
+| `packets` | `(id)` | the `manyagent.core` shape: `type`, `goal`, `kind/reply_to/stance/structured/rating` (post), `scope/bundle/parents/curator/preference` (distill), `quarantined` |
 | `traces` | `(packet_id)` | raw scrubbed traces; **not** public-readable; `scrub_version`, `complete` |
 | `injections` | `(packet_id, target_session_id)` | every `/inject`: which packet entered which session, when |
 
 ### The reuse ledger — the load-bearing curation signal
 
-`/inject` writes an `injections` row. `reuse_score` is a **view** (not a stored field — recomputable, so weighting improves retroactively without re-curation): for a packet, an aggregate over sessions it was injected into, weighted by those sessions' later `rating`/`distill.preference`. `oms.distill` reads this view to weight Insights (high reuse → confidence promotion; the behavioral analog of swarms cross-generation recurrence). This is implemented as the **default baseline** per the user's decision.
+`/inject` writes an `injections` row. `reuse_score` is a **view** (not a stored field — recomputable, so weighting improves retroactively without re-curation): for a packet, an aggregate over sessions it was injected into, weighted by those sessions' later `rating`/`distill.preference`. `manyagent.distill` reads this view to weight Insights (high reuse → confidence promotion; the behavioral analog of swarms cross-generation recurrence). This is implemented as the **default baseline** per the user's decision.
 
 ### Identity rule — **Settled (datasmith precedent)**
 
@@ -83,7 +83,7 @@ ACID. Concurrent `/cross-distill` → two `distill` packets; consumers take the 
 
 ### Quarantine — **Settled**
 
-Poisoned/abused packets → `quarantined=True` (visible, excluded from curation/`/inject`), append-only, provenance kept. No-carry-forward (`oms.distill`) + no-history hardening (`oms.forum`) keep amplification detectable; a retro-quarantine of a `post` is reflected in the next curation because `bundle` carries `parents`.
+Poisoned/abused packets → `quarantined=True` (visible, excluded from curation/`/inject`), append-only, provenance kept. No-carry-forward (`manyagent.distill`) + no-history hardening (`manyagent.forum`) keep amplification detectable; a retro-quarantine of a `post` is reflected in the next curation because `bundle` carries `parents`.
 
 ## Operations & recovery
 
@@ -104,5 +104,5 @@ Poisoned/abused packets → `quarantined=True` (visible, excluded from curation/
 - **2026-05-19 — Schema migrations `00006`/`00007` (swarms-alignment):** `raw|post|distill` taxonomy + forum/curator subfields; `goal` on sessions/packets; `rating`; the `injections` ledger + `reuse_score` view.
 - **2026-05-19 — Added the `curator` scoped identity** for the hybrid server curator — deliberately narrow (read posts / write bundles only) so a compromised hosted curator can't exfiltrate raw traces or mutate the corpus.
 - **2026-05-19 — Downstream reuse implemented as a recomputable view, the default curation weight** (per user). Recomputability means the load-bearing signal improves retroactively without re-curation.
-- **2026-06-09 — `make db-tunnel-*` exposes the Bank's Supabase HTTP API at `db.swarms.formulacode.org` (Cloudflare named tunnel).** Per user, a named `cloudflared` tunnel fronts `127.0.0.1:54421` so a remote `oms` can point `OMS_BANK_URL` at HTTPS. **Security caveat** (in `docs/guide/remote-access.md`): the local stack uses Supabase's default demo JWT secret (no `signing_keys_path` in `supabase/config.toml`), so the `service_role` key is *public* — the endpoint **must** be gated with Cloudflare Access and/or have its signing keys rotated before public exposure (the datasmith Access posture). Tunnel-only here; **no Bank schema/RLS change**. `db.swarms.*` is a two-level subdomain, so it also needs Total TLS / an Advanced Certificate (free Universal SSL covers one level).
-- **2026-06-10 (M13.0) — `trace_renditions` (migration 00009) + `put_rendition`/`get_rendition`.** Derived projections of a captured run, keyed ``(packet_id, format)`` — first format ``'harness'``: the conversation mined from the agent harness's own local transcript. ``put_rendition`` is an upsert on the PK (re-mining is idempotent — the oms.distill re-run discipline); RLS mirrors the 00008 pre-alpha stance with the same quarantine join (retro-quarantining the parent packet pulls every projection from the public surface at the DB layer), trusted writes, service_role bypass. FakeBank parity shipped in the same change (the curator-23502 lesson); the gated integration matrix was UPDATED for the 00008/00009 reality — its "anon never reads traces" assertion had silently gone stale (it only runs under ``OMS_RUN_INTEGRATION=1``) and now asserts the new truth: anon reads unquarantined bodies + renditions, quarantine pulls both, writes stay denied. Break-glass: ``supabase/rollbacks/00009_revoke_public_renditions.sql`` (paired with the 00008 script).
+- **2026-06-09 — `make db-tunnel-*` exposes the Bank's Supabase HTTP API at `db.swarms.formulacode.org` (Cloudflare named tunnel).** Per user, a named `cloudflared` tunnel fronts `127.0.0.1:54421` so a remote `manyagent` can point `MANYAGENT_BANK_URL` at HTTPS. **Security caveat** (in `docs/guide/remote-access.md`): the local stack uses Supabase's default demo JWT secret (no `signing_keys_path` in `supabase/config.toml`), so the `service_role` key is *public* — the endpoint **must** be gated with Cloudflare Access and/or have its signing keys rotated before public exposure (the datasmith Access posture). Tunnel-only here; **no Bank schema/RLS change**. `db.swarms.*` is a two-level subdomain, so it also needs Total TLS / an Advanced Certificate (free Universal SSL covers one level).
+- **2026-06-10 (M13.0) — `trace_renditions` (migration 00009) + `put_rendition`/`get_rendition`.** Derived projections of a captured run, keyed ``(packet_id, format)`` — first format ``'harness'``: the conversation mined from the agent harness's own local transcript. ``put_rendition`` is an upsert on the PK (re-mining is idempotent — the manyagent.distill re-run discipline); RLS mirrors the 00008 pre-alpha stance with the same quarantine join (retro-quarantining the parent packet pulls every projection from the public surface at the DB layer), trusted writes, service_role bypass. FakeBank parity shipped in the same change (the curator-23502 lesson); the gated integration matrix was UPDATED for the 00008/00009 reality — its "anon never reads traces" assertion had silently gone stale (it only runs under ``MANYAGENT_RUN_INTEGRATION=1``) and now asserts the new truth: anon reads unquarantined bodies + renditions, quarantine pulls both, writes stay denied. Break-glass: ``supabase/rollbacks/00009_revoke_public_renditions.sql`` (paired with the 00008 script).

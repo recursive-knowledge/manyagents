@@ -1,7 +1,7 @@
-# Oh My Swarm — Trace Renditions & Mining (M12–M14)
+# ManyAgent — Trace Renditions & Mining (M12–M14)
 
 Status: **plan** (M12 groundwork shipped 2026-06-09: non-TTY capture fix,
-`oms._hook` lifecycle-hook binding sink, list-aware installer merge). The
+`manyagent._hook` lifecycle-hook binding sink, list-aware installer merge). The
 *why* below was researched against live docs (Claude Code hooks/sessions
 references, asciinema cast v2 spec + player, Codex/Gemini local-storage
 source) and against this repo; load-bearing claims cite their source.
@@ -45,7 +45,7 @@ create table trace_renditions (
 
 `traces` (the raw body) is unchanged. Renditions are **upserts** keyed on
 `(packet_id, format)` so mid-session refreshes are idempotent — the same
-discipline as `oms.distill`'s content-addressed re-runs.
+discipline as `manyagent.distill`'s content-addressed re-runs.
 
 ## 2. Decision: write the cast ourselves, don't shell out to `asciinema rec`
 
@@ -53,10 +53,10 @@ The obvious alternative — install asciinema and wrap the agent in
 `asciinema rec -c "claude …" out.cast` — was considered and rejected:
 
 - **It inverts the architecture.** asciinema's recorder owns the PTY
-  (`pty.fork` inside asciinema). oms would become a consumer of its output
+  (`pty.fork` inside asciinema). manyagent would become a consumer of its output
   — losing our tee (the byte-exact `raw` backup), our `TIOCSWINSZ`/
   `SIGWINCH` size sync, our two-stage SIGINT handling, and the
-  `OMS_SESSION` env threading, or stacking a second nested PTY under ours
+  `MANYAGENT_SESSION` env threading, or stacking a second nested PTY under ours
   with two layers of signal/winsize forwarding to keep honest.
 - **The cast is lossy; the raw stream must not be.** Cast v2 event data is
   UTF-8 JSON; invalid bytes become U+FFFD irreversibly (asciinema itself
@@ -66,7 +66,7 @@ The obvious alternative — install asciinema and wrap the agent in
   is a derived projection.
 - **The dependency buys ~15 lines.** Cast v2 is NDJSON: one header line +
   one `[elapsed_seconds, "o", chunk]` line per read — written incrementally
-  from exactly the loop oms already runs (`cli.py` `_pty_spawn` master-read
+  from exactly the loop manyagent already runs (`cli.py` `_pty_spawn` master-read
   site). asciinema 3.x is a Rust binary (not pip-installable as a library);
   2.x is a Python app, not an API. A system-binary dependency + subprocess
   + format coupling vs. a dozen lines of stdlib in a loop we already own.
@@ -85,7 +85,7 @@ arbitrary chunk boundaries, including escape sequences split across events.
 Goal: every wrapped run leaves a playable `.cast` rendition in the Bank,
 with the raw blob unchanged as backup.
 
-> **M12.1 shipped early (2026-06-10, oms.cli.md):** both spawn loops write a
+> **M12.1 shipped early (2026-06-10, manyagent.cli.md):** both spawn loops write a
 > timing sidecar (`<tee>.timing`, one `"<offset_s> <n_bytes>"` line per
 > read), and `_timed_events` builds timestamped `TraceEvent`s (incremental
 > UTF-8 decode; collapse-to-single-event safety valve when the joined text
@@ -112,17 +112,17 @@ with the raw blob unchanged as backup.
      prefix — strictly better crash behavior than today's build-at-exit.
    - Update the two monkeypatched doubles in lockstep:
      `tests/test_cli.py` spawn stub and
-     `oms.testing.Simulation._play_transcript_through_pty`.
-2. **Persist as rendition** (`oms.capture`): after the existing
+     `manyagent.testing.Simulation._play_transcript_through_pty`.
+2. **Persist as rendition** (`manyagent.capture`): after the existing
    `persist()` stores the raw packet, scrub the cast (on the **joined**
    text, then re-split — per-event regexes can miss a secret straddling a
    chunk boundary) and upsert `trace_renditions(packet_id, 'cast', body)`.
    Record `cast_lossless: bool` in the header env (true iff the decoder
    never emitted U+FFFD) so downstream knows when o-concatenation equals
    the raw text. Do **not** route the cast through `CanonicalTrace.events`:
-   `_bound_pty` flattens to 3 events past `OMS_TRACE_MAX_BYTES` (2 MiB),
+   `_bound_pty` flattens to 3 events past `MANYAGENT_TRACE_MAX_BYTES` (2 MiB),
    destroying timing exactly for the long sessions a player matters for.
-   Cap the cast with its own tunable (`OMS_CAST_MAX_BYTES`, default 8 MiB;
+   Cap the cast with its own tunable (`MANYAGENT_CAST_MAX_BYTES`, default 8 MiB;
    head+tail with a marker event, mirroring `bound.py`).
 3. **Migration `00008`** (above) + `FakeBank` parity (`put_rendition` /
    `get_rendition`) — the curator-rejection incident showed FakeBank/live
@@ -149,7 +149,7 @@ Sequenced so each step lands green on its own:
    curator-23502 and quarantine lessons both came from fake/live drift).
 2. **M13.1 — the miner.** `Adapter.mine(ctx) -> MinedConversation | None`
    as the third optional ABC hook (the `install_skills` pattern;
-   `oms.adapters.skills.claude` delegation precedent). `MineContext =
+   `manyagent.adapters.skills.claude` delegation precedent). `MineContext =
    {cwd, window: (run_started, run_ended), bindings}` — `_do_run_agent`
    already has all three (bindings via `_harness_bindings`, shipped). The
    Claude miner reads every bound `transcript_path` (one PTY run spans
@@ -184,7 +184,7 @@ Sequenced so each step lands green on its own:
    insufficient.
 
 Decisions deliberately NOT made yet (decide at M13.0 review): whether the
-rendition row also serves `oms.distill` as a structured-fidelity input for
+rendition row also serves `manyagent.distill` as a structured-fidelity input for
 PTY sessions (it is exactly the `structured` trace the curator wishes it
 had), and whether `mine()` failures should quarantine-flag the raw packet
 or merely log.
@@ -198,8 +198,8 @@ harness's own local files.
 1. **Binding (shipped as groundwork, 2026-06-09).** Hooks push the answer
    to us: Claude Code's `SessionStart`/`SessionEnd` hooks deliver
    `{session_id, transcript_path, cwd, reason}` on stdin; the installed
-   `oms._hook` sink appends them to `$OMS_HOME/bindings/<session>.jsonl`
-   iff `OMS_SESSION` is set. This survives `/clear` (observed in the trial
+   `manyagent._hook` sink appends them to `$MANYAGENT_HOME/bindings/<session>.jsonl`
+   iff `MANYAGENT_SESSION` is set. This survives `/clear` (observed in the trial
    forensics: one PTY run, two transcript files — `SessionEnd reason:
    "clear"` then a fresh `SessionStart`). Fallback tiers when no binding
    records exist (hooks declined at consent, or harness predates hooks):
@@ -216,8 +216,8 @@ harness's own local files.
    `MineContext = {cwd, window: (start, end), bindings: list[BindingRecord],
    raw_bytes: bytes}` — built by `_do_run_agent` post-spawn (it already has
    everything; `run_started` landed with the groundwork). Layering is clean:
-   adapters already import `oms.capture`.
-3. **Claude miner** (`oms.adapters.builtin.claude`): parse each bound
+   adapters already import `manyagent.capture`.
+3. **Claude miner** (`manyagent.adapters.builtin.claude`): parse each bound
    transcript jsonl **defensively** (the format is undocumented and
    drifts; the `_text` fallback in `builtin/__init__.py` is the in-repo
    precedent) into a normalized shape: messages (role, ts, text), tool
@@ -229,12 +229,12 @@ harness's own local files.
    (the transcript contains full tool outputs), upserted (idempotent).
 5. **Mid-session refresh (the "/self-distill should update the trace"
    ask): yes, two triggers, ship the cheap one first.** (a) The MCP server
-   already executes oms code mid-session with `OMS_SESSION` in env — after
+   already executes manyagent code mid-session with `MANYAGENT_SESSION` in env — after
    `commit_post`/`cross_distill` it can re-mine the bound transcripts and
    upsert the rendition (no raw packet exists yet mid-run, so the refresh
    targets a session-scoped provisional packet id, or simply defers
    persist-to-Bank to exit and refreshes a local staging file). (b) A
-   `PostToolUse` hook with matcher `mcp__oms__.*` — verified syntax — if
+   `PostToolUse` hook with matcher `mcp__manyagent__.*` — verified syntax — if
    harness-side triggering is preferred. Decision point at M13 review;
    exit-time mining alone already covers the primary need.
 6. **Codex/Gemini miners** are follow-ups, not blockers — both harnesses
@@ -247,9 +247,9 @@ harness's own local files.
 ## 5. M14 — viewer: replay + structured conversation
 
 1. ~~Security gate decision~~ **Decided + shipped early (2026-06-10,
-   pre-alpha):** scrubbed raw trace bodies are PUBLIC — `OMS_WEB_PUBLIC_RAW`
+   pre-alpha):** scrubbed raw trace bodies are PUBLIC — `MANYAGENT_WEB_PUBLIC_RAW`
    tunable (default on) + migration `00008` anon grant on `traces`; the M9
-   anon-exclusion is the switch's off position (oms.web.md Decision log).
+   anon-exclusion is the switch's off position (manyagent.web.md Decision log).
    `GET /api/cast/{session}/{p}` already serves an asciicast v2 rendition
    synthesized from the stored envelope (synthetic pacing pre-M12; the same
    endpoint replays real timing once M12 lands timestamped chunks). M14
@@ -271,14 +271,14 @@ harness's own local files.
 
 - **Cast size**: Claude Code is a high-frame-rate TUI; casts run larger
   than the logical transcript. The player fetches whole files; practical
-  smooth-playback ceiling is tens of MB. `OMS_CAST_MAX_BYTES` + the
+  smooth-playback ceiling is tens of MB. `MANYAGENT_CAST_MAX_BYTES` + the
   bounded head/tail policy is the guardrail; the split worker bundle is
   the escalation if dense recordings stutter.
 - **Cross-chunk scrub**: chunked events break per-event secret regexes;
   M12 scrubs the joined stream. Quasi-identifiers (home-dir username,
   resume UUID, wall-clock TZ) survive scrub v1 by design — revisit only if
   renditions go public (M14 gate).
-- **Hook trust/consent**: hooks ride the existing `OMS_INSTALL_SKILLS`
+- **Hook trust/consent**: hooks ride the existing `MANYAGENT_INSTALL_SKILLS`
   consent panel + manifest + uninstall. Declining hooks must degrade to
   scan-tier binding, never break capture.
 - **Stale-process trap** (the trial's second curator failure): the MCP

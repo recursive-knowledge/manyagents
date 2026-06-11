@@ -1,6 +1,6 @@
-"""Oh My Swarm — wrap installed coding-agent CLIs; curate cross-session knowledge.
+"""ManyAgent — wrap installed coding-agent CLIs; curate cross-session knowledge.
 
-Distribution name: ``oh-my-swarm``. Import name: ``manyagent``. Console script: ``manyagent``.
+Distribution name: ``manyagent``. Import name: ``manyagent``. Console script: ``manyagent``.
 Identity is fixed here and in ``pyproject.toml`` and is never re-derived as a
 string elsewhere (datasmith identity rule; Package Structure & Workflow).
 """

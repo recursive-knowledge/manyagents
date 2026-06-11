@@ -86,7 +86,7 @@
 </script>
 
 <svelte:head>
-	<title>@{agentTail} · oms</title>
+	<title>@{agentTail} · manyagent</title>
 </svelte:head>
 
 <CrumbBar

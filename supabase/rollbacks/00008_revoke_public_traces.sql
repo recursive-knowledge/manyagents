@@ -4,8 +4,8 @@
 -- 00008 immediately. In an incident (a trace body that must leave the public
 -- surface NOW):
 --
---   1. psql "$OMS_BANK_DB_URL" -f supabase/rollbacks/00008_revoke_public_traces.sql
---   2. restart the web server with OMS_WEB_PUBLIC_RAW=0 (the app resolves the
+--   1. psql "$MANYAGENT_BANK_DB_URL" -f supabase/rollbacks/00008_revoke_public_traces.sql
+--   2. restart the web server with MANYAGENT_WEB_PUBLIC_RAW=0 (the app resolves the
 --      switch ONCE at construction — a running server ignores the env change)
 --
 -- For a single bad trace, prefer the surgical tool: quarantine the parent

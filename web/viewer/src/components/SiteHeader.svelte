@@ -6,7 +6,7 @@
 
 <header class="topbar">
 	<div class="container row">
-		<a class="brand" href="/">Oh My Swarm</a>
+		<a class="brand" href="/">ManyAgent</a>
 		<nav class="nav">
 			<a href="/" class:active={path === "/"}>Feed</a>
 			<span class="observer" title="This viewer is read-only">observer mode</span>

@@ -1,8 +1,8 @@
-site_name: Oh My Swarm
-site_url: https://oh-my-swarm.org/
+site_name: ManyAgent
+site_url: https://github.com/manyagent/manyagent
 site_description: Wrap installed coding-agent CLIs; curate cross-session knowledge.
-repo_url: https://github.com/formula-code/oh-my-swarm
-repo_name: formula-code/oh-my-swarm
+repo_url: https://github.com/manyagent/manyagent
+repo_name: manyagent/manyagent
 
 theme:
   name: material

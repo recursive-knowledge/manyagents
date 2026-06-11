@@ -1,27 +1,27 @@
 # Authoring an in-agent installer
 
 A guide for adding a fifth adapter (or porting an existing one to a new host
-agent's CLI). Read after [Quickstart](quickstart.md). Reference: `oms._installer`,
-`oms.adapters.skills.{claude,codex,gemini}`, `tests/test_adapter_install.py`.
+agent's CLI). Read after [Quickstart](quickstart.md). Reference: `manyagent._installer`,
+`manyagent.adapters.skills.{claude,codex,gemini}`, `tests/test_adapter_install.py`.
 
 ## The seam
 
-`oms <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
+`manyagent <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
 dry_run)` before spawning the PTY. The default ABC implementation
-(`oms.adapters.base.Adapter.install_skills`) returns `None` (no-op), so
+(`manyagent.adapters.base.Adapter.install_skills`) returns `None` (no-op), so
 adapters that don't expose an in-agent surface (e.g. the `qwen` stub) are
 silently skipped — `_do_run_agent` continues regardless.
 
 To add a real installer, override the method on your `Adapter` subclass:
 
 ```python
-# src/oms/adapters/builtin/<name>.py
+# src/manyagent/adapters/builtin/<name>.py
 class MyAdapter(_StructuredBuiltin):
     name = "myname"
     binary = "myname"
 
     def install_skills(self, *, session_id, oma_home, scope="user", dry_run=False):
-        from oms.adapters.skills.myname import install
+        from manyagent.adapters.skills.myname import install
         from pathlib import Path
         return install(
             session_id=session_id,
@@ -31,7 +31,7 @@ class MyAdapter(_StructuredBuiltin):
         )
 ```
 
-Then write `src/oms/adapters/skills/myname.py` (the actual installer
+Then write `src/manyagent/adapters/skills/myname.py` (the actual installer
 module). Convention: it exports `build_plan(*, session_id, oma_home,
 scope) -> InstallPlan` (pure, no I/O — used by `--dry-run` and the consent
 preview) and `install(...) -> Manifest | None` (the active path: builds the
@@ -42,12 +42,12 @@ plan, runs the consent gate, applies atomically, saves the manifest).
 The plan is heterogeneous: zero or more `FileOp` (CREATE a new file, or
 MERGE our keys into an existing one) plus zero or more `CLIAction` (run an
 external command to register/unregister with the host agent). Both are
-logged into a per-adapter manifest at `$OMS_HOME/installed/<name>.json`;
-`oms status` lists them; `oms uninstall <name>` reverses both layers (CLI
+logged into a per-adapter manifest at `$MANYAGENT_HOME/installed/<name>.json`;
+`manyagent status` lists them; `manyagent uninstall <name>` reverses both layers (CLI
 unregisters first, then files).
 
 ```python
-from oms._installer import CLIAction, FileOp, InstallPlan, apply_plan, consent_prompt, load_manifest
+from manyagent._installer import CLIAction, FileOp, InstallPlan, apply_plan, consent_prompt, load_manifest
 
 def build_plan(*, session_id, oma_home, scope="user"):
     return InstallPlan(
@@ -64,9 +64,9 @@ def build_plan(*, session_id, oma_home, scope="user"):
         ],
         cli_actions=[
             CLIAction(
-                install_argv=("myagent", "mcp", "add", "oms", "--", sys.executable, "-m", "oms._mcp"),
-                uninstall_argv=("myagent", "mcp", "remove", "oms"),
-                description="register the oms MCP server with MyAgent",
+                install_argv=("myagent", "mcp", "add", "manyagent", "--", sys.executable, "-m", "manyagent._mcp"),
+                uninstall_argv=("myagent", "mcp", "remove", "manyagent"),
+                description="register the manyagent MCP server with MyAgent",
             ),
         ],
         session_id=session_id,
@@ -77,7 +77,7 @@ def build_plan(*, session_id, oma_home, scope="user"):
 
 **Use a CLIAction** when the host agent exposes an official register CLI
 (`claude mcp add`, `gemini extensions link`). The CLI usually writes to a
-file you don't control (`~/.claude.json`, `~/.gemini/extensions/oms`
+file you don't control (`~/.claude.json`, `~/.gemini/extensions/manyagent`
 symlink) — going through the CLI keeps the file format their problem, not
 yours.
 
@@ -88,25 +88,25 @@ yours.
   `env_vars` or per-tool `approval_mode` flag, so we merge those into
   `~/.codex/config.toml` ourselves via `tomlkit`);
 - you want sha256-tracked rollback (the manifest records sha256-at-write
-  for every CREATE so `oms uninstall` skips user-edited files).
+  for every CREATE so `manyagent uninstall` skips user-edited files).
 
 ## The three working examples
 
 | Adapter | Skills files | MCP/register surface | Slash invocation |
 |---|---|---|---|
-| `claude` | `~/.claude/skills/<verb>/SKILL.md` (CREATE × 4) | `claude mcp add --scope user oms -- <python> -m oms._mcp` (CLIAction, with `remove` pre-clear for idempotency) | `/<verb>` |
-| `codex` | `~/.codex/skills/oms-<verb>/SKILL.md` (CREATE × 4) | `tomlkit`-preserving MERGE of `~/.codex/config.toml`: `[mcp_servers.oms]` + `[mcp_servers.oms.tools.commit_post]` + `[mcp_servers.oms.tools.inject_commit]` — Codex's `mcp add` doesn't expose `env_vars` or per-tool approval-modes, so direct TOML merge gives full control | `$oms-<verb>` (Codex reserves `/` for built-ins) |
-| `gemini` | bundle at `$OMS_HOME/extensions/gemini-oms/` (CREATE × 6 — `gemini-extension.json` + `GEMINI.md` + 4 `commands/<verb>.toml`) | `gemini extensions link <bundle> --consent` with `"1\n"` piped to stdin (CLIAction) — the workspace-trust prompt has no skip flag that coexists with `--consent` | `/<verb>` |
+| `claude` | `~/.claude/skills/<verb>/SKILL.md` (CREATE × 4) | `claude mcp add --scope user manyagent -- <python> -m manyagent._mcp` (CLIAction, with `remove` pre-clear for idempotency) | `/<verb>` |
+| `codex` | `~/.codex/skills/manyagent-<verb>/SKILL.md` (CREATE × 4) | `tomlkit`-preserving MERGE of `~/.codex/config.toml`: `[mcp_servers.manyagent]` + `[mcp_servers.manyagent.tools.commit_post]` + `[mcp_servers.manyagent.tools.inject_commit]` — Codex's `mcp add` doesn't expose `env_vars` or per-tool approval-modes, so direct TOML merge gives full control | `$manyagent-<verb>` (Codex reserves `/` for built-ins) |
+| `gemini` | bundle at `$MANYAGENT_HOME/extensions/gemini-manyagent/` (CREATE × 6 — `gemini-extension.json` + `GEMINI.md` + 4 `commands/<verb>.toml`) | `gemini extensions link <bundle> --consent` with `"1\n"` piped to stdin (CLIAction) — the workspace-trust prompt has no skip flag that coexists with `--consent` | `/<verb>` |
 
 Cross-cutting facts:
 
 - The MCP server executable is **always** `(sys.executable, "-m",
-  "oms._mcp")` — `sys.executable` at install time is whatever python `oms`
+  "manyagent._mcp")` — `sys.executable` at install time is whatever python `manyagent`
   itself is running under, so the host agent's spawned MCP child uses the
-  same venv `oms` is installed into.
-- The host agent inherits `OMS_SESSION` (exported by `_do_run_agent`
+  same venv `manyagent` is installed into.
+- The host agent inherits `MANYAGENT_SESSION` (exported by `_do_run_agent`
   before the PTY spawn) when it spawns the MCP child. The MCP server
-  falls back to `~/.oms/active` if the env isn't set, so opening the
+  falls back to `~/.manyagent/active` if the env isn't set, so opening the
   agent later in any directory still works.
 
 ## Idempotency + atomicity (the invariants tests assert)
@@ -124,7 +124,7 @@ Cross-cutting facts:
    `SKILL.md` after install, sha256 won't match what we recorded at write
    time — `uninstall` prints `KEPT` and leaves the file alone.
 4. **Consent prints every absolute path.** Before any write, the user sees
-   the full plan and types `[y/n/d]`. `OMS_INSTALL_SKILLS=auto` overrides
+   the full plan and types `[y/n/d]`. `MANYAGENT_INSTALL_SKILLS=auto` overrides
    to silent yes; `=deny` to silent no; default is "prompt once, then
    silent re-installs."
 5. **Atomic writes.** Every CREATE / MERGE goes through `_atomic_write`
@@ -144,17 +144,17 @@ author doesn't re-burn:
 - **The skill directory name IS the slash command.** Claude Code:
   `~/.claude/skills/<dirname>/SKILL.md` → `/<dirname>`. The YAML `name:`
   field is only for display in `/skills` and logs. We learned this when
-  the M11.2 first pass shipped `oms-self-distill/` and the user saw
-  `/oms-self-distill` instead of `/self-distill`.
+  the M11.2 first pass shipped `manyagent-self-distill/` and the user saw
+  `/manyagent-self-distill` instead of `/self-distill`.
 - **Pick the host agent's documented register CLI, not the file it
   writes to.** The M11.2 first pass wrote `~/.claude/settings.json`
-  `mcpServers.oms` (per stale research) — `claude mcp list` reported it
+  `mcpServers.manyagent` (per stale research) — `claude mcp list` reported it
   as not connected because Claude Code actually reads MCP servers from
   `~/.claude.json`. Going through `claude mcp add` made the file location
   Claude's problem, not ours.
 - **Uninstall order matters.** Run the agent's unregister CLI FIRST, then
   remove your files. Reversing leaves the agent with a dangling pointer
-  (Gemini's `extensions uninstall oms` refuses on a broken symlink).
+  (Gemini's `extensions uninstall manyagent` refuses on a broken symlink).
   `_installer.uninstall` does the right order automatically; your
   `CLIAction.uninstall_argv` is what it invokes.
 - **Smoke against the user's real `~/.<agent>/` before declaring done.**
@@ -174,7 +174,7 @@ name: <verb>
 description: <one-line, used for /skills menu + auto-trigger>
 disable-model-invocation: true        # user invokes via slash, not the model autonomously
 allowed-tools:
-  - mcp__oms__<draft_tool>             # auto-approve the read-only draft
+  - mcp__manyagent__<draft_tool>             # auto-approve the read-only draft
   # commit_post / inject_commit are deliberately OMITTED — let the per-tool
   # permission prompt fire on commit (that IS the human accept gate)
 ---
@@ -183,11 +183,11 @@ allowed-tools:
 
 Numbered procedure (follow exactly — soft contract, easy to drift):
 
-1. Call `mcp__oms__<draft_tool>` (pass guidance from $ARGUMENTS).
+1. Call `mcp__manyagent__<draft_tool>` (pass guidance from $ARGUMENTS).
 2. Draft the structured payload from the conversation context.
 3. Show it verbatim to the user with a recommended ★.
 4. Ask "Accept this post + ★? [y/n]".
-5. **Only on accept**, call `mcp__oms__commit_post(...)`. The agent's
+5. **Only on accept**, call `mcp__manyagent__commit_post(...)`. The agent's
    permission prompt fires — the user must approve before persistence.
 6. On reject, do NOT call commit_post (C1: no persistence without consent).
 ```
@@ -206,22 +206,22 @@ For a fifth adapter, copy the Claude block and adapt:
 ```python
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("OMS_INSTALL_SKILLS", "auto")
+    monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "auto")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     return tmp_path
 
 @pytest.fixture
 def captured_cli(monkeypatch):
     invocations = []
-    monkeypatch.setattr(oms._installer.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(manyagent._installer.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(
-        oms._installer, "_run_cli",
+        manyagent._installer, "_run_cli",
         lambda argv, *, description, stdin_input=None: invocations.append(list(argv)),
     )
     return invocations
 
 def test_myname_plan_creates_<expected_files>_and_cli_actions(fake_home, captured_cli):
-    plan = build_plan(session_id="S1", oma_home=fake_home / ".oms", scope="user")
+    plan = build_plan(session_id="S1", oma_home=fake_home / ".manyagent", scope="user")
     # assert FileOp counts + paths
     # assert CLIAction install/uninstall argv shapes
 
@@ -239,9 +239,9 @@ agent state.
 
 When you land a fifth adapter:
 
-1. Add a dated entry to **both** `oms.adapters.md` copies (source-of-truth
-   `Oh-My-Swarm/components/oms.adapters.md` AND the repo copy
-   `docs/design/components/oms.adapters.md`), byte-identical.
+1. Add a dated entry to **both** `manyagent.adapters.md` copies (source-of-truth
+   `Oh-My-Swarm/components/manyagent.adapters.md` AND the repo copy
+   `docs/design/components/manyagent.adapters.md`), byte-identical.
 2. Update the README transparency table to add a row for the new adapter
    (every absolute path, CREATE-vs-MERGE, reversal).
 3. Update this guide if you found a new landmine worth documenting.

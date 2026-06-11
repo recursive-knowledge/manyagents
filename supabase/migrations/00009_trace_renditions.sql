@@ -3,8 +3,8 @@
 -- captured run, keyed (packet_id, format). First format: 'harness' — the
 -- conversation mined from the agent harness's own local transcript
 -- (~/.claude/projects/<munged-cwd>/<session-id>.jsonl), bound to the run by
--- the oms._hook lifecycle records. Upsert on the PK makes re-mining
--- idempotent (the oms.distill re-run discipline). Widening the format check
+-- the manyagent._hook lifecycle records. Upsert on the PK makes re-mining
+-- idempotent (the manyagent.distill re-run discipline). Widening the format check
 -- (e.g. a stored 'cast' in M12 proper) is a new migration, never an edit.
 -- Break-glass rollback: supabase/rollbacks/00009_revoke_public_renditions.sql.
 

@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-	<title>/{goal} · oms</title>
+	<title>/{goal} · manyagent</title>
 </svelte:head>
 
 <CrumbBar

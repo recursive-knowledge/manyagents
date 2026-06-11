@@ -3,7 +3,7 @@
 A `curator` identity in manyagent.bank's role model periodically re-distills the
 **public corpus** per goal. C4 corollary (Design Principles §6/§11): curating
 the public corpus is corpus-curation, not being the user's *task* inference
-provider — OMA already hosts the Bank/API, so a hosted curator is consistent,
+provider — ManyAgent already hosts the Bank/API, so a hosted curator is consistent,
 not a violation; the structure is a curator tax, never a human tax.
 
 This is a **stub**: the hosted endpoint is Open-Q infra, not closed. The

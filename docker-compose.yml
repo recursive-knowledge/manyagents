@@ -1,14 +1,14 @@
 # The local Bank is brought up via `make bank-up` (`npx supabase start`),
 # which manages its own container stack. This compose file is reserved for
-# the read-only Svelte viewer dev service, wired in M9 (oms.web). Until then
+# the read-only Svelte viewer dev service, wired in M9 (manyagent.web). Until then
 # it declares no services so `docker compose config` stays valid and
 # `make web-up` documents the seam.
 #
 # M9 will add, e.g.:
 #   services:
 #     viewer:
-#       build: ./src/oms/web/app
+#       build: ./src/manyagent/web/app
 #       ports: ["5173:5173"]
 #       environment:
-#         OMS_API_URL: "http://host.docker.internal:8000"
-name: oh-my-swarm
+#         MANYAGENT_API_URL: "http://host.docker.internal:8000"
+name: manyagent

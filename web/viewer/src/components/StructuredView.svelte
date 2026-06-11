@@ -1,5 +1,5 @@
 <script>
-	// Render an oms.forum post body or an oms.distill bundle as prose, not
+	// Render an manyagent.forum post body or an manyagent.distill bundle as prose, not
 	// JSON. Empty fields/buckets are skipped entirely; evidence quotes link to
 	// the post they cite; confidence renders as a chip. A JSON dump remains
 	// only as the last-resort fallback for genuinely unknown shapes.
