@@ -40,7 +40,7 @@ async def test_trial_story_full_loop(sim: Simulation) -> None:
     # The user's correction must survive the real capture pipeline
     # (tee → validate → scrub → bound → persist) into the stored trace.
     r = await sim.run_agent(transcript=trial_transcript())
-    assert r.ok and r.saw("captured raw packet")
+    assert r.ok and r.saw("trace:")  # the run prints the viewer link; capture is checked via the Bank below
     [raw] = sim.packets("raw")
     trace = await sim.bank.get_trace(raw["id"])
     assert trace is not None and _CORRECTION_FRAGMENT in trace["body"]

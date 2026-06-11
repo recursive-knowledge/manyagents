@@ -369,7 +369,7 @@ async def test_run_agent_spawns_pty_installs_skills_and_captures_raw_packet(
     # A raw packet was persisted (empty trace bytes, but still a valid record).
     raws = await fake_bank.list_packets(session_id="S1", type="raw")
     assert len(raws) == 1
-    assert any("captured raw packet" in line for line in s.out)
+    assert any("trace:" in line for line in s.out)  # the run prints the viewer link
 
 
 @pytest.mark.skipif(
@@ -497,7 +497,6 @@ async def test_run_agent_mines_harness_rendition(
     rend = await fake_bank.get_rendition(raws[0]["id"], "harness")
     assert rend is not None and rend["miner_version"] == "claude-v1"
     assert _json.loads(rend["body"])["segments"][0]["harness_session_id"] == "hs-1"
-    assert any("mined conversation" in line and "1 turns" in line for line in s.out)
     assert seen_ctx and seen_ctx[0].window[0] <= seen_ctx[0].window[1]
 
 
@@ -519,17 +518,18 @@ async def test_run_agent_mining_failure_never_disturbs_the_run(
     s = Scripted()
     rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
     assert rc == 0  # the run completes
-    assert any("captured raw packet" in line for line in s.out)  # capture unaffected
+    assert len(await fake_bank.list_packets(session_id="S1", type="raw")) == 1  # capture unaffected
     assert any("mining skipped" in line for line in s.out)  # honest note, no crash
 
 
-async def test_run_agent_surfaces_harness_bindings_from_this_run(
+async def test_run_agent_passes_this_runs_bindings_to_the_miner(
     fake_bank: FakeBank,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M12 groundwork: binding records appended by ``oms._hook`` while the
-    agent ran are surfaced after capture; stale records from an earlier run
-    of the same session (and malformed lines) are ignored."""
+    """M12/M13: binding records appended by ``oms._hook`` while the agent ran
+    reach the miner via MineContext; stale records from an earlier run of the
+    same session (and malformed lines) are filtered out by the run-start
+    clock."""
     import json as _json
     import time as _time
 
@@ -549,16 +549,24 @@ async def test_run_agent_surfaces_harness_bindings_from_this_run(
         }
         (d / "S1.jsonl").write_text(_json.dumps(stale) + "\n" + _json.dumps(live) + "\nnot json{\n")
 
+    seen_ctx: list[Any] = []
+
+    class CapturingAdapter(FakeAdapter):
+        def mine(self, ctx: Any) -> dict[str, Any] | None:
+            seen_ctx.append(ctx)
+            return None
+
     monkeypatch.setattr(cli, "_pty_spawn", fake_spawn)
     from oms import _handlers as h
 
-    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: CapturingAdapter())
     s = Scripted()
     rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
     assert rc == 0
-    joined = "\n".join(s.out)
-    assert "abc-123" in joined  # this run's binding surfaced
-    assert "stale-id" not in joined  # pre-run records filtered by timestamp
+    assert seen_ctx, "miner was not called"
+    ids = {str(b.get("harness_session_id")) for b in seen_ctx[0].bindings}
+    assert "abc-123" in ids  # this run's binding reached the miner
+    assert "stale-id" not in ids  # pre-run records filtered by the run-start clock
 
 
 # --------------------------------------------------------------------------- #
