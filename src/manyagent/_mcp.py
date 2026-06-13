@@ -34,7 +34,7 @@ from mcp.server.fastmcp import FastMCP
 
 from manyagent import setup_environment
 
-setup_environment()  # ~/.manyagent/env then ./manyagent.env — Bank creds for the MCP child
+setup_environment()  # ./manyagent.env then ~/.manyagent/env (first wins) — Bank creds for the MCP child
 
 app = FastMCP("manyagent")
 

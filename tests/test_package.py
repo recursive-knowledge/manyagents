@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import os
 import pathlib
 
 import pytest
@@ -15,6 +16,21 @@ def test_version_and_setup_environment() -> None:
     assert isinstance(manyagent.__version__, str)
     assert manyagent.__version__ == "0.1.0"
     manyagent.setup_environment()  # idempotent, no manyagent.env present in test cwd
+
+
+def test_setup_environment_expands_tilde_home(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A literal-tilde MANYAGENT_HOME (dotenv files / MCP-config env blocks don't
+    shell-expand) must resolve to the same file `ma init` writes — the loader
+    used to check the relative literal path and silently load nothing."""
+    monkeypatch.setenv("HOME", str(tmp_path))  # posixpath.expanduser
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # ntpath.expanduser
+    monkeypatch.setenv("MANYAGENT_HOME", "~/maghome")
+    (tmp_path / "maghome").mkdir()
+    (tmp_path / "maghome" / "env").write_text("MANYAGENT_TILDE_PROBE=hit\n", encoding="utf-8")
+    monkeypatch.delenv("MANYAGENT_TILDE_PROBE", raising=False)
+    manyagent.setup_environment()
+    assert os.environ.get("MANYAGENT_TILDE_PROBE") == "hit"
+    monkeypatch.delenv("MANYAGENT_TILDE_PROBE", raising=False)
 
 
 def test_dir_matches_all() -> None:

@@ -1,6 +1,6 @@
 """ManyAgent — wrap installed coding-agent CLIs; curate cross-session knowledge.
 
-Distribution name: ``manyagent``. Import name: ``manyagent``. Console script: ``manyagent``.
+Distribution name: ``manyagent``. Import name: ``manyagent``. Console script: ``ma``.
 Identity is fixed here and in ``pyproject.toml`` and is never re-derived as a
 string elsewhere (datasmith identity rule; Package Structure & Workflow).
 """
@@ -17,24 +17,28 @@ __version__ = "0.1.0"
 
 
 def setup_environment() -> None:
-    """Load environment variables from ``~/.manyagent/env`` **and** ``./manyagent.env``.
+    """Load environment variables from ``./manyagent.env`` **and** ``~/.manyagent/env``.
 
-    Two layers, lowest precedence first so the cwd file wins on overlap:
+    Two layers; ``dotenv.load_dotenv`` never overwrites an already-set process
+    var, so the FIRST source to set a key wins and the order below is the
+    precedence:
 
-    1. ``~/.manyagent/env`` — the user-level fallback (M11). Loaded so an MCP server
-       launched by Claude Code / Codex / Gemini *outside* a project directory
-       still finds the Bank credentials installed once by ``manyagent start``.
-    2. ``./manyagent.env`` — the project-scoped overrides (M0).
+    1. ``./manyagent.env`` — the project-scoped overrides (M0).
+    2. ``~/.manyagent/env`` — the user-level fallback, written by ``manyagent init``.
+       Loaded so an MCP server launched by Claude Code / Codex / Gemini
+       *outside* a project directory still finds the Bank credentials.
 
-    ``dotenv.load_dotenv`` does not overwrite already-set process vars, so the
-    real env always wins over file values. CLI flags still win over both.
+    Live process env always wins over both files; CLI flags win over everything.
     """
-    user_home = os.environ.get("MANYAGENT_HOME") or os.path.expanduser("~/.manyagent")
+    if os.path.exists("manyagent.env"):
+        dotenv.load_dotenv("manyagent.env")
+    # expanduser on the override too (every other MANYAGENT_HOME consumer does):
+    # a literal-tilde value — dotenv files and MCP-config env blocks don't
+    # shell-expand — must resolve to the same file `manyagent init` writes.
+    user_home = os.path.expanduser(os.environ.get("MANYAGENT_HOME") or "~/.manyagent")
     user_env = os.path.join(user_home, "env")
     if os.path.exists(user_env):
         dotenv.load_dotenv(user_env)
-    if os.path.exists("manyagent.env"):
-        dotenv.load_dotenv("manyagent.env")
 
 
 setup_environment()
