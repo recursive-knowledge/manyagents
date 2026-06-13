@@ -19,6 +19,13 @@ _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
 
+class NonRetryableError(Exception):
+    """Marker base: a failure retrying cannot fix (a missing Bank key, a
+    misconfigured identity). ``with_backoff`` re-raises these immediately
+    instead of burning the full backoff schedule (~3.5s at the defaults)
+    in front of the same error."""
+
+
 def with_backoff(
     max_retries: int = 3,
     base_delay: float = 0.5,
@@ -37,7 +44,7 @@ def with_backoff(
                     return await func(*args, **kwargs)
                 except exceptions as exc:
                     last_exc = exc
-                    if attempt == max_retries:
+                    if isinstance(exc, NonRetryableError) or attempt == max_retries:
                         raise
                     await asyncio.sleep(delay)
                     delay *= 2

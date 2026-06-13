@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from manyagent.bank.retry import with_backoff
+from manyagent.bank.retry import NonRetryableError, with_backoff
 from manyagent.utils import config
 
 _IDENTITY_KEY_VARS: dict[str, str] = {
@@ -18,6 +18,11 @@ _IDENTITY_KEY_VARS: dict[str, str] = {
     "admin": "MANYAGENT_BANK_ADMIN_KEY",
     "curator": "MANYAGENT_BANK_CURATOR_KEY",
 }
+
+
+class BankConfigError(RuntimeError, NonRetryableError):
+    """The Bank is misconfigured (no key for the identity): fail fast — the
+    retry shim must not back off in front of an error a retry cannot fix."""
 
 
 def _cf_access_headers() -> dict[str, str]:
@@ -47,7 +52,7 @@ class SupabaseBank:
             from supabase import AsyncClientOptions, acreate_client
 
             if not self._key:
-                raise RuntimeError(
+                raise BankConfigError(
                     f"Bank identity {self.identity!r} has no key ({_IDENTITY_KEY_VARS[self.identity]} unset)"
                 )
             headers = _cf_access_headers()

@@ -42,6 +42,38 @@ async def test_with_backoff_exhausts_and_raises() -> None:
         await always_fails()
 
 
+async def test_with_backoff_nonretryable_fails_fast() -> None:
+    """A config error (missing Bank key) must surface on the FIRST attempt —
+    backoff in front of an error a retry cannot fix only adds dead seconds
+    (the uv-tool-install onboarding report)."""
+    from manyagent.bank import NonRetryableError
+    from manyagent.bank.supabase_bank import BankConfigError
+
+    calls = {"n": 0}
+
+    @with_backoff(max_retries=3, base_delay=0.0)
+    async def misconfigured() -> None:
+        calls["n"] += 1
+        raise BankConfigError("Bank identity 'trusted' has no key (MANYAGENT_BANK_TRUSTED_KEY unset)")
+
+    with pytest.raises(BankConfigError, match="no key"):
+        await misconfigured()
+    assert calls["n"] == 1  # no retries
+    # BankConfigError stays a RuntimeError (callers matching the old type keep
+    # working) AND is the retry shim's fail-fast marker.
+    assert issubclass(BankConfigError, RuntimeError) and issubclass(BankConfigError, NonRetryableError)
+
+
+async def test_supabase_bank_missing_key_raises_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real Bank's missing-key path raises the non-retryable type."""
+    from manyagent.bank.supabase_bank import BankConfigError, SupabaseBank
+
+    monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
+    bank = SupabaseBank("trusted")
+    with pytest.raises(BankConfigError, match="MANYAGENT_BANK_TRUSTED_KEY unset"):
+        await bank.get_session("S-NOKEY")
+
+
 # --------------------------------------------------------------------------- #
 # FakeBank round-trip + idempotency
 # --------------------------------------------------------------------------- #

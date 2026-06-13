@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from manyagent.bank.base import Bank, Identity
 from manyagent.bank.fake import FakeBank, make_cursor
-from manyagent.bank.retry import with_backoff
+from manyagent.bank.retry import NonRetryableError, with_backoff
 
 # Per-identity singletons: a stable instance (hence stable ``cache_key``) so
 # manyagent.core's hydration cache stays coherent across get_bank() calls.
@@ -37,6 +37,7 @@ __all__ = [
     "Bank",
     "FakeBank",
     "Identity",
+    "NonRetryableError",
     "get_bank",
     "make_cursor",
     "with_backoff",
