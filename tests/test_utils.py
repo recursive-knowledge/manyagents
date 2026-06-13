@@ -499,3 +499,24 @@ def test_messages_catalog_is_pure_text() -> None:
     messages.END_INJECT_FOLLOWUP_GUIDANCE.format(packet_id="curator/x")
     messages.START_QUARANTINE_NOTE.format(n=1, n_s="", goal="g")
     messages.COMMIT_TYPED_HINT.format(propose=3)
+
+
+def test_demo_jwt_is_derived_and_well_formed() -> None:
+    """The demo-stack fallback keys are DERIVED from Supabase's public demo
+    secret at runtime — no key-shaped literal lives in the repo. Assert the
+    claim shape and that the privileged service_role is never minted by the
+    constants (only anon + authenticated are wired as defaults)."""
+    import base64
+    import json
+
+    anon = config._demo_jwt("anon")
+    trusted = config._demo_jwt("authenticated")
+    assert anon != trusted and anon.count(".") == 2
+
+    def claims(tok: str) -> dict[str, object]:
+        body = tok.split(".")[1]
+        return dict(json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))))
+
+    assert claims(anon) == {"iss": "supabase-demo", "role": "anon", "exp": 1983812996}
+    assert claims(trusted)["role"] == "authenticated"
+    assert config.MANYAGENT_BANK_URL_DEFAULT == "https://db-swarms.formulacode.org"

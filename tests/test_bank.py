@@ -65,10 +65,12 @@ async def test_with_backoff_nonretryable_fails_fast() -> None:
 
 
 async def test_supabase_bank_missing_key_raises_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The real Bank's missing-key path raises the non-retryable type."""
+    """The real Bank's missing-key path raises the non-retryable type. With
+    the derived demo defaults, the only way to have NO key is to set the env
+    var explicitly empty (unset falls back to the baked default)."""
     from manyagent.bank.supabase_bank import BankConfigError, SupabaseBank
 
-    monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
+    monkeypatch.setenv("MANYAGENT_BANK_TRUSTED_KEY", "")
     bank = SupabaseBank("trusted")
     with pytest.raises(BankConfigError, match="MANYAGENT_BANK_TRUSTED_KEY unset"):
         await bank.get_session("S-NOKEY")

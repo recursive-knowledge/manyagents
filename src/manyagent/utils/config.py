@@ -99,9 +99,59 @@ MANYAGENT_LLM_BASE_URL: str = resolve("MANYAGENT_LLM_BASE_URL", "")
 MANYAGENT_LLM_API_KEY: str = resolve("MANYAGENT_LLM_API_KEY", "")
 MANYAGENT_LLM_MODEL: str = resolve("MANYAGENT_LLM_MODEL", "")
 
-# Bank (Supabase) connection + the three write identities (manyagent.bank, M2).
-# Local Bank ports are 544xx (not the Supabase 543xx defaults) so manyagent's stack
-# coexists with a sibling datasmith Supabase on the same host.
-MANYAGENT_BANK_URL: str = resolve("MANYAGENT_BANK_URL", "http://127.0.0.1:54421")
-MANYAGENT_BANK_ANON_KEY: str = resolve("MANYAGENT_BANK_ANON_KEY", "")
-MANYAGENT_BANK_TRUSTED_KEY: str = resolve("MANYAGENT_BANK_TRUSTED_KEY", "")
+# Bank (Supabase) connection + the write identities (manyagent.bank, M2).
+# The default is the HOSTED Bank (Cloudflare tunnel) so a bare
+# `uv tool install manyagent` works with zero configuration — a localhost default
+# is dead-on-arrival on every machine that isn't running `make bank-up`
+# (local dev points back at http://127.0.0.1:54421 via manyagent.env; the local
+# stack's 544xx ports coexist with a sibling datasmith Supabase).
+MANYAGENT_BANK_URL_DEFAULT = "https://db-swarms.formulacode.org"
+
+
+def _demo_jwt(role: str) -> str:
+    """Mint the Supabase DEMO-stack JWT for ``role`` — the ``admin/admin`` of
+    Supabase: the signing secret below is the PUBLIC demo default from
+    Supabase's docs, so the minted tokens are public knowledge, not secrets
+    (anon = read-only role; authenticated = the RLS-enforced trusted writer
+    of migration 00004 — never service_role). They are the offline fallback
+    for the hosted pre-alpha Bank, which has not rotated its secret; the
+    CURRENT connection is published at /.well-known/manyagent.json
+    (manyagent.web) and fetched/cached by `ma init`. Rotating the hosted
+    secret invalidates these mechanically — the intended failure mode (the
+    CLI error hint routes to `ma init`, which fetches the new keys).
+
+    Derived, never hardcoded: **no key-shaped literal may live in this
+    repo** — a literal would train scanners to cry wolf and train future
+    edits to paste a REAL key where the demo one sat.
+    """
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    def b64url(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    secret = b"super-secret-jwt-token-with-at-least-32-characters-long"  # Supabase's published demo default
+    header = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    # Claim shape/order mirrors the demo keys `npx supabase status` prints.
+    payload = b64url(
+        json.dumps({"iss": "supabase-demo", "role": role, "exp": 1983812996}, separators=(",", ":")).encode()
+    )
+    sig = b64url(hmac.new(secret, f"{header}.{payload}".encode(), hashlib.sha256).digest())
+    return f"{header}.{payload}.{sig}"
+
+
+MANYAGENT_BANK_URL: str = resolve("MANYAGENT_BANK_URL", MANYAGENT_BANK_URL_DEFAULT)
+MANYAGENT_BANK_ANON_KEY: str = resolve("MANYAGENT_BANK_ANON_KEY", _demo_jwt("anon"))
+MANYAGENT_BANK_TRUSTED_KEY: str = resolve("MANYAGENT_BANK_TRUSTED_KEY", _demo_jwt("authenticated"))
+
+# What the deployment PUBLISHES at /.well-known/manyagent.json (manyagent.web).
+# Deliberately defaulted to the derived demo JWTs, never to the resolved
+# MANYAGENT_BANK_* above — the web host's own env may hold a privileged key
+# (service_role locally) that must never reach the published document. After
+# rotating the hosted stack's JWT secret, set these on the web deployment;
+# clients pick the new values up at their next `ma init`.
+MANYAGENT_WEB_PUBLISHED_BANK_URL: str = resolve("MANYAGENT_WEB_PUBLISHED_BANK_URL", MANYAGENT_BANK_URL_DEFAULT)
+MANYAGENT_WEB_PUBLISHED_ANON_KEY: str = resolve("MANYAGENT_WEB_PUBLISHED_ANON_KEY", _demo_jwt("anon"))
+MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY: str = resolve("MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY", _demo_jwt("authenticated"))

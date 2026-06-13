@@ -24,6 +24,8 @@ import os
 import sys
 from pathlib import Path
 
+from manyagent.utils import config
+
 _BANK_KEYS = (
     "MANYAGENT_BANK_ANON_KEY",
     "MANYAGENT_BANK_TRUSTED_KEY",
@@ -41,10 +43,24 @@ def _is_source_checkout() -> bool:
     return (_REPO_ROOT / "pyproject.toml").is_file()
 
 
+def _resolved_url() -> str:
+    return config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
+
+
 def _check_env() -> str | None:
-    if not os.environ.get("MANYAGENT_BANK_URL"):
-        return "MANYAGENT_BANK_URL is unset (point it at the Supabase PostgREST URL)"
-    if not any(os.environ.get(k) for k in _BANK_KEYS):
+    """Resolve through config (env > manyagent.env > baked default) — the hosted
+    Bank URL + demo-derived keys are code defaults now, so a fresh install
+    passes; this check catches values EXPLICITLY emptied or overridden to
+    nothing, not merely unset ones."""
+    if not _resolved_url():
+        return "MANYAGENT_BANK_URL is empty (point it at the Supabase PostgREST URL)"
+    keys = (
+        config.resolve("MANYAGENT_BANK_ANON_KEY", config.MANYAGENT_BANK_ANON_KEY),
+        config.resolve("MANYAGENT_BANK_TRUSTED_KEY", config.MANYAGENT_BANK_TRUSTED_KEY),
+        os.environ.get("MANYAGENT_BANK_ADMIN_KEY", ""),
+        os.environ.get("MANYAGENT_BANK_CURATOR_KEY", ""),
+    )
+    if not any(keys):
         return f"no Bank key set (need at least one of {', '.join(_BANK_KEYS)})"
     return None
 
@@ -122,7 +138,8 @@ def run_preflight() -> int:
         fail("env", reason)
         return 1
 
-    reason = _check_bank_reachable(os.environ["MANYAGENT_BANK_URL"])
+    url = _resolved_url()
+    reason = _check_bank_reachable(url)
     if reason is not None:
         fail("bank", reason)
         return 1
@@ -138,13 +155,7 @@ def run_preflight() -> int:
     else:
         inventory = "migrations check skipped (installed package, no repo checkout)"
     print(ui.render(Text.assemble(("[OK] ", "bold green"), f"env + Bank reachable + {inventory}.")))
-    print(
-        ui.render(
-            Text.assemble(
-                ("[INFO] ", "bold cyan"), f"schema diff: {_live_schema_diff(os.environ['MANYAGENT_BANK_URL'])}"
-            )
-        )
-    )
+    print(ui.render(Text.assemble(("[INFO] ", "bold cyan"), f"schema diff: {_live_schema_diff(url)}")))
     return 0
 
 

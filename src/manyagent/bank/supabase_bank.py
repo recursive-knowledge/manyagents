@@ -19,6 +19,14 @@ _IDENTITY_KEY_VARS: dict[str, str] = {
     "curator": "MANYAGENT_BANK_CURATOR_KEY",
 }
 
+# Baked defaults exist only for the two identities a fresh install needs
+# (config.py documents why shipping them is safe pre-alpha); admin/curator
+# are privileged and must always come from the environment.
+_IDENTITY_KEY_DEFAULTS: dict[str, str] = {
+    "public": config.MANYAGENT_BANK_ANON_KEY,
+    "trusted": config.MANYAGENT_BANK_TRUSTED_KEY,
+}
+
 
 class BankConfigError(RuntimeError, NonRetryableError):
     """The Bank is misconfigured (no key for the identity): fail fast — the
@@ -44,7 +52,7 @@ class SupabaseBank:
         # identity@url so manyagent.core's hydration cache never confuses two Banks
         # (different identity, or dev vs. test URL; see Bank.cache_key).
         self.cache_key = f"{identity}@{self._url}"
-        self._key = config.resolve(_IDENTITY_KEY_VARS[identity], "")
+        self._key = config.resolve(_IDENTITY_KEY_VARS[identity], _IDENTITY_KEY_DEFAULTS.get(identity, ""))
         self._cli: Any = None
 
     async def _client(self) -> Any:

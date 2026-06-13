@@ -73,11 +73,13 @@ def test_cli_help_exits_zero() -> None:
 
 
 def test_preflight_is_real_in_m8(monkeypatch: pytest.MonkeyPatch) -> None:
-    """M8 replaced the M0 stub with real checks: a missing Bank URL now fails
-    fast (nonzero). Full coverage lives in tests/test_preflight.py."""
+    """M8 replaced the M0 stub with real checks: an explicitly-empty Bank URL
+    fails fast (nonzero) at the env check, before any network. A merely-unset
+    URL now PASSES env via the baked hosted default — covered in
+    tests/test_preflight.py."""
     from manyagent.preflight import run_preflight
 
-    monkeypatch.delenv("MANYAGENT_BANK_URL", raising=False)
+    monkeypatch.setenv("MANYAGENT_BANK_URL", "")
     assert run_preflight() == 1
 
 

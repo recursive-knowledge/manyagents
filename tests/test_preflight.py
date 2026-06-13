@@ -16,16 +16,26 @@ import respx
 from manyagent import preflight
 
 
-def test_env_missing_url_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_unset_passes_via_baked_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fresh install, nothing configured anywhere: the hosted-Bank URL and the
+    derived demo keys are code defaults, so the env check passes — the
+    `uv tool install manyagent` zero-config promise."""
     monkeypatch.delenv("MANYAGENT_BANK_URL", raising=False)
+    for k in preflight._BANK_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    assert preflight._check_env() is None
+
+
+def test_env_explicitly_empty_url_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANYAGENT_BANK_URL", "")
     assert preflight._check_env() is not None
     assert preflight.run_preflight() == 1
 
 
-def test_env_missing_all_keys_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_all_keys_explicitly_empty_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MANYAGENT_BANK_URL", "http://127.0.0.1:54421")
     for k in preflight._BANK_KEYS:
-        monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv(k, "")
     reason = preflight._check_env()
     assert reason is not None and "Bank key" in reason
 
