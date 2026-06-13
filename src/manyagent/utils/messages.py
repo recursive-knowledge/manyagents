@@ -13,6 +13,7 @@ Conventions:
   helper appends the ``[Enter=yes / n=no]`` suffix itself.
 - ``*_NOTE``   — a one-line informational status (no gate).
 - ``*_HINT``   — key-legend text shown alongside an interactive control.
+- ``*_PROMPT`` — the label of a free-text input prompt.
 - Templates use named ``{fields}``; call sites pass keywords, so a reworded
   message can reorder fields freely.
 - Plain text only: rich styling stays at the call site, so editing a message
@@ -74,11 +75,31 @@ RATING_HINT = "(Enter=accept, 'skip'=unrated):"
 RATING_UNRECOGNIZED = "  (unrecognized — leaving unrated)"
 
 # --------------------------------------------------------------------------- #
+# `manyagent init` — first-run setup (writes the user-level env file) + the
+# CLI-boundary failure hint (`cli._guard`)
+# --------------------------------------------------------------------------- #
+
+GUARD_BANK_NOTE = (
+    "`ma init` writes {env_path} (loaded from any directory); `ma preflight` "
+    "checks env/Bank/keys. A repo checkout can instead set "
+    "MANYAGENT_BANK_TRUSTED_KEY in ./manyagent.env or start a local Bank "
+    "with `make bank-up`. Set MANYAGENT_DEBUG=1 for a full traceback."
+)
+INIT_URL_PROMPT = "Bank URL"
+INIT_KEY_PROMPT = "MANYAGENT_BANK_TRUSTED_KEY"
+INIT_KEEP_HINT = "[Enter=keep current]:"
+INIT_SKIP_HINT = "[Enter=skip — no key yet]:"
+INIT_DEFAULT_HINT = "[{default}]:"
+INIT_OVERWRITE_OFFER = "{path} exists — overwrite it with the new values?"
+INIT_WRITTEN_NOTE = "wrote {path} — run `ma preflight` to validate it"
+INIT_NO_KEY_NOTE = "no trusted key set — Bank writes will fail until MANYAGENT_BANK_TRUSTED_KEY is added to {path}"
+
+# --------------------------------------------------------------------------- #
 # `manyagent start` — session-start offers and notes
 # --------------------------------------------------------------------------- #
 
 START_CONTINUE_GOAL_OFFER = "your last session worked on /{goal} — continue that goal here?"
-START_DEFAULT_GOAL_NOTE = "no goal given — filed under /{goal} (next time: `manyagent start <goal>`)"
+START_DEFAULT_GOAL_NOTE = "no goal given — filed under /{goal} (next time: `ma start <goal>`)"
 START_GOAL_KNOWLEDGE_NOTE = "/{goal} already has {bundles} bundle{bundles_s} · {posts} post{posts_s}"
 START_INJECT_OFFER = "inject latest bundle {packet_id} into this session?"
 START_INJECTED_NOTE = "injected {packet_id} — delivered to the agent's context at harness start (manyagent._hook)"

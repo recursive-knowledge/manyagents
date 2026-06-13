@@ -7,6 +7,8 @@ default (no admin key ⇒ skipped, no httpx) path is asserted offline.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 import respx
@@ -52,6 +54,31 @@ def test_migrations_present() -> None:
     assert preflight._check_migrations() is None
 
 
+def test_migrations_skipped_off_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Installed wheel (`uv tool install manyagent`): no repo checkout, no
+    ``supabase/`` tree — the inventory check skips instead of failing (it used
+    to hard-fail with 'migrations dir missing: <venv>/…', making the error
+    hint's `python -m manyagent.preflight` advice a dead end off-repo)."""
+    monkeypatch.setattr(preflight, "_REPO_ROOT", tmp_path)  # no pyproject.toml here
+    monkeypatch.setattr(preflight, "_MIGRATIONS_DIR", tmp_path / "supabase" / "migrations")
+    assert preflight._check_migrations() is None
+    # A source checkout (pyproject.toml present) with no migrations still fails.
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    reason = preflight._check_migrations()
+    assert reason is not None and "migrations dir missing" in reason
+
+
+@respx.mock
+def test_run_preflight_green_off_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MANYAGENT_BANK_URL", "http://127.0.0.1:54421")
+    monkeypatch.setenv("MANYAGENT_BANK_ANON_KEY", "anon-key")
+    monkeypatch.delenv("MANYAGENT_BANK_ADMIN_KEY", raising=False)
+    monkeypatch.setattr(preflight, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(preflight, "_MIGRATIONS_DIR", tmp_path / "supabase" / "migrations")
+    respx.get("http://127.0.0.1:54421/rest/v1/").mock(return_value=httpx.Response(200))
+    assert preflight.run_preflight() == 0
+
+
 @respx.mock
 def test_run_preflight_green_when_env_and_bank_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MANYAGENT_BANK_URL", "http://127.0.0.1:54421")
@@ -67,6 +94,17 @@ def test_live_schema_diff_skips_without_admin_key(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("MANYAGENT_BANK_ADMIN_KEY", raising=False)
     out = preflight._live_schema_diff("http://127.0.0.1:54421")
     assert out.startswith("skipped (no MANYAGENT_BANK_ADMIN_KEY")
+
+
+def test_live_schema_diff_skips_off_repo_even_with_admin_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Off-repo there is no on-disk inventory to diff against — with an admin
+    key set, every applied migration would otherwise read as spurious DRIFT
+    on a healthy Bank. Skipped before any httpx call (none is mocked here)."""
+    monkeypatch.setenv("MANYAGENT_BANK_ADMIN_KEY", "admin-key")
+    monkeypatch.setattr(preflight, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(preflight, "_MIGRATIONS_DIR", tmp_path / "supabase" / "migrations")
+    out = preflight._live_schema_diff("http://127.0.0.1:54421")
+    assert out.startswith("skipped (installed package")
 
 
 @pytest.mark.integration

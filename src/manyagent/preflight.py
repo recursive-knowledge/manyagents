@@ -6,7 +6,9 @@ Three checks, fail-fast with a specific message:
   2. Bank reachability — an HTTP GET to the PostgREST root (any 2xx/4xx means
      the service answered; 5xx / connect-timeout means down).
   3. migration inventory — the ``supabase/migrations/*.sql`` files manyagent.bank
-     expects are present on disk.
+     expects are present on disk. **Source checkouts only**: an installed
+     wheel (``uv tool install manyagent``) ships no ``supabase/`` tree and its
+     user has nothing to fix, so off-repo this check is skipped, not failed.
 
 The live ``schema_migrations`` diff (what the DB has actually applied vs. the
 file list) is the M10 addition: a **best-effort, advisory** check gated on the
@@ -28,7 +30,15 @@ _BANK_KEYS = (
     "MANYAGENT_BANK_ADMIN_KEY",
     "MANYAGENT_BANK_CURATOR_KEY",
 )
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
+# In the src layout ``<root>/src/manyagent/preflight.py`` this is the repo root;
+# in an installed wheel it lands inside the venv (e.g. ``<venv>/lib/pythonX.Y``),
+# where no ``pyproject.toml`` exists — that absence is the off-repo marker.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MIGRATIONS_DIR = _REPO_ROOT / "supabase" / "migrations"
+
+
+def _is_source_checkout() -> bool:
+    return (_REPO_ROOT / "pyproject.toml").is_file()
 
 
 def _check_env() -> str | None:
@@ -52,6 +62,8 @@ def _check_bank_reachable(url: str) -> str | None:
 
 
 def _check_migrations() -> str | None:
+    if not _is_source_checkout():
+        return None  # installed wheel: no supabase/ tree ships, nothing to fix
     if not _MIGRATIONS_DIR.is_dir():
         return f"migrations dir missing: {_MIGRATIONS_DIR}"
     files = sorted(p.name for p in _MIGRATIONS_DIR.glob("*.sql"))
@@ -69,6 +81,10 @@ def _live_schema_diff(url: str) -> str:
     admin = os.environ.get("MANYAGENT_BANK_ADMIN_KEY")
     if not admin:
         return "skipped (no MANYAGENT_BANK_ADMIN_KEY; schema_migrations needs the privileged role)"
+    if not _is_source_checkout():
+        # No on-disk inventory to diff against — every applied migration would
+        # read as spurious DRIFT on a perfectly healthy Bank.
+        return "skipped (installed package: no migrations inventory on disk)"
     files = {p.stem for p in _MIGRATIONS_DIR.glob("*.sql")}
     try:
         import httpx
@@ -116,8 +132,12 @@ def run_preflight() -> int:
         fail("migrations", reason)
         return 1
 
-    n = len(sorted(_MIGRATIONS_DIR.glob("*.sql")))
-    print(ui.render(Text.assemble(("[OK] ", "bold green"), f"env + Bank reachable + {n} migration file(s) present.")))
+    if _is_source_checkout():
+        n = len(sorted(_MIGRATIONS_DIR.glob("*.sql")))
+        inventory = f"{n} migration file(s) present"
+    else:
+        inventory = "migrations check skipped (installed package, no repo checkout)"
+    print(ui.render(Text.assemble(("[OK] ", "bold green"), f"env + Bank reachable + {inventory}.")))
     print(
         ui.render(
             Text.assemble(

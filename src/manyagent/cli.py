@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -43,7 +44,7 @@ from manyagent.utils import config, messages, sid, ui
 # subcommands — they live exclusively as in-agent skills + MCP tools
 # (manyagent._mcp + manyagent.adapters.skills.*). M11.4 ripped the bash surface;
 # scripts/programmatic callers use ``manyagent._handlers.do_*`` directly.
-_SUBCOMMANDS = {"start", "register", "end", "uninstall", "status"}
+_SUBCOMMANDS = {"init", "preflight", "start", "register", "end", "uninstall", "status"}
 
 
 def preview_tokens(text: str, *, head: int, tail: int) -> str:
@@ -87,7 +88,7 @@ def _resolve_sid(explicit: str | None) -> str:
     """``--session`` wins, else ``~/.manyagent/active``; error if neither."""
     s = explicit or _read_active()
     if not s:
-        raise SystemExit("no active session: run `manyagent start` or pass --session <id>")
+        raise SystemExit("no active session: run `ma start` or pass --session <id>")
     return s
 
 
@@ -256,6 +257,164 @@ def _agent_url(agent_id: str) -> str:
     matching the ``manyagent.web`` route convention (full id = ``{session}/{tail}``)."""
     session_id, _, tail = agent_id.partition("/")
     return f"{_session_url(session_id)}/a/{tail}"
+
+
+def _user_env_path() -> Path:
+    """``$MANYAGENT_HOME/env`` — the ONE config file the package loads from any
+    working directory (``manyagent.setup_environment``). The onboarding target for
+    installed-wheel users (``uv tool install manyagent``), who have no repo
+    checkout, no ``./manyagent.env``, and no ``make bank-up``."""
+    return _manyagent_home() / "env"
+
+
+def _read_secret(prompt: str, *, input_fn: In) -> str:
+    """Echo-free read on a real terminal — a typed/pasted Bank key must not land
+    in scrollback or session recordings. Scripted callers (tests, Simulation)
+    pass their own ``input_fn`` and get the plain read (the ``ask_commit``
+    real-terminal-vs-seam branch pattern)."""
+    if input_fn is input and sys.stdin.isatty() and sys.stdout.isatty():
+        import getpass
+
+        return getpass.getpass(prompt)
+    return input_fn(prompt)
+
+
+# Unquoted-safe charset for an env-file value; anything else is double-quoted.
+_ENV_SAFE = re.compile(r"[A-Za-z0-9_.\-/:@+~]*")
+
+
+def _env_line(name: str, value: str) -> str:
+    """One ``NAME=value`` line that survives the dotenv format. Values outside
+    the safe charset (spaces, ``#``, quotes, ``=``…) are double-quoted with
+    ``\\``/``"`` escaped; a newline can't be represented losslessly, so it is
+    refused outright. ``_do_init`` parse-back-verifies the whole file after
+    rendering, so anything this misses fails loudly, never silently."""
+    if "\n" in value or "\r" in value:
+        raise SystemExit(f"{name} value contains a newline — pass a single-line value")
+    if _ENV_SAFE.fullmatch(value):
+        return f"{name}={value}\n"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{name}="{escaped}"\n'
+
+
+def _mask_secrets(env_text: str) -> str:
+    """The overwrite gate's ``d`` detail shows WHAT would be replaced, never the
+    stored credentials themselves (manyagent.capture.scrub's rule: matched secret
+    text reaches no output surface)."""
+    masked = []
+    for line in env_text.splitlines():
+        name, sep, value = line.partition("=")
+        secretish = any(t in name.upper() for t in ("KEY", "SECRET", "TOKEN"))
+        if sep and value and secretish and not line.lstrip().startswith("#"):
+            masked.append(f"{name}=<redacted>")
+        else:
+            masked.append(line)
+    return "\n".join(masked)
+
+
+async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``manyagent init`` — write the user-level env file. Every value comes from
+    its flag, else the currently-resolved config (so a re-run never silently
+    drops a stored anon key / CF Access pair); the URL and trusted key
+    additionally prompt interactively. Only non-empty values are written; the
+    rendered file is parse-back-verified through dotenv before it lands.
+    Overwriting an existing file sits behind one allowance gate (``d`` shows
+    the file it would replace, credentials masked; deny-by-default under
+    ``MANYAGENT_NONINTERACTIVE``, Open-Q §B5)."""
+    noninteractive = _noninteractive()
+    url = args.bank_url
+    if url is None:
+        default_url = config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
+        if noninteractive:
+            url = default_url
+        else:
+            prompt = (
+                ui.render(
+                    Text.assemble(
+                        (messages.INIT_URL_PROMPT + " ", "bold"),
+                        (messages.INIT_DEFAULT_HINT.format(default=default_url), "dim"),
+                    )
+                )
+                + " "
+            )
+            url = io[0](prompt).strip() or default_url
+    key = args.trusted_key
+    if key is None:
+        current = config.resolve("MANYAGENT_BANK_TRUSTED_KEY", "")
+        if noninteractive:
+            key = current
+        else:
+            hint = messages.INIT_KEEP_HINT if current else messages.INIT_SKIP_HINT
+            prompt = ui.render(Text.assemble((messages.INIT_KEY_PROMPT + " ", "bold"), (hint, "dim"))) + " "
+            # A pasted `MANYAGENT_BANK_TRUSTED_KEY=eyJ…` assignment would round-trip
+            # as the wrong key (the `NAME=` prefix becomes part of the value).
+            raw = _read_secret(prompt, input_fn=io[0]).strip().removeprefix(messages.INIT_KEY_PROMPT + "=")
+            key = raw or current
+    pairs = (
+        ("MANYAGENT_BANK_URL", url.strip()),
+        ("MANYAGENT_BANK_TRUSTED_KEY", key.strip()),
+        # Flag wins, else carry forward what's already resolvable — a key
+        # rotation via `ma init` must not silently discard the stored anon
+        # key or the CF Access pair the db tunnel needs.
+        ("MANYAGENT_BANK_ANON_KEY", (args.anon_key or config.resolve("MANYAGENT_BANK_ANON_KEY", "")).strip()),
+        (
+            "MANYAGENT_BANK_CF_ACCESS_CLIENT_ID",
+            (args.cf_access_client_id or config.resolve("MANYAGENT_BANK_CF_ACCESS_CLIENT_ID", "")).strip(),
+        ),
+        (
+            "MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET",
+            (args.cf_access_client_secret or config.resolve("MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET", "")).strip(),
+        ),
+    )
+    content = (
+        "# Written by `ma init` (manyagent.cli). Loaded at import from ANY working\n"
+        "# directory; live env vars and ./manyagent.env win on overlap.\n"
+        + "".join(_env_line(name, value) for name, value in pairs if value)
+    )
+    # Parse-back verification: what dotenv will read tomorrow must be what the
+    # user gave today (an unparseable line silently DROPS its key on load).
+    import io as _io
+
+    import dotenv
+
+    parsed = dotenv.dotenv_values(stream=_io.StringIO(content))
+    for name, value in pairs:
+        if value and parsed.get(name) != value:
+            raise SystemExit(f"{name} value does not survive the env-file format — remove special characters")
+    path = _user_env_path()
+    shown = ui.tilde(path)
+    if path.is_file() and not ask_allow(
+        messages.INIT_OVERWRITE_OFFER.format(path=shown),
+        input_fn=io[0],
+        output_fn=io[1],
+        noninteractive=noninteractive,
+        detail=_mask_secrets(path.read_text(encoding="utf-8")),
+    ):
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.chmod(0o600)  # tighten BEFORE the new key is written into it
+    # O_CREAT with 0o600 — never a umask-default window with the key on disk
+    # (same pattern as the tee/timing fds below).
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, content.encode("utf-8"))
+    finally:
+        os.close(fd)
+    io[1](ui.render(Text(messages.INIT_WRITTEN_NOTE.format(path=shown), style="green")))
+    if not key:
+        io[1](ui.render(Text(messages.INIT_NO_KEY_NOTE.format(path=shown), style="yellow")))
+    return 0
+
+
+async def _do_preflight(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``manyagent preflight`` — the env/Bank/keys validator, reachable from the
+    installed binary. ``python -m manyagent.preflight`` still works in a checkout,
+    but a `uv tool install` user has no usable ``python`` for the module form —
+    the hints must name a command that copy-pastes for everyone."""
+    from manyagent.preflight import run_preflight
+
+    return run_preflight()
 
 
 async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
@@ -1069,12 +1228,14 @@ def _noninteractive() -> bool:
 
 _EPILOG = """\
 session lifecycle (the only verbs on this CLI):
-  manyagent start [goal] [--id XXXX-XXXX]  start/join a session (goal defaults to 'misc'; writes ~/.manyagent/active)
-  manyagent register <name>             register an adapter as an Agent
-  manyagent <name> [args...]            install in-agent skills + run the wrapped agent under a PTY
-  manyagent end [--session id]          end the session (optional ★ prompt)
-  manyagent status                      list installed in-agent skill bundles
-  manyagent uninstall <adapter>         reverse the install via the saved manifest
+  ma init                          first-run setup: write ~/.manyagent/env (Bank URL + key; loaded from any directory)
+  ma preflight                     validate env / Bank reachability / keys
+  ma start [goal] [--id XXXX-XXXX] start/join a session (goal defaults to 'misc'; writes ~/.manyagent/active)
+  ma register <name>               register an adapter as an Agent
+  ma <name> [args...]              install in-agent skills + run the wrapped agent under a PTY
+  ma end [--session id]            end the session (optional ★ prompt)
+  ma status                        list installed in-agent skill bundles
+  ma uninstall <adapter>           reverse the install via the saved manifest
 
 knowledge-loop verbs (typed INSIDE the wrapped agent, not on this CLI):
   /self-distill                   (Claude Code, Gemini CLI)
@@ -1083,7 +1244,7 @@ knowledge-loop verbs (typed INSIDE the wrapped agent, not on this CLI):
   /inject [@packet]
   $self-distill, $discuss, ...    (Codex CLI — `/` is reserved for built-ins)
 
-Skills + MCP server install on `manyagent <name>`; the human surface stays one tap
+Skills + MCP server install on `ma <name>`; the human surface stays one tap
 (Design Principles §11): the agent generates the structured post, proposes
 the ★, and your in-agent permission prompt is the accept gate (C1).
 """
@@ -1098,6 +1259,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version", version=f"ma {__version__}")
     sub = p.add_subparsers(dest="verb")
+
+    # First-run setup for installed-wheel users: write the user-level env file.
+    i = sub.add_parser("init")
+    i.add_argument("--bank-url")
+    i.add_argument("--trusted-key")
+    i.add_argument("--anon-key")
+    i.add_argument("--cf-access-client-id")
+    i.add_argument("--cf-access-client-secret")
+
+    sub.add_parser("preflight")
 
     s = sub.add_parser("start")
     s.add_argument("goal", nargs="?")
@@ -1124,6 +1295,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 _DISPATCH: dict[str, Callable[..., Coroutine[Any, Any, int]]] = {
+    "init": _do_init,
+    "preflight": _do_preflight,
     "start": _do_start,
     "register": _do_register,
     "uninstall": _do_uninstall,
@@ -1155,9 +1328,7 @@ def _guard(coro: Coroutine[Any, Any, int]) -> int:
             raise
         print(f"manyagent: {type(exc).__name__}: {exc}", file=sys.stderr)
         print(
-            "manyagent: run `python -m manyagent.preflight` to check env/Bank/keys — set "
-            "MANYAGENT_BANK_TRUSTED_KEY in manyagent.env, or start a local Bank with "
-            "`make bank-up`. Set MANYAGENT_DEBUG=1 for a full traceback.",
+            f"manyagent: {messages.GUARD_BANK_NOTE.format(env_path=ui.tilde(_user_env_path()))}",
             file=sys.stderr,
         )
         return 1

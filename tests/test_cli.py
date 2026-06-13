@@ -125,10 +125,13 @@ def test_ask_yn_deny_by_default_when_noninteractive() -> None:
 
 
 def test_argparse_lifecycle_verbs_only() -> None:
-    """M11.4: only the 5 session-lifecycle verbs are CLI subcommands now.
+    """M11.4: only the session-lifecycle verbs are CLI subcommands now.
     self-distill / discuss / cross-distill / inject are no longer here —
     they're installed as in-agent skills + MCP tools by ``manyagent <name>``.
     Programmatic callers use ``manyagent._handlers.do_*`` directly."""
+    a = _args("init", "--bank-url", "https://db.example", "--trusted-key", "K")
+    assert (a.verb, a.bank_url, a.trusted_key) == ("init", "https://db.example", "K")
+    assert _args("preflight").verb == "preflight"
     a = _args("start", "speed", "--id", "S1")
     assert (a.verb, a.id, a.goal) == ("start", "S1", "speed")
     a = _args("register", "claude", "--session", "S2")
@@ -165,7 +168,7 @@ def test_guard_translates_bank_error_no_traceback(
     assert rc == 1
     err = capsys.readouterr().err
     assert "no key" in err  # the real cause is shown
-    assert "python -m manyagent.preflight" in err and "MANYAGENT_DEBUG=1" in err  # actionable
+    assert "ma init" in err and "ma preflight" in err and "MANYAGENT_DEBUG=1" in err  # actionable
 
 
 def test_guard_debug_env_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,7 +215,7 @@ async def test_main_missing_bank_key_returns_1_not_traceback(
     monkeypatch.setattr(cli, "get_bank", lambda *a, **k: _NoKeyBank())
     rc = cli.main(["start", "demo", "--id", "DEMO-0001"])
     assert rc == 1  # not an unhandled traceback
-    assert "python -m manyagent.preflight" in capsys.readouterr().err
+    assert "ma preflight" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -235,6 +238,152 @@ def test_sigint_two_stage(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(_Exit):
         cli._sigint_handler(2, None)
     assert forces == [False, True]  # 1st: SIGTERM, 2nd: SIGKILL+force-exit
+
+
+# --------------------------------------------------------------------------- #
+# init: first-run setup writes the user-level env file
+# --------------------------------------------------------------------------- #
+
+
+def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the carry-forward seam deterministic: a dev machine's manyagent.env
+    (loaded at import) may have populated these in the process env."""
+    for var in (
+        "MANYAGENT_BANK_ANON_KEY",
+        "MANYAGENT_BANK_CF_ACCESS_CLIENT_ID",
+        "MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
+    exactly the non-empty values, 0600, no prompts (Scripted is empty)."""
+    _clear_bank_env(monkeypatch)
+    s = Scripted()
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", "JWT"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0
+    p = cli._user_env_path()
+    text = p.read_text(encoding="utf-8")
+    assert "MANYAGENT_BANK_URL=https://db.example\n" in text
+    assert "MANYAGENT_BANK_TRUSTED_KEY=JWT\n" in text
+    assert "ANON" not in text and "CF_ACCESS" not in text  # empty values not written
+    if sys.platform != "win32":
+        assert (p.stat().st_mode & 0o777) == 0o600  # the key is a credential
+    assert any("wrote" in line for line in s.out)
+    # The written file is what `manyagent.setup_environment` loads from any cwd.
+
+
+async def test_init_carries_forward_resolved_anon_and_cf(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-run (e.g. rotating the trusted key) must not silently drop the
+    stored anon key / CF Access pair: flags win, else the resolved config is
+    carried forward into the rewritten file."""
+    monkeypatch.setenv("MANYAGENT_BANK_ANON_KEY", "ANON-1")
+    monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_ID", "CF-ID")
+    monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET", "CF-SECRET")
+    s = Scripted()
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K2"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0
+    text = cli._user_env_path().read_text(encoding="utf-8")
+    assert "MANYAGENT_BANK_ANON_KEY=ANON-1\n" in text
+    assert "MANYAGENT_BANK_CF_ACCESS_CLIENT_ID=CF-ID\n" in text
+    assert "MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET=CF-SECRET\n" in text
+
+
+async def test_init_values_round_trip_through_dotenv(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Values outside the unquoted-safe charset (spaces, `#`, quotes, a pasted
+    `NAME=` prefix) are quoted/escaped so dotenv reads back EXACTLY what was
+    given — the old verbatim writer silently truncated at ` # ` and dropped
+    unparseable keys on load."""
+    import dotenv
+
+    _clear_bank_env(monkeypatch)
+    tricky = 'pa ss"word # not-a-comment'
+    s = Scripted()
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", tricky), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0
+    parsed = dotenv.dotenv_values(cli._user_env_path())
+    assert parsed["MANYAGENT_BANK_TRUSTED_KEY"] == tricky
+    # A newline cannot be represented losslessly — refused, nothing written.
+    cli._user_env_path().unlink()
+    with pytest.raises(SystemExit, match="newline"):
+        await cli._do_init(
+            _args("init", "--bank-url", "https://db.example", "--trusted-key", "a\nb"), bank=fake_bank, io=s.io()
+        )
+    assert not cli._user_env_path().exists()
+
+
+async def test_init_key_prompt_strips_pasted_assignment(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pasting the full `MANYAGENT_BANK_TRUSTED_KEY=eyJ…` line at the key prompt
+    must store the key, not a `NAME=`-prefixed wrong value."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
+    s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT")  # URL prompt, key prompt
+    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert "MANYAGENT_BANK_TRUSTED_KEY=eyJWT\n" in cli._user_env_path().read_text(encoding="utf-8")
+
+
+async def test_init_overwrite_detail_masks_credentials(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`d` at the overwrite gate shows WHAT would be replaced with every
+    KEY/SECRET value redacted — the inspect affordance must not leak the
+    stored credential into scrollback."""
+    _clear_bank_env(monkeypatch)
+    p = cli._user_env_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("MANYAGENT_BANK_URL=http://old.example\nMANYAGENT_BANK_TRUSTED_KEY=SUPERSECRETJWT\n", encoding="utf-8")
+    s = Scripted("d", "n")  # inspect, then decline
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 1
+    shown = "\n".join(s.out)
+    assert "http://old.example" in shown  # non-secret values stay legible
+    assert "<redacted>" in shown and "SUPERSECRETJWT" not in shown
+
+
+async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank) -> None:
+    """Interactive path: Enter at both prompts keeps the resolved defaults; an
+    empty key gets the yellow still-needed note."""
+    s = Scripted("", "")  # URL prompt, key prompt
+    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    text = cli._user_env_path().read_text(encoding="utf-8")
+    assert f"MANYAGENT_BANK_URL={config.resolve('MANYAGENT_BANK_URL', config.MANYAGENT_BANK_URL)}\n" in text
+    if not config.resolve("MANYAGENT_BANK_TRUSTED_KEY", ""):
+        assert any("MANYAGENT_BANK_TRUSTED_KEY" in line for line in s.out)  # the no-key warning
+
+
+async def test_init_overwrite_gate_declined_keeps_file(fake_bank: FakeBank) -> None:
+    p = cli._user_env_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("MANYAGENT_BANK_URL=http://keep.me\n", encoding="utf-8")
+    s = Scripted("n")  # the single overwrite allowance gate
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 1
+    assert p.read_text(encoding="utf-8") == "MANYAGENT_BANK_URL=http://keep.me\n"
+
+
+async def test_init_noninteractive_never_overwrites(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deny-by-default (Open-Q §B5): an unattended run never clobbers an
+    existing env file; a missing one is written without prompting."""
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    s = Scripted()  # zero prompts allowed — Scripted raises on any pop
+    rc = await cli._do_init(
+        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0 and cli._user_env_path().is_file()
+    rc = await cli._do_init(_args("init", "--bank-url", "https://other.example"), bank=fake_bank, io=s.io())
+    assert rc == 1  # overwrite denied
+    assert "db.example" in cli._user_env_path().read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
