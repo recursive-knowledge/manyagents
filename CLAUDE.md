@@ -8,7 +8,7 @@ design docs in `docs/design/` are the *why*; this file is the *how*.
 `manyagent` wraps installed coding-agent CLIs, captures traces into a Supabase Bank,
 curates cross-session knowledge (swarms-derived discipline), and serves a
 read-only viewer. Distribution name `manyagent`, import name `manyagent`, single
-console script `manyagent = "manyagent.cli:main"`. **Identity is fixed in `pyproject.toml`
+console script `ma = "manyagent.cli:main"`. **Identity is fixed in `pyproject.toml`
 + `src/manyagent/__init__.py` and never re-derived as a string elsewhere.**
 
 ## Commands

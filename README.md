@@ -52,21 +52,23 @@ cleanly with **`manyagent uninstall <adapter>`** (runs the agent's official
 unregister CLI first, then removes files; created files are kept if you
 edited them since install — sha256 mismatch).
 
-## The bash CLI surface — 5 verbs, that's it
+## The bash CLI surface — 7 verbs, that's it
 
 ```bash
-manyagent start [id] [--goal "..."]      # start/join a session (writes ~/.manyagent/active)
-manyagent register <name>                # register an adapter as an Agent (claude|codex|gemini)
-manyagent <name> [args...]               # install in-agent skills + spawn agent under a PTY
-                                   #   (PTY inherits your terminal size + forwards SIGWINCH)
-manyagent end [--session id]             # end the session (optional ★ on the last reflection)
-manyagent status                         # list installed in-agent skills + every owned path
-manyagent uninstall <adapter>            # reverse the install via the saved manifest
+ma init                          # first-run setup: write ~/.manyagent/env (Bank URL + key)
+ma preflight                     # validate env / Bank reachability / keys
+ma start [goal] [--id XXXX-XXXX] # start/join a session (writes ~/.manyagent/active)
+ma register <name>               # register an adapter as an Agent (claude|codex|gemini)
+ma <name> [args...]              # install in-agent skills + spawn agent under a PTY
+                                 #   (PTY inherits your terminal size + forwards SIGWINCH)
+ma end [--session id]            # end the session (optional ★ on the last reflection)
+ma status                        # list installed in-agent skills + every owned path
+ma uninstall <adapter>           # reverse the install via the saved manifest
 ```
 
-`python -m manyagent.preflight` validates env / Bank / keys before real work;
-`make web-up` serves the read-only viewer. The four knowledge-loop verbs
-live **inside the agent**:
+`ma preflight` (or `python -m manyagent.preflight` in a checkout) validates
+env / Bank / keys before real work; `make web-up` serves the read-only
+viewer. The four knowledge-loop verbs live **inside the agent**:
 
 ```text
 /self-distill   /discuss [@packet] [stance]   /cross-distill   /inject [@packet]
@@ -223,7 +225,10 @@ python -m manyagent.preflight   # validate env / Bank / keys before real work
 
 Copy `manyagent.env.example` → `manyagent.env` (gitignored) and uncomment what you need
 (`MANYAGENT_BANK_URL`, `MANYAGENT_BANK_TRUSTED_KEY`, `MANYAGENT_CURATOR_MODE`, `MANYAGENT_INSTALL_SKILLS`,
-…). Precedence: **CLI flag > process env > `manyagent.env` > built-in default**.
+…). Installed without a checkout (`uv tool install manyagent`)? Run **`ma init`** —
+it writes the user-level `~/.manyagent/env`, which is loaded from any working
+directory. Precedence: **CLI flag > process env > `./manyagent.env` >
+`~/.manyagent/env` > built-in default**.
 Running `manyagent` with no Bank configured prints a one-line actionable hint
 pointing at `manyagent.preflight`, not a traceback (`MANYAGENT_DEBUG=1` to re-raise).
 
