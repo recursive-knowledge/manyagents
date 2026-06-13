@@ -18,7 +18,7 @@ import pytest
 
 from manyagent import cli
 from manyagent.bank import FakeBank
-from manyagent.utils import config
+from manyagent.utils import config, messages
 
 
 @pytest.fixture(autouse=True)
@@ -351,16 +351,21 @@ async def test_init_overwrite_detail_masks_credentials(fake_bank: FakeBank, monk
     assert "<redacted>" in shown and "SUPERSECRETJWT" not in shown
 
 
-async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank) -> None:
-    """Interactive path: Enter at both prompts keeps the resolved defaults; an
-    empty key gets the yellow still-needed note."""
+async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Interactive path: Enter at both prompts keeps the resolved defaults; with
+    no key resolvable, the file omits the trusted key (the derived demo default
+    lives in code, never written) and the no-key note fires. Env is cleared so
+    the branch is deterministic in CI and a configured dev shell alike."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
     s = Scripted("", "")  # URL prompt, key prompt
     rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
     assert f"MANYAGENT_BANK_URL={config.resolve('MANYAGENT_BANK_URL', config.MANYAGENT_BANK_URL)}\n" in text
-    if not config.resolve("MANYAGENT_BANK_TRUSTED_KEY", ""):
-        assert any("MANYAGENT_BANK_TRUSTED_KEY" in line for line in s.out)  # the no-key warning
+    assert "MANYAGENT_BANK_TRUSTED_KEY" not in text  # empty key never written
+    no_key_prefix = messages.INIT_NO_KEY_NOTE.split("{path}")[0]
+    assert any(no_key_prefix in line for line in s.out)  # the no-key note fired
 
 
 async def test_init_applies_published_connection(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
