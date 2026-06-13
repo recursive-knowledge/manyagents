@@ -532,4 +532,19 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     async def healthz() -> JSONResponse:
         return JSONResponse({"ok": True, "identity": identity})
 
+    @app.get("/.well-known/manyagent.json")
+    async def well_known() -> JSONResponse:
+        """The deployment's CURRENT public Bank connection, fetched/cached by
+        `ma init` so the hosted stack can rotate keys or move without a
+        package release. Serves only the MANYAGENT_WEB_PUBLISHED_* tunables —
+        never this host's own resolved MANYAGENT_BANK_* (which may hold a
+        privileged key the public must not see)."""
+        return JSONResponse({
+            "bank_url": config.resolve("MANYAGENT_WEB_PUBLISHED_BANK_URL", config.MANYAGENT_WEB_PUBLISHED_BANK_URL),
+            "anon_key": config.resolve("MANYAGENT_WEB_PUBLISHED_ANON_KEY", config.MANYAGENT_WEB_PUBLISHED_ANON_KEY),
+            "trusted_key": config.resolve(
+                "MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY", config.MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY
+            ),
+        })
+
     return app

@@ -92,7 +92,12 @@ INIT_SKIP_HINT = "[Enter=skip — no key yet]:"
 INIT_DEFAULT_HINT = "[{default}]:"
 INIT_OVERWRITE_OFFER = "{path} exists — overwrite it with the new values?"
 INIT_WRITTEN_NOTE = "wrote {path} — run `ma preflight` to validate it"
-INIT_NO_KEY_NOTE = "no trusted key set — Bank writes will fail until MANYAGENT_BANK_TRUSTED_KEY is added to {path}"
+INIT_NO_KEY_NOTE = "no trusted key written to {path} — using the built-in public demo key (hosted pre-alpha Bank)"
+INIT_FETCHED_NOTE = "fetched the current Bank connection from the deployment's well-known document"
+INIT_OFFLINE_NOTE = (
+    "could not fetch the published Bank connection — using built-in defaults (re-run `ma init` online to refresh)"
+)
+INIT_CUSTOM_BANK_NOTE = "custom Bank configured — keeping it (the published public connection was not applied)"
 
 # --------------------------------------------------------------------------- #
 # `manyagent start` — session-start offers and notes

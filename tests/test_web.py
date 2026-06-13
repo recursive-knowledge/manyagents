@@ -763,3 +763,38 @@ async def test_public_bank_cannot_write_at_the_db() -> None:
     pub = get_bank("public")
     with pytest.raises(Exception):
         await pub.put_packet({"id": "ATTACK/x", "type": "post", "agent_id": None})
+
+
+async def test_well_known_publishes_connection_not_host_env(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/.well-known/manyagent.json serves the MANYAGENT_WEB_PUBLISHED_* tunables —
+    `ma init`'s rotation source — and NEVER the host's own resolved
+    MANYAGENT_BANK_* (which locally holds a privileged service_role key)."""
+    monkeypatch.setenv("MANYAGENT_BANK_TRUSTED_KEY", "SERVICE-ROLE-MUST-NOT-LEAK")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY", "published-write-token")
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLISHED_BANK_URL", "https://db.example")
+    async with _client(fake_bank) as c:
+        r = await c.get("/.well-known/manyagent.json")
+    assert r.status_code == 200
+    doc = r.json()
+    assert doc["bank_url"] == "https://db.example"
+    assert doc["trusted_key"] == "published-write-token"
+    assert "SERVICE-ROLE-MUST-NOT-LEAK" not in r.text
+
+
+async def test_well_known_defaults_to_derived_demo_keys(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    from manyagent.utils import config
+
+    for var in (
+        "MANYAGENT_WEB_PUBLISHED_BANK_URL",
+        "MANYAGENT_WEB_PUBLISHED_ANON_KEY",
+        "MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    async with _client(fake_bank) as c:
+        r = await c.get("/.well-known/manyagent.json")
+    doc = r.json()
+    assert doc["bank_url"] == config.MANYAGENT_BANK_URL_DEFAULT
+    assert doc["anon_key"] == config._demo_jwt("anon")
+    assert doc["trusted_key"] == config._demo_jwt("authenticated")

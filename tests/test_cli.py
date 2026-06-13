@@ -30,6 +30,9 @@ def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # (prevents MANYAGENT_SESSION pollution between tests).
     monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
     monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")  # tests never write to ~/.claude
+    # `ma init`'s well-known fetch must never leave the test process; tests
+    # of the fetch behavior monkeypatch their own return value.
+    monkeypatch.setattr(cli, "_fetch_published_config", lambda: None)
     from manyagent.forum import clear_discuss_gate
 
     clear_discuss_gate()
@@ -358,6 +361,43 @@ async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank) -> N
     assert f"MANYAGENT_BANK_URL={config.resolve('MANYAGENT_BANK_URL', config.MANYAGENT_BANK_URL)}\n" in text
     if not config.resolve("MANYAGENT_BANK_TRUSTED_KEY", ""):
         assert any("MANYAGENT_BANK_TRUSTED_KEY" in line for line in s.out)  # the no-key warning
+
+
+async def test_init_applies_published_connection(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On the default (hosted) Bank, init prefers the well-known document's
+    CURRENT values — the rotation path: a new trusted key reaches clients
+    with no package release, cached into the user env file."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.setenv("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL_DEFAULT)
+    monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
+    doc = {"bank_url": "https://db-rotated.example", "anon_key": "NEW-ANON", "trusted_key": "NEW-WRITE"}
+    monkeypatch.setattr(cli, "_fetch_published_config", lambda: doc)
+    s = Scripted("", "")  # Enter at both prompts accepts the published values
+    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    text = cli._user_env_path().read_text(encoding="utf-8")
+    assert "MANYAGENT_BANK_URL=https://db-rotated.example\n" in text
+    assert "MANYAGENT_BANK_TRUSTED_KEY=NEW-WRITE\n" in text
+    assert "MANYAGENT_BANK_ANON_KEY=NEW-ANON\n" in text
+
+
+async def test_init_never_fetches_for_custom_bank(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A user pointed at their OWN Bank must not be repointed at the public
+    deployment — init skips the well-known fetch entirely."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.setenv("MANYAGENT_BANK_URL", "https://my-private-bank.example")
+    monkeypatch.setenv("MANYAGENT_BANK_TRUSTED_KEY", "MY-KEY")
+
+    def _boom() -> dict[str, str]:
+        raise AssertionError("must not fetch the published config for a custom Bank")
+
+    monkeypatch.setattr(cli, "_fetch_published_config", _boom)
+    s = Scripted("", "")
+    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    text = cli._user_env_path().read_text(encoding="utf-8")
+    assert "MANYAGENT_BANK_URL=https://my-private-bank.example\n" in text
+    assert "MANYAGENT_BANK_TRUSTED_KEY=MY-KEY\n" in text
 
 
 async def test_init_overwrite_gate_declined_keeps_file(fake_bank: FakeBank) -> None:

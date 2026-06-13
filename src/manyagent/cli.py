@@ -312,51 +312,110 @@ def _mask_secrets(env_text: str) -> str:
     return "\n".join(masked)
 
 
-async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent init`` — write the user-level env file. Every value comes from
-    its flag, else the currently-resolved config (so a re-run never silently
-    drops a stored anon key / CF Access pair); the URL and trusted key
-    additionally prompt interactively. Only non-empty values are written; the
-    rendered file is parse-back-verified through dotenv before it lands.
-    Overwriting an existing file sits behind one allowance gate (``d`` shows
-    the file it would replace, credentials masked; deny-by-default under
-    ``MANYAGENT_NONINTERACTIVE``, Open-Q §B5)."""
-    noninteractive = _noninteractive()
-    url = args.bank_url
-    if url is None:
-        default_url = config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
-        if noninteractive:
-            url = default_url
-        else:
-            prompt = (
-                ui.render(
-                    Text.assemble(
-                        (messages.INIT_URL_PROMPT + " ", "bold"),
-                        (messages.INIT_DEFAULT_HINT.format(default=default_url), "dim"),
-                    )
-                )
-                + " "
+def _fetch_published_config() -> dict[str, str] | None:
+    """GET ``{MANYAGENT_WEB_PUBLIC_URL}/.well-known/manyagent.json`` — the
+    deployment's CURRENT public Bank connection (manyagent.web). Fetching at
+    init-time and caching into the user env file is what lets the hosted
+    stack rotate keys without a package release; the package itself ships no
+    key literals, only the derived demo fallback (config._demo_jwt). Returns
+    None on any failure — an offline init falls back to built-in defaults."""
+    base = config.resolve("MANYAGENT_WEB_PUBLIC_URL", config.MANYAGENT_WEB_PUBLIC_URL).strip().rstrip("/")
+    if not base:
+        return None
+    try:
+        import httpx
+
+        resp = httpx.get(f"{base}/.well-known/manyagent.json", timeout=5.0)
+        if resp.status_code != 200:
+            return None
+        doc = resp.json()
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    out = {k: v.strip() for k, v in doc.items() if isinstance(k, str) and isinstance(v, str)}
+    return out or None
+
+
+def _init_published(resolved_url: str, io: tuple[In, Out]) -> dict[str, str]:
+    """The deployment's published connection, when it applies. A custom-Bank
+    user is never fetched for — `ma init` must not repoint them at the public
+    deployment; the three outcomes each narrate one dim/yellow line."""
+    if resolved_url != config.MANYAGENT_BANK_URL_DEFAULT:
+        io[1](ui.render(Text(messages.INIT_CUSTOM_BANK_NOTE, style="dim")))
+        return {}
+    fetched = _fetch_published_config()
+    if fetched is None:
+        io[1](ui.render(Text(messages.INIT_OFFLINE_NOTE, style="yellow")))
+        return {}
+    io[1](ui.render(Text(messages.INIT_FETCHED_NOTE, style="dim")))
+    return fetched
+
+
+def _init_url_value(
+    args: argparse.Namespace, published: dict[str, str], resolved_url: str, *, noninteractive: bool, io: tuple[In, Out]
+) -> str:
+    if args.bank_url is not None:
+        return str(args.bank_url)
+    default_url = published.get("bank_url") or resolved_url
+    if noninteractive:
+        return default_url
+    prompt = (
+        ui.render(
+            Text.assemble(
+                (messages.INIT_URL_PROMPT + " ", "bold"),
+                (messages.INIT_DEFAULT_HINT.format(default=default_url), "dim"),
             )
-            url = io[0](prompt).strip() or default_url
-    key = args.trusted_key
-    if key is None:
-        current = config.resolve("MANYAGENT_BANK_TRUSTED_KEY", "")
-        if noninteractive:
-            key = current
-        else:
-            hint = messages.INIT_KEEP_HINT if current else messages.INIT_SKIP_HINT
-            prompt = ui.render(Text.assemble((messages.INIT_KEY_PROMPT + " ", "bold"), (hint, "dim"))) + " "
-            # A pasted `MANYAGENT_BANK_TRUSTED_KEY=eyJ…` assignment would round-trip
-            # as the wrong key (the `NAME=` prefix becomes part of the value).
-            raw = _read_secret(prompt, input_fn=io[0]).strip().removeprefix(messages.INIT_KEY_PROMPT + "=")
-            key = raw or current
+        )
+        + " "
+    )
+    return io[0](prompt).strip() or default_url
+
+
+def _init_key_value(
+    args: argparse.Namespace, published: dict[str, str], *, noninteractive: bool, io: tuple[In, Out]
+) -> str:
+    if args.trusted_key is not None:
+        return str(args.trusted_key)
+    # Published (rotation-fresh) wins over the resolved env; the empty
+    # fallback keeps the derived demo default OUT of the written file —
+    # it lives in code only, applied when nothing else is configured.
+    current = published.get("trusted_key") or config.resolve("MANYAGENT_BANK_TRUSTED_KEY", "")
+    if noninteractive:
+        return current
+    hint = messages.INIT_KEEP_HINT if current else messages.INIT_SKIP_HINT
+    prompt = ui.render(Text.assemble((messages.INIT_KEY_PROMPT + " ", "bold"), (hint, "dim"))) + " "
+    # A pasted `MANYAGENT_BANK_TRUSTED_KEY=eyJ…` assignment would round-trip
+    # as the wrong key (the `NAME=` prefix becomes part of the value).
+    raw = _read_secret(prompt, input_fn=io[0]).strip().removeprefix(messages.INIT_KEY_PROMPT + "=")
+    return raw or current
+
+
+async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``manyagent init`` — write the user-level env file. Defaults come from the
+    deployment's published well-known document when reachable (so a re-run
+    picks up rotated keys), else the currently-resolved config; flags win over
+    both, and a re-run never silently drops a stored anon key / CF Access
+    pair. The URL and trusted key additionally prompt interactively. Only
+    non-empty values are written; the rendered file is parse-back-verified
+    through dotenv before it lands. Overwriting an existing file sits behind
+    one allowance gate (``d`` shows the file it would replace, credentials
+    masked; deny-by-default under ``MANYAGENT_NONINTERACTIVE``, Open-Q §B5)."""
+    noninteractive = _noninteractive()
+    resolved_url = config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
+    published = _init_published(resolved_url, io)
+    url = _init_url_value(args, published, resolved_url, noninteractive=noninteractive, io=io)
+    key = _init_key_value(args, published, noninteractive=noninteractive, io=io)
     pairs = (
         ("MANYAGENT_BANK_URL", url.strip()),
         ("MANYAGENT_BANK_TRUSTED_KEY", key.strip()),
-        # Flag wins, else carry forward what's already resolvable — a key
-        # rotation via `ma init` must not silently discard the stored anon
-        # key or the CF Access pair the db tunnel needs.
-        ("MANYAGENT_BANK_ANON_KEY", (args.anon_key or config.resolve("MANYAGENT_BANK_ANON_KEY", "")).strip()),
+        # Flag wins, else published, else carry forward what's already
+        # resolvable — a key rotation via `ma init` must not silently discard
+        # the stored anon key or the CF Access pair the db tunnel needs.
+        (
+            "MANYAGENT_BANK_ANON_KEY",
+            (args.anon_key or published.get("anon_key", "") or config.resolve("MANYAGENT_BANK_ANON_KEY", "")).strip(),
+        ),
         (
             "MANYAGENT_BANK_CF_ACCESS_CLIENT_ID",
             (args.cf_access_client_id or config.resolve("MANYAGENT_BANK_CF_ACCESS_CLIENT_ID", "")).strip(),
