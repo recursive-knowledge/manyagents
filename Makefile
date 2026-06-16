@@ -51,8 +51,25 @@ bank-status: ## Show Bank (Supabase) service status and URLs
 bank-migrate: ## Apply supabase/migrations/ to the local Bank instance
 	@$(SUPABASE) migration up
 
+.PHONY: bank-backup
+bank-backup: ## Dump the local Bank's public schema (DDL + data) to bank-backup-<ts>.sql — run before any reset/rotation
+	@cid=$$(docker ps --filter "name=supabase_db_" --format '{{.Names}}' | head -1); \
+	if [ -z "$$cid" ]; then echo "✗ no running supabase_db_* container — run 'make bank-up' first"; exit 1; fi; \
+	out="bank-backup-$$(date +%Y%m%d-%H%M%S).sql"; \
+	docker exec "$$cid" pg_dump -U postgres -d postgres -n public --no-owner > "$$out"; \
+	echo "✓ wrote $$out ($$(wc -c < "$$out") bytes) from $$cid"
+
+.PHONY: bank-restore
+bank-restore: ## Restore a dump into the local Bank: make bank-restore FILE=bank-backup-<ts>.sql
+	@test -n "$(FILE)" || { echo "✗ usage: make bank-restore FILE=bank-backup-<ts>.sql"; exit 1; }
+	@test -f "$(FILE)"  || { echo "✗ no such file: $(FILE)"; exit 1; }
+	@cid=$$(docker ps --filter "name=supabase_db_" --format '{{.Names}}' | head -1); \
+	if [ -z "$$cid" ]; then echo "✗ no running supabase_db_* container — run 'make bank-up' first"; exit 1; fi; \
+	docker exec -i "$$cid" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$(FILE)"; \
+	echo "✓ restored $(FILE) into $$cid"
+
 .PHONY: bank-reset
-bank-reset: ## Drop + re-apply all migrations from empty (local dev only)
+bank-reset: ## DESTRUCTIVE: drop + re-apply migrations from EMPTY — wipes all data; run `make bank-backup` first (this stack backs the hosted db-swarms corpus)
 	@$(SUPABASE) db reset
 
 # Web bind port — single source of truth shared by `web-up` and the website tunnel.

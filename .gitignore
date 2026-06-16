@@ -91,6 +91,8 @@ cython_debug/
 # Supabase
 supabase/.temp/
 supabase/.branches/
+# Bank dumps (`make bank-backup`) — may carry real corpus data; never commit.
+bank-backup-*.sql
 
 # Cloudflare Tunnel — rendered ingress configs + credentials are machine-specific
 # / secret; only infra/cloudflared/README.md is committed (see Makefile *-tunnel-*).

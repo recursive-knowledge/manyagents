@@ -79,9 +79,17 @@ The two endpoints have very different exposure:
     1. Put **Cloudflare Access** in front of `db-swarms.formulacode.org` (Zero
        Trust → Access → Applications) so only authenticated callers reach it —
        this is the posture the sibling `datasmith` project settled on.
-    2. Rotate the JWT signing keys (set `signing_keys_path` in
-       `supabase/config.toml`, `make bank-reset`) so the default `service_role`
-       key no longer validates, and update `MANYAGENT_BANK_*` in `manyagent.env`.
+    2. Rotate the JWT signing keys so the default `service_role` key no longer
+       validates. **Back up first** — `make bank-backup` (this local stack *is*
+       the hosted corpus; `make bank-reset` would drop it). Then set
+       `signing_keys_path` in `supabase/config.toml` and **`make bank-down &&
+       make bank-up`** — `supabase start` re-reads config and *preserves* the
+       data volume. **Never `make bank-reset`** for this (it drops + re-applies
+       from empty). Finally publish the new keys for clients: set
+       `MANYAGENT_WEB_PUBLISHED_ANON_KEY` / `MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY`
+       on the web host so `ma init` serves them at
+       `/.well-known/manyagent.json` — redeploy the viewer *before* rotating, or
+       the package's built-in demo keys stop validating with no fetch path.
 
 ## Point a remote `manyagent` at the Bank
 
@@ -92,7 +100,7 @@ overriding the connection tunables (`manyagent.utils`, documented in `manyagent.
 export MANYAGENT_BANK_URL=https://db-swarms.formulacode.org
 export MANYAGENT_BANK_ANON_KEY=...      # the anon key for your (rotated) stack
 export MANYAGENT_BANK_TRUSTED_KEY=...   # only on writers
-python -m manyagent.preflight           # validates env + Bank reachability + keys
+ma preflight                            # validates env + Bank reachability + keys
 ```
 
 ## Tear down
