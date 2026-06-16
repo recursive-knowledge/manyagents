@@ -274,6 +274,33 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
             "packets": [_record(r) for r in owned],
         }
 
+    @app.get("/api/principal/{principal_id}")
+    async def principal_view(principal_id: str) -> Any:
+        # Cross-goal activity for one persistent principal (00011): every agents
+        # row carrying this principal_id, grouped by the session/goal it worked
+        # in, with that agent's packets per session. A read over the already-
+        # public agents/sessions/packets set — same identity/RLS posture as the
+        # rest of the API, so no new enforcement surface.
+        agent_rows = await b.list_agents_by_principal(principal_id)
+        if not agent_rows:
+            raise HTTPException(status_code=404, detail=f"no principal {principal_id!r}")
+        goals: list[dict[str, Any]] = []
+        for ar in agent_rows:
+            sid_ = ar["session_id"]
+            meta = await b.get_session(sid_)
+            pkt_rows = await b.list_packets(session_id=sid_, include_quarantined=True)
+            owned = [r for r in pkt_rows if r.get("agent_id") == ar["id"]]
+            goals.append({
+                "session": meta,
+                "agent": Agent.from_activity(ar, packets=pkt_rows).model_dump(mode="json"),
+                "packets": [_record(r) for r in owned],
+            })
+        return {
+            "principal_id": principal_id,
+            "adapter": agent_rows[0].get("adapter"),
+            "goals": goals,
+        }
+
     @app.get("/api/packets")
     async def corpus_packets(
         type: str | None = Query(default=None),

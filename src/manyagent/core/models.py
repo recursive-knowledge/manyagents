@@ -52,6 +52,10 @@ class Agent(BaseModel):
     session_id: str | None = None
     adapter: str | None = None
     seq: int | None = None
+    # Persistent cross-goal principal (00011): the same value across every
+    # session/goal this operator's adapter touched. None for rows minted before
+    # 00011 (the web degrades to the session-scoped view).
+    principal_id: str | None = None
     # Registration timestamp from the agents row (DB-assigned). Distinct from
     # ``start_date`` (which collapses registration + first packet). Populated
     # whenever the row dict carries it.
@@ -91,6 +95,7 @@ class Agent(BaseModel):
             session_id=row.get("session_id"),
             adapter=row.get("adapter"),
             seq=row.get("seq"),
+            principal_id=row.get("principal_id"),
             created_at=row.get("created_at"),
             start_date=start,
             end_date=end,

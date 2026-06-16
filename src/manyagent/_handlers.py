@@ -247,9 +247,11 @@ async def _resolve_agent(sid_: str, name: str, *, bank: Bank) -> str:
     if agents:
         return str(agents[-1]["id"])
     _validate_adapter(name)
+    from manyagent.cli import _principal_for  # local import: cli imports handlers
+
     seq = await bank.next_agent_seq(sid_)
     agent_id = f"{sid_}/agent-{seq:03d}-{name}"
-    await bank.put_agent(agent_id, session_id=sid_, adapter=name, seq=seq)
+    await bank.put_agent(agent_id, session_id=sid_, adapter=name, seq=seq, principal_id=_principal_for(name))
     return agent_id
 
 

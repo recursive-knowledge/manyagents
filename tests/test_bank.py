@@ -112,6 +112,30 @@ async def test_next_agent_seq_concurrent_distinct_contiguous(fake_bank: FakeBank
     assert sorted(seqs) == list(range(1, 51))  # distinct, contiguous, no gaps/dups
 
 
+async def test_put_agent_round_trips_principal_id(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S")
+    await fake_bank.put_agent("S/agent-001-claude", session_id="S", adapter="claude", seq=1, principal_id="P1")
+    row = await fake_bank.get_agent("S/agent-001-claude")
+    assert row is not None and row["principal_id"] == "P1"
+    # Default keeps legacy callers source-compatible — NULL principal.
+    await fake_bank.put_agent("S/agent-002-codex", session_id="S", adapter="codex", seq=2)
+    assert (await fake_bank.get_agent("S/agent-002-codex"))["principal_id"] is None
+
+
+async def test_list_agents_by_principal_spans_sessions(fake_bank: FakeBank) -> None:
+    # The same principal registers its adapter in two sessions/goals.
+    for s, goal in (("S1", "parser"), ("S2", "solver")):
+        await fake_bank.put_session(s, goal=goal)
+        await fake_bank.put_agent(f"{s}/agent-001-claude", session_id=s, adapter="claude", seq=1, principal_id="P1")
+    # A different principal in a third session must stay isolated.
+    await fake_bank.put_session("S3")
+    await fake_bank.put_agent("S3/agent-001-claude", session_id="S3", adapter="claude", seq=1, principal_id="P2")
+
+    rows = await fake_bank.list_agents_by_principal("P1")
+    assert [r["session_id"] for r in rows] == ["S1", "S2"]  # sorted, both sessions, P2 excluded
+    assert await fake_bank.list_agents_by_principal("nope") == []
+
+
 # --------------------------------------------------------------------------- #
 # reuse_score (mirrors the 00007 SQL view)
 # --------------------------------------------------------------------------- #
@@ -195,10 +219,10 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_files_are_contiguous_00001_to_00009() -> None:
+def test_migration_files_are_contiguous_00001_to_00011() -> None:
     files = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
     prefixes = [f[:5] for f in files]
-    assert prefixes == [f"{i:05d}" for i in range(1, 10)], files
+    assert prefixes == [f"{i:05d}" for i in range(1, 12)], files
 
 
 async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
@@ -230,6 +254,7 @@ async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
         ("00005_preference.sql", ["preference", "parent_attempt"]),
         ("00006_swarms_taxonomy.sql", ["type in ('raw', 'post', 'distill')", "rating", "goal"]),
         ("00007_injection_ledger.sql", ["injections", "reuse_score", "create role curator"]),
+        ("00011_agent_principal.sql", ["principal_id", "agents_principal_idx", "add column if not exists"]),
     ],
 )
 def test_migration_content_tokens(fname: str, must_contain: list[str]) -> None:

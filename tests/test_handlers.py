@@ -497,3 +497,24 @@ async def test_resolve_agent_existing_row_skips_gate(
     await _seed_session(fake_bank)
     await fake_bank.put_agent("S1/agent-001-claude", session_id="S1", adapter="claude", seq=1)
     assert await h._resolve_agent("S1", "claude", bank=fake_bank) == "S1/agent-001-claude"
+
+
+async def test_resolve_agent_stamps_stable_principal_across_sessions(
+    fake_bank: FakeBank, adapter_gate: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registering the same adapter in two sessions yields the SAME principal
+    (cross-goal identity, 00011); a different adapter yields a different one.
+    MANYAGENT_HOME is the autouse tmp dir, so principals.json is sandboxed."""
+    monkeypatch.setattr(h, "_validate_adapter", adapter_gate)
+    await _seed_session(fake_bank, sid="S1", goal="parser")
+    await _seed_session(fake_bank, sid="S2", goal="solver")
+    await h._resolve_agent("S1", "claude", bank=fake_bank)
+    await h._resolve_agent("S2", "claude", bank=fake_bank)
+    await h._resolve_agent("S1", "codex", bank=fake_bank)
+
+    p1 = (await fake_bank.get_agent("S1/agent-001-claude"))["principal_id"]
+    p2 = (await fake_bank.get_agent("S2/agent-001-claude"))["principal_id"]
+    p_codex = (await fake_bank.get_agent("S1/agent-002-codex"))["principal_id"]
+    assert p1 is not None and p1 == p2  # one principal across goals/sessions
+    assert p_codex is not None and p_codex != p1  # distinct adapter, distinct principal
+    assert [r["session_id"] for r in await fake_bank.list_agents_by_principal(p1)] == ["S1", "S2"]

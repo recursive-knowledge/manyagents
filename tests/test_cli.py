@@ -1104,3 +1104,32 @@ async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
     assert s._r == []  # the single scripted answer went to the end offer
     # an extra prompt would exhaust Scripted and be swallowed into this line:
     assert not any("offers skipped" in line for line in s.out)
+
+
+# --------------------------------------------------------------------------- #
+# _principal_for — persistent cross-goal agent identity (00011)
+# --------------------------------------------------------------------------- #
+
+
+def test_principal_for_mints_persists_and_is_stable() -> None:
+    from manyagent.utils import sid
+
+    pid = cli._principal_for("claude")
+    assert sid.is_valid(pid)  # a real UUID4, not derived from "claude"
+    assert cli.principals_path().is_file()
+    assert cli._principal_for("claude") == pid  # read back, stable
+
+
+def test_principal_for_distinct_per_adapter() -> None:
+    assert cli._principal_for("claude") != cli._principal_for("codex")
+
+
+def test_principal_for_recovers_from_corrupt_file() -> None:
+    p = cli.principals_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json", encoding="utf-8")
+    pid = cli._principal_for("claude")  # re-mints rather than crashing register
+    from manyagent.utils import sid
+
+    assert sid.is_valid(pid)
+    assert cli._principal_for("claude") == pid  # and the rewrite is now stable

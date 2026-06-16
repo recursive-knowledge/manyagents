@@ -103,6 +103,17 @@ def test_to_record_is_knowledge_packet() -> None:
     assert kp.id == "S/p" and kp.rating == 4 and kp.goal == "speed"
 
 
+def test_agent_principal_id_field() -> None:
+    # 00011: principal_id is an optional field, defaults None, and survives
+    # from_activity + model_dump (so the web route can surface it).
+    assert Agent(id="S/agent-001-claude").principal_id is None
+    a = Agent(id="S/agent-001-claude", principal_id="P1")
+    assert a.principal_id == "P1"
+    derived = Agent.from_activity({"id": "S/agent-001-claude", "principal_id": "P1", "adapter": "claude"})
+    assert derived.principal_id == "P1"
+    assert derived.model_dump(mode="json")["principal_id"] == "P1"
+
+
 # --------------------------------------------------------------------------- #
 # .fetch() hydration: bare ctor no I/O, fetch hits the Bank, memoizes
 # --------------------------------------------------------------------------- #

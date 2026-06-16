@@ -151,6 +151,15 @@ export async function getAgent(sessionId, agentTail) {
 }
 
 /**
+ * One persistent principal's cross-goal activity: every goal/session this
+ * agent worked in, with the packets it authored per session (00011).
+ */
+export async function getPrincipal(principalId) {
+	const r = await fetch(`/api/principal/${encodeURIComponent(principalId)}`);
+	return json(r);
+}
+
+/**
  * Researcher endpoint: goal/since-scoped reuse signal. Quarantined packets are
  * excluded server-side (the "use as context" exclusion of manyagent.web.md).
  */

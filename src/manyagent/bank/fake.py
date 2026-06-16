@@ -73,12 +73,15 @@ class FakeBank:
             self._seq[session_id] = nxt
             return nxt
 
-    async def put_agent(self, id: str, *, session_id: str, adapter: str, seq: int) -> None:
+    async def put_agent(
+        self, id: str, *, session_id: str, adapter: str, seq: int, principal_id: str | None = None
+    ) -> None:
         self._agents[id] = {
             "id": id,
             "session_id": session_id,
             "adapter": adapter,
             "seq": seq,
+            "principal_id": principal_id,
             "created_at": self._agents.get(id, {}).get("created_at", _now()),
         }
 
@@ -90,6 +93,12 @@ class FakeBank:
         return sorted(
             (dict(a) for a in self._agents.values() if a["session_id"] == session_id),
             key=lambda a: a["seq"],
+        )
+
+    async def list_agents_by_principal(self, principal_id: str) -> list[dict[str, Any]]:
+        return sorted(
+            (dict(a) for a in self._agents.values() if a.get("principal_id") == principal_id),
+            key=lambda a: (a["session_id"], a["seq"]),
         )
 
     # --- packets ---

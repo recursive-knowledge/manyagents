@@ -638,6 +638,44 @@ async def test_agent_view_404s_unknown_agent(fake_bank: FakeBank) -> None:
     assert r.status_code == 404
 
 
+async def test_agent_view_surfaces_principal_id(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S1")
+    await fake_bank.put_agent("S1/agent-001-claude", session_id="S1", adapter="claude", seq=1, principal_id="P1")
+    async with _client(fake_bank) as c:
+        r = await c.get("/s/S1/a/agent-001-claude")
+    assert r.status_code == 200 and r.json()["agent"]["principal_id"] == "P1"
+
+
+# --------------------------------------------------------------------------- #
+# /api/principal/{principal_id} — cross-goal agent identity (00011)
+# --------------------------------------------------------------------------- #
+
+
+async def test_principal_view_groups_cross_goal_activity(fake_bank: FakeBank) -> None:
+    # One principal registered its claude in two sessions under different goals.
+    for s, goal in (("S1", "parser"), ("S2", "solver")):
+        await fake_bank.put_session(s, goal=goal)
+        await fake_bank.put_agent(f"{s}/agent-001-claude", session_id=s, adapter="claude", seq=1, principal_id="P1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:05+00:00"))
+    await fake_bank.put_packet(_raw("S2/r1", created_at="2026-05-19T00:00:09+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/principal/P1")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["principal_id"] == "P1" and data["adapter"] == "claude"
+    by_goal = {g["session"]["goal"]: g for g in data["goals"]}
+    assert set(by_goal) == {"parser", "solver"}
+    assert {p["id"] for p in by_goal["parser"]["packets"]} == {"S1/r1"}
+    assert by_goal["parser"]["agent"]["principal_id"] == "P1"
+
+
+async def test_principal_view_404s_unknown_principal(fake_bank: FakeBank) -> None:
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/principal/nope")
+    assert r.status_code == 404
+
+
 # --------------------------------------------------------------------------- #
 # /api/session/{session}/conversation — full conversation text retrieval
 # --------------------------------------------------------------------------- #

@@ -84,6 +84,44 @@ def _clear_active() -> None:
         p.unlink()
 
 
+def principals_path() -> Path:
+    """``~/.manyagent/principals.json`` — the adapter→principal map (00011)."""
+    return _manyagent_home() / "principals.json"
+
+
+def _principal_for(adapter: str) -> str:
+    """Stable per-(machine, adapter) principal id for cross-goal agent identity.
+
+    Minted once on first register, persisted to ``~/.manyagent/principals.json``
+    as an ``{adapter: uuid4}`` map, and read back thereafter (00011). First-party
+    automatic — no user-typed handle; the id is a real UUID4 (``sid.new()``),
+    never derived from the adapter name (datasmith identity rule). Per-machine:
+    the same operator on two machines gets two principals. Corruption or a bad
+    value re-mints rather than crashing ``register``; the write is atomic so a
+    concurrent adapter spawn can at worst duplicate a (harmless) mint.
+    """
+    p = principals_path()
+    data: dict[str, str] = {}
+    if p.is_file():
+        try:
+            loaded = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = {str(k): str(v) for k, v in loaded.items()}
+        except (ValueError, OSError):
+            data = {}  # corrupt file → re-mint, never crash register
+    existing = data.get(adapter)
+    if existing and sid.is_valid(existing):
+        return existing
+    pid = sid.new()
+    data[adapter] = pid
+    home = _manyagent_home()
+    home.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, p)  # atomic swap; last-writer-wins on the map
+    return pid
+
+
 def _resolve_sid(explicit: str | None) -> str:
     """``--session`` wins, else ``~/.manyagent/active``; error if neither."""
     s = explicit or _read_active()

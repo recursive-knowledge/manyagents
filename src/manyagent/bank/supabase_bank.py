@@ -95,9 +95,15 @@ class SupabaseBank:
         return int(resp.data)
 
     @with_backoff()
-    async def put_agent(self, id: str, *, session_id: str, adapter: str, seq: int) -> None:
+    async def put_agent(
+        self, id: str, *, session_id: str, adapter: str, seq: int, principal_id: str | None = None
+    ) -> None:
         cli = await self._client()
-        await cli.table("agents").upsert({"id": id, "session_id": session_id, "adapter": adapter, "seq": seq}).execute()
+        await (
+            cli.table("agents")
+            .upsert({"id": id, "session_id": session_id, "adapter": adapter, "seq": seq, "principal_id": principal_id})
+            .execute()
+        )
 
     @with_backoff()
     async def get_agent(self, id: str) -> dict[str, Any] | None:
@@ -110,6 +116,12 @@ class SupabaseBank:
     async def list_agents(self, session_id: str) -> list[dict[str, Any]]:
         cli = await self._client()
         resp = await cli.table("agents").select("*").eq("session_id", session_id).order("seq").execute()
+        return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def list_agents_by_principal(self, principal_id: str) -> list[dict[str, Any]]:
+        cli = await self._client()
+        resp = await cli.table("agents").select("*").eq("principal_id", principal_id).order("created_at").execute()
         return [dict(r) for r in (resp.data or [])]
 
     # --- packets ---
