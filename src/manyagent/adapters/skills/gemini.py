@@ -33,16 +33,19 @@ from manyagent._installer import (
     consent_prompt,
     load_manifest,
 )
+from manyagent._skills import REGISTRY, Dialect, Skill
 from manyagent.adapters.skills import USAGE
 
-_VERBS: tuple[tuple[str, str], ...] = (
-    (
-        "self-distill",
-        "Draft and (on accept) commit ONE evidence-grounded reflection post to the active manyagent session.",
-    ),
-    ("discuss", "Draft and (on accept) commit ONE stance reply engaging a prior in-session post."),
-    ("cross-distill", "Curate goal-scoped posts (across sessions) into a 6-bucket Insight bundle."),
-    ("inject", "Preview a curated bundle, confirm, then write an injection-ledger row."),
+# Gemini CLI uses native `/self-distill` slash commands (defined as TOML under
+# `commands/`) backed by the `manyagent` MCP server. Tools are referenced as
+# `mcp__manyagent__<tool>`, args arrive as `{{args}}`, and the per-tool permission
+# UI on the commit tool is the human gate. The per-verb prose lives once in
+# manyagent._skills; this dialect only supplies Gemini's tokens.
+_DIALECT = Dialect(
+    tool_ref=lambda name: f"mcp__manyagent__{name}",
+    invocation=lambda slug: f"/{slug}",
+    args="{{args}}",
+    gate="Gemini's permission UI",
 )
 
 
@@ -77,73 +80,11 @@ trail for every persistence.
 """
 
 
-def _toml_command(verb: str) -> str:
-    """One TOML slash command. The body is a prompt that instructs the host
-    model to follow the draft → show → ask → commit procedure."""
-    if verb == "self-distill":
-        return """\
-description = "Draft and (on accept) commit ONE reflection post to the active manyagent session."
-prompt = \"\"\"
-Follow this procedure exactly for /self-distill:
-
-1. Call `mcp__manyagent__self_distill_draft` (pass `guidance={{args}}` if there is text after the slash).
-2. Using the returned `instruction_for_host_llm` and the live conversation, draft ONE structured payload with these fields:
-   - `load_bearing_assumption` — a concrete primitive (backticked identifier, dotted.path, `call()`, --flag)
-   - `evidence` — verbatim from the conversation/trace
-   - `evidence_ref` — a packet id, or null
-   - `proposed_next` — a concrete next action
-   - `predicted_outcome` — a falsifiable prediction
-   - `confidence` — "low" | "medium" | "high"
-3. Show the draft verbatim to the user with a recommended ★ (high=5, medium=3, low=2).
-4. Then call `mcp__manyagent__commit_post(kind='reflection', structured={...}, rating=N)` directly with the recommended rating. Do NOT ask a separate "accept?" question — Gemini's permission UI on `commit_post` IS the user's single gate; nothing persists unless they approve.
-5. If the user denies the permission or asks for changes, revise the draft and repeat (C1).
-\"\"\"
-"""
-    if verb == "discuss":
-        return """\
-description = "Draft and (on accept) commit ONE stance reply engaging a prior in-session post."
-prompt = \"\"\"
-`{{args}}` may contain `@<packet_id>` and/or one of `agree`/`disagree`/`synthesize` (default `synthesize`).
-
-Procedure:
-
-1. Parse `{{args}}` for a `@<packet_id>` and a stance.
-2. Call `mcp__manyagent__discuss_draft(stance=..., packet=...)`.
-3. If the tool returns an error ("no related posts"), tell the user to run `/self-distill` first and STOP.
-4. Using the returned `instruction_for_host_llm` (which includes the ranked prior posts), draft a reply with the same 5 fields as `/self-distill`, engaging the post named in `reply_to`.
-5. Show the draft verbatim, then call `mcp__manyagent__commit_post(kind='reply', structured={...}, reply_to=..., stance=...)` directly. Do NOT ask a separate "accept?" question — the permission UI IS the single gate.
-6. If the user denies the permission or asks for changes, revise and repeat (C1).
-\"\"\"
-"""
-    if verb == "cross-distill":
-        return """\
-description = "Curate goal-scoped posts (across sessions) into a 6-bucket Insight bundle."
-prompt = \"\"\"
-Procedure for /cross-distill:
-
-1. Call `mcp__manyagent__cross_distill`. The curator runs in the background.
-2. If the tool returns `{"ok": false, "error": "Run /self-distill first!"}`, tell the user to run `/self-distill` first and STOP.
-3. Otherwise, summarize the bundle: `bundle_id`, `scope`, `goal`, and per-bucket counts. Tell the user they can `/inject @<bundle_id>` to seed a session with it.
-
-The curator is mechanical and idempotent — re-running over the same posts returns the same bundle, no re-spend.
-\"\"\"
-"""
-    if verb == "inject":
-        return """\
-description = "Preview a curated bundle, ask the user to confirm, then write an injection-ledger row."
-prompt = \"\"\"
-`{{args}}` may contain `@<packet_id>`. If omitted, the latest non-quarantined distill is used.
-
-Procedure:
-
-1. Call `mcp__manyagent__inject_preview(packet={{args}} or null)`.
-2. If the tool returns an error (no bundle / quarantined), report it and STOP.
-3. Show the preview verbatim to the user.
-4. Then call `mcp__manyagent__inject_commit(packet=<id>)` directly. Do NOT ask a separate "inject? [y/n]" question — Gemini's permission UI on `inject_commit` IS the user's single gate; the ledger row is only written if they approve.
-5. If the user denies the permission, STOP — nothing is recorded.
-\"\"\"
-"""
-    raise ValueError(f"unknown verb {verb!r}")
+def _toml_command(skill: Skill) -> str:
+    """One TOML slash command for Gemini: a `description` plus a `prompt` whose
+    body is the shared dialect-substituted procedure (draft → show → commit,
+    the per-tool permission UI being the human gate)."""
+    return f'description = "{skill.description}"\nprompt = """\n{skill.body(_DIALECT)}\n"""\n'
 
 
 def _manifest_payload() -> dict[str, Any]:
@@ -266,13 +207,13 @@ def build_plan(*, session_id: str | None, oma_home: Path, scope: str = "user") -
             merge_keys=(f"flat:{root}",),
         )
     )
-    for verb, desc in _VERBS:
+    for skill in REGISTRY:
         ops.append(
             FileOp(
                 kind="create",
-                path=root / "commands" / f"{verb}.toml",
-                payload=_toml_command(verb),
-                description=f"`/{verb}` slash command — {desc}",
+                path=root / "commands" / f"{skill.slug}.toml",
+                payload=_toml_command(skill),
+                description=f"`/{skill.slug}` slash command — {skill.description}",
             )
         )
     return InstallPlan(

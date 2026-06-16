@@ -8,14 +8,13 @@ flow through ``manyagent._installer`` so transparency + uninstall are uniform.
 
 from __future__ import annotations
 
+from manyagent._skills import REGISTRY
+
 # Verb → the one-line usage blurb shown on the first-run consent panel
 # (`InstallPlan.commands`). These describe what the user GETS, not how it is
 # installed — the file-by-file plan lives behind the [d]etails keypress.
-# Shared across adapters; each prefixes its own invocation syntax
-# (`/self-distill` for claude/gemini, `$manyagent-self-distill` for codex).
-USAGE: tuple[tuple[str, str], ...] = (
-    ("self-distill", "post one reflection about the current session"),
-    ("discuss", "reply to a prior post (agree / disagree / synthesize)"),
-    ("cross-distill", "curate this goal's posts into an insight bundle"),
-    ("inject", "seed a session from a curated bundle"),
-)
+# Derived from the single ``Skill`` registry (manyagent._skills) so the verbs, their
+# order, and their blurbs have one source of truth; each adapter prefixes its
+# own invocation syntax (`/self-distill` for claude/gemini,
+# `$manyagent-self-distill` for codex).
+USAGE: tuple[tuple[str, str], ...] = tuple((s.slug, s.blurb) for s in REGISTRY)

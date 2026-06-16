@@ -36,119 +36,37 @@ from manyagent._installer import (
     consent_prompt,
     load_manifest,
 )
+from manyagent._skills import REGISTRY, Dialect, Skill
 from manyagent.adapters.skills import USAGE
 
-# Skill name → slash command. Claude Code unifies skills + commands, so the
-# `name:` frontmatter is what the user types after `/`.
-_VERBS: tuple[tuple[str, str, str], ...] = (
-    (
-        "self-distill",
-        "Draft and (on accept) commit ONE reflection post to the active manyagent session.",
-        "self_distill_draft",
-    ),
-    ("discuss", "Draft and (on accept) commit ONE stance reply engaging a prior in-session post.", "discuss_draft"),
-    ("cross-distill", "Curate goal-scoped posts (across sessions) into a 6-bucket Insight bundle.", "cross_distill"),
-    ("inject", "Preview a curated bundle, confirm, then write an injection-ledger row.", "inject_preview"),
+# Claude Code unifies skills + commands; the user types `/self-distill` natively
+# and the host LLM's `commit_post` / `inject_commit` permission prompt is the
+# single human gate. Tools are referenced as `mcp__manyagent__<tool>`, args arrive
+# as `$ARGUMENTS`. The per-verb procedure prose lives once in manyagent._skills.
+_DIALECT = Dialect(
+    tool_ref=lambda name: f"mcp__manyagent__{name}",
+    invocation=lambda slug: f"/{slug}",
+    args="$ARGUMENTS",
+    gate="Claude Code's permission prompt",
 )
 
 
-def _skill_body(verb: str, draft_tool: str) -> str:
-    """The numbered procedure the host LLM follows. The MCP permission gate
-    on ``commit_post`` / ``inject_commit`` is the human accept moment —
-    nothing persists without that explicit approval."""
-    if verb == "self-distill":
-        return f"""\
----
-name: self-distill
-description: Draft and (on accept) commit ONE evidence-grounded reflection post to the active manyagent session.
-disable-model-invocation: true
-allowed-tools:
-  - mcp__manyagent__{draft_tool}
----
-
-# /self-distill — emit one reflection post to the active manyagent session
-
-Follow this procedure exactly:
-
-1. Call `mcp__manyagent__self_distill_draft` (pass `guidance=$ARGUMENTS` if the user supplied any).
-2. Using the returned `instruction_for_host_llm` (the schema and anti-meta rules) and the live conversation context, draft ONE structured payload with these fields:
-   - `load_bearing_assumption` — a concrete primitive (backticked identifier, dotted.path, `call()`, --flag)
-   - `evidence` — verbatim from the trace/conversation
-   - `evidence_ref` — a packet id, or null
-   - `proposed_next` — a concrete next action
-   - `predicted_outcome` — a falsifiable prediction
-   - `confidence` — "low" / "medium" / "high"
-3. Show the draft verbatim to the user with a recommended ★ (high=5, medium=3, low=2).
-4. Then call `mcp__manyagent__commit_post` directly with `kind="reflection"`, the structured payload, and the recommended rating. Do NOT ask a separate "accept?" question — Claude Code's permission prompt on `commit_post` IS the user's single gate; nothing persists unless they approve it.
-5. If the user denies the permission prompt or asks for changes, revise the draft and repeat — the Bank stays untouched until an approved commit (C1).
-
-The active manyagent session is auto-detected from `$MANYAGENT_SESSION` or `~/.manyagent/active`; if neither is set the MCP tool errors and you should tell the user to run `manyagent start` first.
-"""
-    if verb == "discuss":
-        return f"""\
----
-name: discuss
-description: Draft and (on accept) commit ONE stance reply engaging a prior in-session post.
-disable-model-invocation: true
-allowed-tools:
-  - mcp__manyagent__{draft_tool}
----
-
-# /discuss [@packet] [stance] — emit one stance reply
-
-`$ARGUMENTS` may contain `@<packet_id>` and/or one of `agree`/`disagree`/`synthesize` (default `synthesize`).
-
-Procedure:
-
-1. Parse `$ARGUMENTS` for a `@<packet_id>` and a stance.
-2. Call `mcp__manyagent__discuss_draft` with `stance=...` and `packet=...` (the @-stripped id, or null).
-3. If the tool returns an error ("no related posts"), tell the user to run `/self-distill` first and STOP.
-4. Using the returned `instruction_for_host_llm` (which includes the ranked prior posts) and the conversation, draft a reply with the same 5 fields as `/self-distill`, engaging the post named in `reply_to`.
-5. Show the draft verbatim to the user, then call `mcp__manyagent__commit_post` directly with `kind="reply"`, the structured payload, `reply_to=<from draft>`, `stance=<from draft>`. Do NOT ask a separate "accept?" question — the permission prompt on `commit_post` IS the single gate.
-6. If the user denies the permission prompt or asks for changes, revise and repeat (C1: nothing persisted until an approved commit).
-"""
-    if verb == "cross-distill":
-        return f"""\
----
-name: cross-distill
-description: Curate goal-scoped posts (across sessions) into a 6-bucket Insight bundle.
-disable-model-invocation: true
-allowed-tools:
-  - mcp__manyagent__{draft_tool}
----
-
-# /cross-distill — curate the active goal's posts into a bundle
-
-Procedure:
-
-1. Call `mcp__manyagent__cross_distill`. The curator runs in the background (uses `MANYAGENT_LLM_*` config or an installed agent CLI).
-2. If the tool returns `{{"ok": false, "error": "Run /self-distill first!"}}`, tell the user to run `/self-distill` first and STOP.
-3. Otherwise, summarize: the `bundle_id`, `scope`, `goal`, and the per-bucket counts. Tell the user they can `/inject @<bundle_id>` to seed a session with this bundle.
-
-The curator is mechanical and idempotent — re-running over the same posts returns the same bundle, no re-spend.
-"""
-    if verb == "inject":
-        return f"""\
----
-name: inject
-description: Preview a curated bundle, ask the user to confirm, then write an injection-ledger row.
-disable-model-invocation: true
-allowed-tools:
-  - mcp__manyagent__{draft_tool}
----
-
-# /inject [@packet] — preview a bundle and (on accept) record an injection
-
-`$ARGUMENTS` may contain `@<packet_id>`. If omitted, the latest non-quarantined distill is used.
-
-Procedure:
-
-1. Call `mcp__manyagent__inject_preview` with `packet=$ARGUMENTS` (or null).
-2. If the tool returns an error (no bundle / quarantined), report it and STOP.
-3. Show the preview verbatim to the user, then call `mcp__manyagent__inject_commit` with the same packet id. Do NOT ask a separate "inject? [y/n]" question — Claude Code's permission prompt on `inject_commit` IS the user's single gate; the ledger row is only written if they approve.
-4. If the user denies the permission prompt, STOP — nothing is recorded.
-"""
-    raise ValueError(f"unknown verb {verb!r}")
+def _skill_body(skill: Skill) -> str:
+    """Render one verb's ``SKILL.md`` — Claude frontmatter (the `name:` is the
+    `/command`; `allowed-tools` lists only the un-gated draft tool so the
+    commit tool's permission prompt stays the human accept moment) + the
+    shared dialect-substituted procedure body."""
+    return (
+        "---\n"
+        f"name: {skill.slug}\n"
+        f"description: {skill.description}\n"
+        "disable-model-invocation: true\n"
+        "allowed-tools:\n"
+        f"  - {_DIALECT.tool_ref(skill.allowed_tool)}\n"
+        "---\n\n"
+        f"# {_DIALECT.invocation(skill.slug)}{skill.arg_hint} — {skill.title}\n\n"
+        f"{skill.body(_DIALECT)}\n"
+    )
 
 
 def _target_root(scope: str) -> Path:
@@ -250,14 +168,13 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
     needs the path; we keep the signature uniform anyway (M11 follow-up P3)."""
     root = _target_root(scope)
     ops: list[FileOp] = []
-    for verb, desc, draft_tool in _VERBS:
-        body = _skill_body(verb, draft_tool)
+    for skill in REGISTRY:
         ops.append(
             FileOp(
                 kind="create",
-                path=root / "skills" / verb / "SKILL.md",
-                payload=body,
-                description=f"`/{verb}` skill — {desc}",
+                path=root / "skills" / skill.slug / "SKILL.md",
+                payload=_skill_body(skill),
+                description=f"`/{skill.slug}` skill — {skill.description}",
             )
         )
     ops.extend(_hook_ops(scope))
