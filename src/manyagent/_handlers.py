@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
 from manyagent.bank import Bank
-from manyagent.utils import config, messages, sid, ui
+from manyagent.utils import config, messages, ui
 
 # These three helpers stay in manyagent.cli (CLI-state and prompt helpers); import
 # them lazily inside handlers to avoid circular import at module load.
@@ -273,7 +274,7 @@ async def _emit_post(
     from manyagent.cli import _noninteractive, ask_allow, ask_commit
 
     record: dict[str, Any] = {
-        "id": f"{sid_}/{sid.new().replace('-', '').lower()[:8]}",
+        "id": f"{sid_}/{uuid.uuid4().hex[:8]}",
         "session_id": sid_,
         "type": "post",
         "agent_id": agent_id,

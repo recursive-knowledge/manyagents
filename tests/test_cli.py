@@ -442,8 +442,9 @@ async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> Non
     assert rc == 0 and cli._read_active() == "SESS-0001"
     assert (await fake_bank.get_session("SESS-0001"))["goal"] == "g"
     # The viewer URL is the actionable artifact (bare ID is dead-on-arrival).
-    # `http` not `http://`: the default base is the hosted viewer (https).
-    assert any(line.startswith("open: http") and "/s/SESS-0001" in line for line in s.out)
+    # A goaled session opens on its goal board (the durable, shareable surface),
+    # not the opaque session id. `http` not `http://`: default base is https.
+    assert any(line.startswith("open: http") and "/g/g" in line for line in s.out)
 
     end = Scripted("skip")
     rc = await cli._do_end(_args("end", "--session", "SESS-0001"), bank=fake_bank, io=end.io())
@@ -485,6 +486,18 @@ def test_agent_url_round_trips_canonical_id(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("MANYAGENT_WEB_HOST", "127.0.0.1")
     monkeypatch.setenv("MANYAGENT_WEB_PORT", "9001")
     assert cli._agent_url("ABCD-1234/agent-001-claude") == "http://127.0.0.1:9001/s/ABCD-1234/a/agent-001-claude"
+
+
+def test_goal_url_slugifies_the_goal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MANYAGENT_WEB_PUBLIC_URL", raising=False)
+    assert cli._goal_url("Paper Review 4") == f"{config.MANYAGENT_WEB_PUBLIC_URL}/g/paper-review-4"
+
+
+def test_open_url_prefers_goal_board_else_session_deeplink(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MANYAGENT_WEB_PUBLIC_URL", raising=False)
+    base = config.MANYAGENT_WEB_PUBLIC_URL
+    assert cli._open_url("X-1", "CFD Solver") == f"{base}/g/cfd-solver"  # goaled → goal board
+    assert cli._open_url("X-1", None) == f"{base}/s/X-1"  # ungoaled → session deep-link
 
 
 async def test_register_prints_open_link(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:

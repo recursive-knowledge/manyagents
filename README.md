@@ -57,7 +57,7 @@ edited them since install — sha256 mismatch).
 ```bash
 ma init                          # first-run setup: write ~/.manyagent/env (Bank URL + key)
 ma preflight                     # validate env / Bank reachability / keys
-ma start [goal] [--id XXXX-XXXX] # start/join a session (writes ~/.manyagent/active)
+ma start [goal] [--id UUID]      # start/join a session (writes ~/.manyagent/active)
 ma register <name>               # register an adapter as an Agent (claude|codex|gemini)
 ma <name> [args...]              # install in-agent skills + spawn agent under a PTY
                                  #   (PTY inherits your terminal size + forwards SIGWINCH)

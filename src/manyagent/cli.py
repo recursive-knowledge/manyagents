@@ -33,7 +33,7 @@ from rich.text import Text
 
 from manyagent import __version__
 from manyagent.bank import Bank, get_bank
-from manyagent.utils import config, messages, sid, ui
+from manyagent.utils import config, messages, sid, slug, ui
 
 # --------------------------------------------------------------------------- #
 # pure helpers (unit-testable in isolation, no I/O)
@@ -233,8 +233,8 @@ def _sigint_handler(signum: int, frame: object) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _session_url(session_id: str) -> str:
-    """Build the viewer URL for a session id.
+def _web_base() -> str:
+    """The viewer's base URL, no path.
 
     The hosted viewer's base URL (`MANYAGENT_WEB_PUBLIC_URL`, default
     swarms.formulacode.org) wins; set it EMPTY to fall back to the local bind
@@ -243,12 +243,30 @@ def _session_url(session_id: str) -> str:
     `127.0.0.1` so the line is clickable when copy/pasted."""
     base = config.resolve("MANYAGENT_WEB_PUBLIC_URL", config.MANYAGENT_WEB_PUBLIC_URL).strip().rstrip("/")
     if base:
-        return f"{base}/s/{session_id}"
+        return base
     host = config.resolve("MANYAGENT_WEB_HOST", config.MANYAGENT_WEB_HOST) or "127.0.0.1"
     if host == "0.0.0.0":  # noqa: S104 — defensive REWRITE of an unreachable wildcard, not a bind
         host = "127.0.0.1"
     port = int(config.resolve("MANYAGENT_WEB_PORT", config.MANYAGENT_WEB_PORT, cast=int))
-    return f"http://{host}:{port}/s/{session_id}"
+    return f"http://{host}:{port}"
+
+
+def _session_url(session_id: str) -> str:
+    """The session deep-link (`…/s/{session}`) — used for agent/trace links."""
+    return f"{_web_base()}/s/{session_id}"
+
+
+def _goal_url(goal: str) -> str:
+    """The goal board (`…/g/{slug}`) — the durable, shareable surface. The slug
+    is the URL-normalized goal (manyagent.utils.slug); ids are UUIDs and not
+    meant for humans to read in a URL."""
+    return f"{_web_base()}/g/{slug.slugify(goal)}"
+
+
+def _open_url(session_id: str, goal: str | None) -> str:
+    """The `open:` link `ma start` prints: the goal board when the session has a
+    goal, else the session deep-link (an ungoaled session has no goal board)."""
+    return _goal_url(goal) if goal else _session_url(session_id)
 
 
 def _agent_url(agent_id: str) -> str:
@@ -484,10 +502,10 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
     if args.goal:
         line.append(f"  goal={args.goal!r}", style="dim")
     io[1](ui.render(line))
-    io[1](ui.render(Text.assemble(("open: ", "dim"), (_session_url(session_id), "underline cyan"))))
     # Sensible defaults (2026-06-10): the session-start moments — goal
     # continuity, quarantine visibility, the stale-goal cross-distill nudge,
     # and the inject offer. All best-effort: never block `manyagent start`.
+    goal = args.goal  # refined below; the `open:` link is printed with the final goal
     try:
         default_goal = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
         goal = args.goal or await _offer_goal_continuity(session_id, bank=bank, io=io)
@@ -508,6 +526,9 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
             await _offer_goal_context(session_id, goal, bank=bank, io=io)
     except Exception as exc:
         io[1](ui.render(Text(f"manyagent: start-time offers skipped ({type(exc).__name__}: {exc})", style="yellow")))
+    # The viewer URL is the actionable artifact — point it at the goal board (the
+    # durable, shareable surface) once the goal is resolved; ungoaled → /s/{id}.
+    io[1](ui.render(Text.assemble(("open: ", "dim"), (_open_url(session_id, goal), "underline cyan"))))
     return 0
 
 
@@ -1289,7 +1310,7 @@ _EPILOG = """\
 session lifecycle (the only verbs on this CLI):
   ma init                          first-run setup: write ~/.manyagent/env (Bank URL + key; loaded from any directory)
   ma preflight                     validate env / Bank reachability / keys
-  ma start [goal] [--id XXXX-XXXX] start/join a session (goal defaults to 'misc'; writes ~/.manyagent/active)
+  ma start [goal] [--id UUID]      start/join a session (goal defaults to 'misc'; writes ~/.manyagent/active)
   ma register <name>               register an adapter as an Agent
   ma <name> [args...]              install in-agent skills + run the wrapped agent under a PTY
   ma end [--session id]            end the session (optional ★ prompt)

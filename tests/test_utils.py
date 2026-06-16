@@ -53,32 +53,42 @@ def test_sid_new_retries_on_forced_collision() -> None:
     assert sid.is_valid(out)
 
 
-def test_sid_parse_normalizes_case_hyphen_and_crockford_aliases() -> None:
+def test_sid_new_is_a_canonical_uuid4() -> None:
+    import uuid as _uuid
+
+    s = sid.new()
+    assert _uuid.UUID(s).version == 4
+    assert s == s.lower() and len(s) == 36 and s.count("-") == 4
+    assert "/" not in s  # keeps {session_id}/{suffix} packet ids unambiguous
+
+
+def test_sid_parse_normalizes_case_whitespace_and_hyphenless() -> None:
     canonical = sid.new()
-    body = canonical.replace("-", "")
-    assert sid.parse(canonical.lower()) == canonical  # lowercase
-    assert sid.parse(body) == canonical  # missing hyphen
-    assert sid.parse(f"  {canonical.lower()}  ") == canonical  # whitespace
-    # Crockford aliases: I/L -> 1, O -> 0
-    assert sid.parse("OIL0OIL0") == sid.parse("01100110") == "0110-0110"
+    assert sid.parse(canonical.upper()) == canonical  # case
+    assert sid.parse(f"  {canonical.upper()}  ") == canonical  # whitespace
+    assert sid.parse(canonical) == canonical  # idempotent on canonical
+    assert sid.parse(canonical.replace("-", "")) == canonical  # no-hyphen 32-hex form
 
 
 @pytest.mark.parametrize(
     "bad",
     [
-        "CMA1FJ2P",  # missing hyphen (not canonical)
-        "CMA1-FJ2",  # too short
-        "CMA1-FJ2PP",  # too long
-        "cma1-fj2p",  # lowercase (not canonical)
-        "CMAI-FJ2P",  # contains 'I' (excluded from encode alphabet)
-        "CMAL-FJ2P",  # contains 'L'
-        "CMAO-FJ2P",  # contains 'O'
-        "CMAU-FJ2P",  # contains 'U'
-        "CMA1FJ-2P",  # hyphen misplaced
+        "",
+        "not-a-uuid",
+        "CMA1-FJ2P",  # the old Crockford shape is no longer valid
+        "12345678-1234-1234-1234-12345678",  # last group too short
+        "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",  # non-hex
     ],
 )
-def test_sid_is_valid_rejects_bad_forms(bad: str) -> None:
+def test_sid_is_valid_rejects_non_canonical(bad: str) -> None:
     assert sid.is_valid(bad) is False
+
+
+def test_sid_is_valid_rejects_parseable_but_non_canonical_forms() -> None:
+    s = sid.new()
+    assert sid.is_valid(s.upper()) is False  # canonical is lowercase
+    assert sid.is_valid("{" + s + "}") is False  # brace form
+    assert sid.is_valid(s.replace("-", "")) is False  # no-hyphen 32-hex form
 
 
 def test_sid_is_valid_accepts_canonical_and_roundtrips() -> None:
@@ -88,9 +98,9 @@ def test_sid_is_valid_accepts_canonical_and_roundtrips() -> None:
 
 
 def test_sid_parse_rejects_unfixable() -> None:
-    with pytest.raises(ValueError, match=r"symbols?"):
-        sid.parse("CMAU-FJ2P")  # U has no Crockford decode alias
-    with pytest.raises(ValueError, match=r"symbols"):
+    with pytest.raises(ValueError, match="UUID"):
+        sid.parse("definitely not a uuid")
+    with pytest.raises(ValueError, match="UUID"):
         sid.parse("SHORT")
 
 
