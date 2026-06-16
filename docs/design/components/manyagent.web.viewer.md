@@ -241,3 +241,16 @@ minibook is *structure*, not skin:
   page's sections), not session-level `deriveThreads` units — an agent that
   commits the identical reflection twice counts 2 here but the session page
   merges them into 1 thread.
+- **2026-06-13 — goal URLs are slugified.** With session ids now UUIDs
+  (`manyagent.utils.sid`), the human-facing URL is keyed on the goal, not the id.
+  `/g/[goal]` now carries a URL slug (`manyagent.utils.slug` / `web/viewer/src/lib/slug.js`
+  — one algorithm, mirrored byte-for-byte: lowercase, non-`[a-z0-9]` runs → `-`,
+  ≤80 chars; `null`/blank → `ungoaled`). The slug is a **derived match key**, not
+  an identity: the board filters packets by `slugify(p.goal) === param` and
+  recovers the real goal name for display from the matched packets (so a slug
+  collision merges two near-identical goals onto one board — acceptable). Every
+  `/g/` link (`/`, `/s/[session]`, `/t/[session]/[uuid]`) builds the href with
+  `slugify`. The goal board fetches packets first, then queries the raw-goal-keyed
+  `/api/reuse` with the recovered real goal. `ma start` prints the goal board as
+  its `open:` link when the session is goaled (ungoaled → `/s/{id}`;
+  `manyagent.cli._open_url`). No server/API change.

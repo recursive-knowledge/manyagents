@@ -3,9 +3,11 @@
 	import { goto } from "$app/navigation";
 	import { getSession, listAgents } from "$lib/api.js";
 	import { deriveThreads, timeAgo } from "$lib/explorer.js";
+	import { slugify } from "$lib/slug.js";
 	import ThreadRow from "$components/ThreadRow.svelte";
 	import CrumbBar from "$components/CrumbBar.svelte";
 	import AgentLink from "$components/AgentLink.svelte";
+	import Collapsible from "$components/Collapsible.svelte";
 
 	let session = null;
 	let packets = [];
@@ -55,12 +57,16 @@
 	}
 
 	$: threads = deriveThreads(packets);
-	$: rawCount = packets.filter((p) => p.type === "raw").length;
+	$: traces = packets
+		.filter((p) => p.type === "raw")
+		.slice()
+		.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+	$: rawCount = traces.length;
 	$: bundles = packets.filter((p) => p.type === "distill");
 	$: crumbs = [
 		{ label: "Feed", href: "/" },
 		...(session?.goal
-			? [{ label: `/${session.goal}`, href: `/g/${encodeURIComponent(session.goal)}`, mono: true }]
+			? [{ label: `/${session.goal}`, href: `/g/${slugify(session.goal)}`, mono: true }]
 			: []),
 		{ label: sessionId, mono: true }
 	];
@@ -82,17 +88,15 @@
 		</div>
 	{:else}
 		<div class="session-head">
-			<h1 class="mono">session {sessionId}</h1>
-			<div class="facts muted">
-				{#if session?.created_at}
-					started {timeAgo(session.created_at)} ·
-				{/if}
-				{threads.length} conversation{threads.length === 1 ? "" : "s"}
-				{#if bundles.length > 0}
-					· {bundles.length} bundle{bundles.length === 1 ? "" : "s"}{/if}
-				{#if rawCount > 0}
-					· {rawCount} raw trace{rawCount === 1 ? "" : "s"} (bodies not public)
-				{/if}
+			<span class="eyebrow muted">Goal</span>
+			{#if session?.goal}
+				<a class="goal-title mono" href="/g/{slugify(session.goal)}">/{session.goal}</a>
+			{:else}
+				<span class="goal-title muted">(ungoaled)</span>
+			{/if}
+			<div class="sub muted">
+				session <span class="mono">{sessionId}</span>
+				{#if session?.status} · {session.status}{/if}
 			</div>
 			{#if agents.length > 0}
 				<ul class="agents">
@@ -108,6 +112,20 @@
 			{/if}
 		</div>
 
+		<Collapsible label="Session stats">
+			<table class="stats">
+				<tbody>
+					{#if session?.created_at}
+						<tr><th>Started</th><td>{timeAgo(session.created_at)}</td></tr>
+					{/if}
+					<tr><th>Conversations</th><td>{threads.length}</td></tr>
+					<tr><th>Bundles</th><td>{bundles.length}</td></tr>
+					<tr><th>Raw traces</th><td>{rawCount}</td></tr>
+					<tr><th>Agents</th><td>{agents.length}</td></tr>
+				</tbody>
+			</table>
+		</Collapsible>
+
 		{#if threads.length === 0}
 			<div class="state">No conversations in this session.</div>
 		{:else}
@@ -116,6 +134,24 @@
 					<li><ThreadRow thread={t} /></li>
 				{/each}
 			</ul>
+		{/if}
+
+		{#if traces.length > 0}
+			<section class="traces">
+				<h2 class="sec-title">Traces ({traces.length})</h2>
+				<ul class="trace-list">
+					{#each traces as p (p.id)}
+						<li>
+							<a class="trace-item" href="/t/{encodeURIComponent(sessionId)}/{encodeURIComponent(p.id.split('/')[1] ?? '')}">
+								<span class="pill pill-raw">raw trace</span>
+								<span class="mono">{(p.id.split("/")[1] ?? p.id).slice(0, 8)}</span>
+								<span class="muted">— replay · text · conversation</span>
+								<span class="trace-when muted">{timeAgo(p.created_at)}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			</section>
 		{/if}
 	{/if}
 </main>
@@ -133,18 +169,48 @@
 	.session-head {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: 4px;
 	}
 
-	h1 {
-		font-size: 1.05rem;
+	.eyebrow {
+		font-size: 0.68rem;
 		font-weight: 700;
-		margin: 0;
-		color: var(--text-primary);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
 	}
 
-	.facts {
+	.goal-title {
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		color: var(--accent-primary);
+		word-break: break-word;
+	}
+
+	.goal-title:hover {
+		text-decoration: underline;
+	}
+
+	.sub {
 		font-size: 0.82rem;
+	}
+
+	.stats {
+		border-collapse: collapse;
+		font-size: 0.82rem;
+	}
+
+	.stats th {
+		text-align: left;
+		font-weight: 500;
+		color: var(--text-muted);
+		padding: 3px var(--space-lg) 3px 0;
+	}
+
+	.stats td {
+		font-family: var(--mono);
+		color: var(--text-primary);
+		padding: 3px 0;
 	}
 
 	.agents {
@@ -170,6 +236,49 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	.sec-title {
+		font-family: var(--sans);
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-secondary);
+		margin: 0 0 var(--space-sm);
+	}
+
+	.trace-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.trace-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--bg-primary);
+		border: 1px solid var(--border-primary);
+		border-radius: var(--radius);
+		color: var(--text-primary);
+		font-size: 0.82rem;
+		transition: border-color 140ms;
+	}
+
+	.trace-item:hover {
+		border-color: var(--border-strong);
+		text-decoration: none;
+	}
+
+	.trace-when {
+		margin-left: auto;
+		font-size: 0.74rem;
 	}
 
 	.state {

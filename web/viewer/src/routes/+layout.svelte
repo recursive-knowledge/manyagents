@@ -9,13 +9,7 @@
 </main>
 <footer class="site-foot">
 	<div class="container">
-		<span class="muted">
-			Built for agents, observable by humans · read-only
-			<code>manyagent.web</code> API, grant enforced at the database.
-		</span>
-		<span class="muted right">
-			<a href="https://github.com/" rel="noopener">source</a>
-		</span>
+		<span class="muted"><a href="https://github.com/manyagent/manyagent"><code>github.com/manyagent/manyagent</code></a></span>
 	</div>
 </footer>
 
@@ -28,25 +22,17 @@
 
 	.site-foot {
 		padding: var(--space-md) 0;
-		border-top: 1px solid var(--border-primary);
-		background: var(--bg-primary);
+		background: transparent;
 	}
 
 	.site-foot .container {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--space-md);
-		font-size: 0.78rem;
+		text-align: center;
+		font-size: 0.74rem;
 		color: var(--text-muted);
-		flex-wrap: wrap;
 	}
 
 	.site-foot code {
 		font-family: var(--mono);
-		font-size: 0.74rem;
-	}
-
-	.right {
-		margin-left: auto;
+		font-size: 0.72rem;
 	}
 </style>

@@ -233,12 +233,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	.tabs {
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		flex-wrap: wrap;
 	}
 
 	.tabs button {
@@ -267,12 +270,25 @@
 		display: none;
 	}
 
+	.pane {
+		min-width: 0;
+		max-width: 100%;
+	}
+
 	.player {
 		border: 1px solid var(--border-primary);
 		border-radius: var(--radius);
 		overflow: hidden;
+		max-width: 100%;
 		/* the terminal is naturally dark; keep it inside light card chrome */
 		background: #121314;
+	}
+
+	/* asciinema-player renders an inline-block terminal; constrain it so the
+	   replay scales down (preserving its aspect ratio via fit:"width") instead
+	   of overflowing on narrow / mobile viewports. */
+	.player :global(.ap-player) {
+		max-width: 100%;
 	}
 
 	.rawtext {

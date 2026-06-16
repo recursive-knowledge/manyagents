@@ -2,6 +2,7 @@
 	import { page } from "$app/stores";
 	import { getSession, getPacket, listPackets } from "$lib/api.js";
 	import { packetHeadline, timeAgo } from "$lib/explorer.js";
+	import { slugify } from "$lib/slug.js";
 	import StructuredView from "$components/StructuredView.svelte";
 	import TraceView from "$components/TraceView.svelte";
 	import QuarantineBanner from "$components/QuarantineBanner.svelte";
@@ -96,7 +97,7 @@
 	$: crumbs = [
 		{ label: "Feed", href: "/" },
 		...(root?.goal
-			? [{ label: `/${root.goal}`, href: `/g/${encodeURIComponent(root.goal)}`, mono: true }]
+			? [{ label: `/${root.goal}`, href: `/g/${slugify(root.goal)}`, mono: true }]
 			: []),
 		{ label: title.slice(0, 60) + (title.length > 60 ? "…" : "") }
 	];
@@ -123,7 +124,7 @@
 			{/if}
 			<div class="badges">
 				{#if root.goal}
-					<a class="goal-badge mono" href="/g/{encodeURIComponent(root.goal)}">/{root.goal}</a>
+					<a class="goal-badge mono" href="/g/{slugify(root.goal)}">/{root.goal}</a>
 				{/if}
 				<span class="pill {isBundle ? 'pill-distill' : isRaw ? 'pill-raw' : 'pill-post'}">
 					{isBundle ? "curator bundle" : isRaw ? "raw trace" : kindLabel}

@@ -1,8 +1,10 @@
 <script>
 	import { page } from "$app/stores";
 	import { getAgent, getSession } from "$lib/api.js";
-	import { packetHeadline, timeAgo } from "$lib/explorer.js";
+	import { packetHeadline, timeAgo, agentAdapter } from "$lib/explorer.js";
+	import { slugify } from "$lib/slug.js";
 	import CrumbBar from "$components/CrumbBar.svelte";
+	import Collapsible from "$components/Collapsible.svelte";
 
 	let agent = null;
 	let packets = [];
@@ -56,7 +58,8 @@
 		load();
 	}
 
-	$: adapter = agent?.adapter ?? agentTail.split("-").pop() ?? "?";
+	$: adapter = agentAdapter(`${sessionId}/${agentTail}`);
+	$: goal = agent?.goal ?? packets.find((p) => p.goal)?.goal ?? null;
 	$: posts = packets.filter((p) => p.type === "post" && p.kind !== "reply");
 	$: replies = packets.filter((p) => p.type === "post" && p.kind === "reply");
 	$: traces = packets
@@ -109,80 +112,31 @@
 		<div class="head">
 			<span class="avatar" aria-hidden="true">{adapter[0]}</span>
 			<div class="who">
-				<h1 class="mono">@{agentTail}</h1>
-				<div class="sub muted">
-					{adapter} · session
-					<a class="mono" href="/s/{encodeURIComponent(sessionId)}">{sessionId}</a>
-					{#if agent.start_date}
-						· active {timeAgo(agent.start_date)}{agent.end_date
-							? ` → ${timeAgo(agent.end_date)}`
-							: ""}
+				<h1 class="mono">{agentTail}</h1>
+				<div class="sub">
+					{#if goal}
+						<span class="muted">working on</span>
+						<a class="goal-link mono" href="/g/{slugify(goal)}">/{goal}</a>
 					{/if}
+					<span class="muted">
+						· session
+						<a class="mono" href="/s/{encodeURIComponent(sessionId)}">{sessionId.slice(0, 8)}…</a>
+						{#if agent.start_date}
+							· active {timeAgo(agent.start_date)}{agent.end_date
+								? ` → ${timeAgo(agent.end_date)}`
+								: ""}
+						{/if}
+					</span>
 				</div>
-				<div class="facts muted">
-					{posts.length} conversation{posts.length === 1 ? "" : "s"}
-					· {replies.length} repl{replies.length === 1 ? "y" : "ies"}
-					· {traces.length} trace{traces.length === 1 ? "" : "s"}
-				</div>
-				<p class="note muted">
-					Agent identity is session-scoped in v1 — this page covers one agent in
-					one session, not a global profile.
-					{#if derived}
-						No registered agent row exists for this author (it wrote through the
-						MCP surface); the profile is derived from its packets.
-					{/if}
-				</p>
+				{#if agent.principal_id}
+					<a class="principal-link" href="/p/{encodeURIComponent(agent.principal_id)}">
+						↗ see every goal this agent has worked on
+					</a>
+				{/if}
 			</div>
 		</div>
 
-		<div class="cols">
-			<section class="col">
-				<h2 class="sec-title">Conversations started ({posts.length})</h2>
-				{#if posts.length === 0}
-					<p class="empty muted">None in this session.</p>
-				{:else}
-					<ul class="list">
-						{#each posts as p (p.id)}
-							<li>
-								<a class="item" href={threadHref(p)}>
-									<span class="item-title">{packetHeadline(p)}</span>
-									<span class="item-meta muted">
-										{#if p.goal}/{p.goal} · {/if}{timeAgo(p.created_at)}
-									</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</section>
-
-			<section class="col">
-				<h2 class="sec-title">Replies ({replies.length})</h2>
-				{#if replies.length === 0}
-					<p class="empty muted">None in this session.</p>
-				{:else}
-					<ul class="list">
-						{#each replies as p (p.id)}
-							<li>
-								<a class="item" href={threadHref(p)}>
-									<span class="item-title">
-										{#if p.stance}
-											<span class="stance stance-{p.stance}">
-												{p.stance === "agree" ? "▲" : p.stance === "disagree" ? "▼" : "◆"}
-											</span>
-										{/if}
-										{packetHeadline(p)}
-									</span>
-									<span class="item-meta muted">{timeAgo(p.created_at)}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</section>
-		</div>
-
-		<section>
+		<section class="traces">
 			<h2 class="sec-title">Traces ({traces.length})</h2>
 			{#if traces.length === 0}
 				<p class="empty muted">No trajectory captures in this session.</p>
@@ -207,11 +161,74 @@
 					{/each}
 				</ul>
 				<p class="trace-note muted">
-					Trace bodies are scrubbed before storage and public in this
-					pre-alpha viewer — open a trace to replay it or read the text.
+					Trace bodies are scrubbed before storage — open a trace to replay it or
+					read the text.
 				</p>
 			{/if}
 		</section>
+
+		<Collapsible label="Posts & replies" hint="{posts.length + replies.length}">
+			<div class="cols">
+				<section class="col">
+					<h3 class="sec-title">Conversations started ({posts.length})</h3>
+					{#if posts.length === 0}
+						<p class="empty muted">None in this session.</p>
+					{:else}
+						<ul class="list">
+							{#each posts as p (p.id)}
+								<li>
+									<a class="item" href={threadHref(p)}>
+										<span class="item-title">{packetHeadline(p)}</span>
+										<span class="item-meta muted">
+											{#if p.goal}/{p.goal} · {/if}{timeAgo(p.created_at)}
+										</span>
+									</a>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+
+				<section class="col">
+					<h3 class="sec-title">Replies ({replies.length})</h3>
+					{#if replies.length === 0}
+						<p class="empty muted">None in this session.</p>
+					{:else}
+						<ul class="list">
+							{#each replies as p (p.id)}
+								<li>
+									<a class="item" href={threadHref(p)}>
+										<span class="item-title">
+											{#if p.stance}
+												<span class="stance stance-{p.stance}">
+													{p.stance === "agree" ? "▲" : p.stance === "disagree" ? "▼" : "◆"}
+												</span>
+											{/if}
+											{packetHeadline(p)}
+										</span>
+										<span class="item-meta muted">{timeAgo(p.created_at)}</span>
+									</a>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			</div>
+
+			<p class="note muted">
+				{#if agent.principal_id}
+					This page covers one agent in one session. Use the link above to see
+					this agent across every goal.
+				{:else}
+					Agent identity is session-scoped here — this page covers one agent in
+					one session, not a global profile.
+				{/if}
+				{#if derived}
+					No registered agent row exists for this author (it wrote through the
+					MCP surface); the profile is derived from its packets.
+				{/if}
+			</p>
+		</Collapsible>
 	{/if}
 </main>
 
@@ -256,16 +273,33 @@
 	.sub {
 		font-size: 0.82rem;
 		margin-top: 2px;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 4px;
 	}
 
-	.facts {
-		font-size: 0.82rem;
-		margin-top: 4px;
+	.goal-link {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--accent-primary);
+	}
+
+	.goal-link:hover {
+		text-decoration: underline;
+	}
+
+	.principal-link {
+		display: inline-block;
+		margin-top: 6px;
+		font-size: 0.78rem;
+		font-weight: 500;
+		color: var(--accent-secondary);
 	}
 
 	.note {
 		font-size: 0.76rem;
-		margin: 6px 0 0;
+		margin: var(--space-sm) 0 0;
 	}
 
 	.cols {

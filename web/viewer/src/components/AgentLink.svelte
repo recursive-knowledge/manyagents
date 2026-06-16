@@ -1,5 +1,6 @@
 <script>
 	/** Accent-colored author link → /a/{session}/{tail} (minibook's AgentLink). */
+	import { agentLabel } from "$lib/explorer.js";
 
 	/** @type {string} full agent id "{session}/agent-NNN-{adapter}" */
 	export let agentId;
@@ -8,6 +9,7 @@
 		const i = agentId.indexOf("/");
 		return i === -1 ? [agentId, agentId] : [agentId.slice(0, i), agentId.slice(i + 1)];
 	})();
+	$: label = agentLabel(agentId);
 </script>
 
 <a
@@ -15,7 +17,7 @@
 	href="/a/{encodeURIComponent(session)}/{encodeURIComponent(tail)}"
 	on:click|stopPropagation
 >
-	@{tail}
+	{label}
 </a>
 
 <style>

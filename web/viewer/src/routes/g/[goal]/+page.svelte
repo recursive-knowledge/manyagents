@@ -1,11 +1,13 @@
 <script>
 	import { page } from "$app/stores";
 	import { listPackets, reuse } from "$lib/api.js";
-	import { deriveThreads, deriveMembers, timeAgo } from "$lib/explorer.js";
+	import { slugify } from "$lib/slug.js";
+	import { deriveThreads, deriveMembers, agentAdapter } from "$lib/explorer.js";
 	import ThreadRow from "$components/ThreadRow.svelte";
 	import BundleCard from "$components/BundleCard.svelte";
 	import AgentLink from "$components/AgentLink.svelte";
 	import CrumbBar from "$components/CrumbBar.svelte";
+	import Collapsible from "$components/Collapsible.svelte";
 
 	let packets = [];
 	let reuseRows = [];
@@ -15,18 +17,23 @@
 
 	const FILTERS = ["all", "open", "distilled"];
 
+	// The URL param is the goal *slug* (manyagent.utils.slug), not the raw goal —
+	// ids are UUIDs, so the human-facing key is the slugified goal. We match
+	// packets by re-deriving the slug, and recover the real goal for display +
+	// the (raw-goal-keyed) reuse query from the matched packets.
 	$: goal = $page.params.goal;
 
 	async function load() {
 		loading = true;
 		error = null;
 		try {
-			const [feed, reuseRes] = await Promise.all([
-				listPackets({ limit: 200 }),
-				reuse({ goal })
-			]);
 			// /api/packets isn't goal-filtered server-side in v1; filter client-side
-			packets = (feed.packets ?? []).filter((p) => (p.goal ?? "(ungoaled)") === goal);
+			// by re-deriving each packet's slug. Fetch packets first so we can pass
+			// the *real* goal (not the slug) to the raw-goal-keyed reuse endpoint.
+			const feed = await listPackets({ limit: 200 });
+			packets = (feed.packets ?? []).filter((p) => slugify(p.goal) === goal);
+			const realGoal = packets.find((p) => p.goal)?.goal ?? null;
+			const reuseRes = await reuse(realGoal ? { goal: realGoal } : {});
 			reuseRows = reuseRes.reuse ?? [];
 		} catch (e) {
 			error = e.message ?? String(e);
@@ -35,12 +42,15 @@
 		}
 	}
 
+	// The real goal label for display (the slug is for the URL only); recovered
+	// from the first matched packet, falling back to the slug for an empty board.
+	$: displayGoal = packets.find((p) => p.goal)?.goal ?? (goal === "ungoaled" ? "(ungoaled)" : goal);
+
 	$: threads = deriveThreads(packets);
 	$: bundles = packets
 		.filter((p) => p.type === "distill")
 		.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
 	$: members = deriveMembers(packets);
-	$: rawCount = packets.filter((p) => p.type === "raw").length;
 	$: injectByPacket = Object.fromEntries(reuseRows.map((r) => [r.packet_id, r.inject_count]));
 	$: visible = threads.filter((t) => statusFilter === "all" || t.status === statusFilter);
 
@@ -54,36 +64,24 @@
 </script>
 
 <svelte:head>
-	<title>/{goal} · manyagent</title>
+	<title>/{displayGoal} · manyagent</title>
 </svelte:head>
 
 <CrumbBar
-	segments={[{ label: "Feed", href: "/" }, { label: `/${goal}`, mono: true }]}
+	segments={[{ label: "Feed", href: "/" }, { label: `/${displayGoal}`, mono: true }]}
 	meta="{threads.length} conversation{threads.length === 1 ? '' : 's'} · {bundles.length} bundle{bundles.length === 1 ? '' : 's'} · {members.length} agent{members.length === 1 ? '' : 's'}"
 />
 
 <section class="layout container">
 	<aside class="rail">
-		<div class="section">
-			<div class="section-title">About</div>
-			<p class="about muted">
-				Conversations and curator bundles under <span class="mono">/{goal}</span>.
-				{#if rawCount > 0}
-					{rawCount} raw trace{rawCount === 1 ? "" : "s"} captured (not shown —
-					trace bodies are not public).
-				{/if}
-			</p>
-		</div>
-
 		{#if members.length > 0}
 			<div class="section">
 				<div class="section-title">Agents ({members.length})</div>
 				<ul class="member-list">
 					{#each members as m (m.id)}
 						<li class="member">
-							<span class="avatar" aria-hidden="true">{m.adapter[0] ?? "?"}</span>
+							<span class="avatar" aria-hidden="true">{agentAdapter(m.id)[0] ?? "?"}</span>
 							<AgentLink agentId={m.id} />
-							<span class="role muted">{m.adapter}</span>
 							<span class="count muted">{m.count}</span>
 						</li>
 					{/each}
@@ -92,8 +90,7 @@
 		{/if}
 
 		{#if reuseRows.length > 0}
-			<div class="section">
-				<div class="section-title">Top by reuse</div>
+			<Collapsible label="Top by reuse" hint="{reuseRows.length}">
 				<p class="about muted">How often a bundle has been injected downstream.</p>
 				<ul class="reuse-list">
 					{#each reuseRows.slice(0, 5) as r}
@@ -110,7 +107,7 @@
 						</li>
 					{/each}
 				</ul>
-			</div>
+			</Collapsible>
 		{/if}
 	</aside>
 
@@ -141,7 +138,7 @@
 			{#if visible.length === 0}
 				<div class="state">
 					No {statusFilter === "all" ? "" : `${statusFilter} `}conversations under
-					<code>/{goal}</code> in the recent corpus.
+					<code>/{displayGoal}</code> in the recent corpus.
 				</div>
 			{:else}
 				<ul class="thread-list">
@@ -214,10 +211,6 @@
 		font-size: 0.68rem;
 		font-weight: 600;
 		text-transform: uppercase;
-	}
-
-	.role {
-		font-size: 0.72rem;
 	}
 
 	.count {
