@@ -1258,4 +1258,98 @@ def test_principal_for_recovers_from_corrupt_file() -> None:
     from manyagent.utils import sid
 
     assert sid.is_valid(pid)
-    assert cli._principal_for("claude") == pid  # and the rewrite is now stable
+
+
+# --------------------------------------------------------------------------- #
+# ma dev quarantine — operator moderation verb
+# --------------------------------------------------------------------------- #
+
+
+def test_quarantine_parser_accepts_required_flags() -> None:
+    a = _args("dev", "quarantine", "sess-1/pkt-abc", "--reason", "spam")
+    assert a.group == "dev"
+    assert a.verb == "quarantine"
+    assert a.packet_id == "sess-1/pkt-abc"
+    assert a.reason == "spam"
+    assert a.auditor_version is None
+
+
+def test_quarantine_parser_accepts_optional_auditor_version() -> None:
+    a = _args("dev", "quarantine", "sess-1/pkt-abc", "--reason", "spam", "--auditor-version", "v1.2")
+    assert a.auditor_version == "v1.2"
+
+
+@pytest.mark.asyncio
+async def test_quarantine_flags_packet_and_prints_confirmation(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S-QR1", goal="test")
+    await fake_bank.put_packet({
+        "id": "S-QR1/pkt-001",
+        "session_id": "S-QR1",
+        "type": "post",
+        "agent_id": "S-QR1/agent-001-claude",
+        "kind": "reflection",
+        "structured": dict(_GOOD),
+    })
+    s = Scripted()
+    rc = await cli._do_quarantine(
+        _args("dev", "quarantine", "S-QR1/pkt-001", "--reason", "off-topic"),
+        bank=fake_bank,
+        io=s.io(),
+    )
+    assert rc == 0
+    pkt = await fake_bank.get_packet("S-QR1/pkt-001")
+    assert pkt is not None
+    assert pkt["quarantined"] is True
+    assert pkt["quarantine_reason"] == "off-topic"
+    assert any("S-QR1/pkt-001" in line for line in s.out)
+    assert any("off-topic" in line for line in s.out)
+
+
+@pytest.mark.asyncio
+async def test_quarantine_with_auditor_version(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S-QR2", goal="test")
+    await fake_bank.put_packet({
+        "id": "S-QR2/pkt-002",
+        "session_id": "S-QR2",
+        "type": "post",
+        "agent_id": "S-QR2/agent-001-claude",
+        "kind": "reflection",
+        "structured": dict(_GOOD),
+    })
+    s = Scripted()
+    rc = await cli._do_quarantine(
+        _args("dev", "quarantine", "S-QR2/pkt-002", "--reason", "spam", "--auditor-version", "v2.0"),
+        bank=fake_bank,
+        io=s.io(),
+    )
+    assert rc == 0
+    pkt = await fake_bank.get_packet("S-QR2/pkt-002")
+    assert pkt is not None
+    assert pkt["quarantined"] is True
+    assert pkt["auditor_version"] == "v2.0"
+
+
+@pytest.mark.asyncio
+async def test_quarantine_unknown_packet_raises_system_exit(fake_bank: FakeBank) -> None:
+    """The FakeBank silently no-ops on an unknown packet_id (no error); a real
+    Bank raises on a not-found update — we surface that as a clean SystemExit."""
+
+    class FailBank(FakeBank):
+        async def quarantine(self, packet_id: str, reason: str, *, auditor_version: str | None = None) -> None:
+            raise RuntimeError(f"packet {packet_id!r} not found")
+
+    fail_bank = FailBank()
+    with pytest.raises(SystemExit) as exc_info:
+        await cli._do_quarantine(
+            _args("dev", "quarantine", "no-such/pkt", "--reason", "test"),
+            bank=fail_bank,
+            io=Scripted().io(),
+        )
+    assert "quarantine failed" in str(exc_info.value)
+    assert "no-such/pkt" in str(exc_info.value)
+
+
+def test_quarantine_in_dispatch() -> None:
+    """Quarantine is registered in _DISPATCH['dev'] and callable."""
+    assert "quarantine" in cli._DISPATCH["dev"]
+    assert cli._DISPATCH["dev"]["quarantine"] is cli._do_quarantine

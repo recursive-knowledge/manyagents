@@ -547,6 +547,24 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     return 0
 
 
+async def _do_quarantine(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma dev quarantine <packet_id> --reason R`` — flag a packet as quarantined.
+
+    The Bank already exposes ``quarantine()`` (base.py, fake.py); this verb is
+    the operator-facing write surface. Identity: ``trusted`` (authenticated) —
+    migration 00004 grants UPDATE on packets to authenticated, which is what
+    quarantine writes (sets ``quarantined=True`` + metadata). The ``admin``
+    (service_role) identity bypasses RLS and is reserved for DB-level ops;
+    moderation by an operator is an authenticated write, not a service-role op.
+    """
+    try:
+        await bank.quarantine(args.packet_id, args.reason, auditor_version=args.auditor_version)
+    except Exception as exc:
+        raise SystemExit(f"quarantine failed for {args.packet_id!r}: {exc}") from exc
+    io[1](f"quarantined {args.packet_id!r}  reason={args.reason!r}")
+    return 0
+
+
 async def _do_preflight(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
     """``manyagent preflight`` — the env/Bank/keys validator, reachable from the
     installed binary. ``python -m manyagent.preflight`` still works in a checkout,
@@ -1604,6 +1622,10 @@ def _build_parser() -> argparse.ArgumentParser:
     i.add_argument("--cf-access-client-id")
     i.add_argument("--cf-access-client-secret")
     dev_sub.add_parser("preflight", help="validate env / Bank reachability / keys")
+    q = dev_sub.add_parser("quarantine", help="flag a packet as quarantined (moderation)")
+    q.add_argument("packet_id", help="packet id to quarantine (e.g. <session>/<uuid>)")
+    q.add_argument("--reason", required=True, help="human-readable moderation reason")
+    q.add_argument("--auditor-version", help="optional auditor/classifier version tag")
 
     return p
 
@@ -1613,7 +1635,7 @@ def _build_parser() -> argparse.ArgumentParser:
 _DISPATCH: dict[str, dict[str, Callable[..., Coroutine[Any, Any, int]]]] = {
     "agent": {"register": _do_agent_register, "unregister": _do_agent_unregister, "list": _do_agent_list},
     "session": {"start": _do_start, "end": _do_end, "list": _do_session_list},
-    "dev": {"init": _do_init, "preflight": _do_preflight},
+    "dev": {"init": _do_init, "preflight": _do_preflight, "quarantine": _do_quarantine},
 }
 
 
