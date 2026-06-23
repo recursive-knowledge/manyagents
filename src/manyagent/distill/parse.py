@@ -130,10 +130,15 @@ def _clean_insight(
     confidence = str(item.get("confidence") or "").strip().lower()
     if confidence not in CONFIDENCE_LEVELS:
         confidence = "low"
-    # Recurrence promotion (mechanical weighting; manyagent.distill.md:80): a
-    # primitive independently cited by posts from >=2 distinct sessions → high.
-    if len({session_of.get(pid, pid) for pid in cited}) >= 2:
+    # Cross-session support gates 'high' (mechanical weighting;
+    # manyagent.distill.md:80): a primitive independently cited by posts from
+    # >=2 distinct sessions is recurrence → promote to 'high'; a 'high' grounded
+    # in a single session has no cross-session support → demote to 'medium'.
+    cross_session = len({session_of.get(pid, pid) for pid in cited}) >= 2
+    if cross_session:
         confidence = "high"
+    elif confidence == "high":
+        confidence = "medium"
 
     return {
         "text": text,
