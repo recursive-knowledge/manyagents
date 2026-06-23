@@ -6,6 +6,7 @@ distill_model() provider seam (manyagent.adapters.md Verification)."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -282,3 +283,121 @@ def test_headless_complete_applies_adapter_extract(monkeypatch: pytest.MonkeyPat
     )
     model = ClaudeAdapter().distill_model()
     assert model is not None and model.complete("p") == '{"a": 1}'  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- #
+# security: local adapter loader trust-boundary (fix 1)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.skipif(os.name != "posix", reason="creating symlinks needs privilege on Windows")
+def test_local_adapter_symlinked_init_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A symlinked __init__.py must be rejected before exec_module is called."""
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    (real_dir / "init.py").write_text("ADAPTER = None\n")
+    adapter_dir = tmp_path / "myadapter"
+    adapter_dir.mkdir()
+    # Symlink the init file to the real file
+    (adapter_dir / "__init__.py").symlink_to(real_dir / "init.py")
+    with pytest.raises(AdapterError, match="symlink"):
+        resolve("myadapter")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="world-writable bit is POSIX-only (Windows uses ACLs)")
+def test_local_adapter_world_writable_init_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A world-writable __init__.py must be rejected before exec_module is called."""
+    if os.getuid() == 0:  # type: ignore[attr-defined]
+        pytest.skip("root ignores the world-write bit (the check still fires but chmod can't represent owner-only)")
+
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
+    _write_local_adapter(tmp_path, "badperm", "bad-bin")
+    init = tmp_path / "badperm" / "__init__.py"
+    current_mode = init.stat().st_mode
+    init.chmod(current_mode | 0o002)  # set world-writable bit
+    try:
+        with pytest.raises(AdapterError, match="world-writable"):
+            resolve("badperm")
+    finally:
+        init.chmod(current_mode)  # restore so tmp_path cleanup doesn't fail
+
+
+def test_local_adapter_normal_file_still_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plain, owner-only, non-symlinked adapter is accepted unchanged."""
+    monkeypatch.setenv("MANYAGENT_ADAPTERS_DIR", str(tmp_path))
+    _write_local_adapter(tmp_path, "goodperm", "good-bin")
+    resolved = resolve("goodperm")
+    assert resolved.binary == "good-bin"
+
+
+# --------------------------------------------------------------------------- #
+# security: distill prompt via stdin, not argv (fix 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_headless_complete_sends_prompt_via_stdin_not_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The prompt must arrive in stdin_input, not in the argv list, so it is
+    invisible to /proc/<pid>/cmdline and ps(1) output."""
+    import manyagent.adapters.builtin as builtin
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
+        captured["cmd"] = cmd
+        captured["stdin_input"] = kw.get("stdin_input")
+        return 0, "result", "", 0.0
+
+    monkeypatch.setattr(builtin, "run_agent_subprocess", fake_run)
+    model = builtin._HeadlessModel("claude", ["claude", "-p", "--output-format", "json"])
+    model.complete("my long prompt")
+    assert captured["stdin_input"] == "my long prompt"
+    assert "my long prompt" not in captured["cmd"]  # NOT in argv
+
+
+def test_codex_adapter_keeps_prompt_in_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``codex exec`` requires the task as a positional argument; stdin must
+    stay None so the codex CLI's own interactive I/O is not broken."""
+    import manyagent.adapters.builtin as builtin
+    from manyagent.adapters.builtin.codex import CodexAdapter
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
+        captured["cmd"] = cmd
+        captured["stdin_input"] = kw.get("stdin_input")
+        return 0, "done", "", 0.0
+
+    monkeypatch.setattr(builtin, "run_agent_subprocess", fake_run)
+    model = builtin._HeadlessModel("codex", ["codex", "exec"], prompt_via_stdin=False)
+    model.complete("the task")
+    assert captured["stdin_input"] is None
+    assert "the task" in captured["cmd"]
+
+    # Confirm CodexAdapter opts out of stdin via its class attribute
+    assert CodexAdapter._distill_via_stdin is False
+
+
+def test_claude_and_gemini_use_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ClaudeAdapter and GeminiAdapter's distill_model() must use stdin."""
+    import manyagent.adapters.builtin as builtin
+    from manyagent.adapters.builtin.claude import ClaudeAdapter
+    from manyagent.adapters.builtin.gemini import GeminiAdapter
+
+    monkeypatch.setattr(adapters_base.shutil, "which", lambda b: f"/usr/bin/{b}")
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kw: object) -> tuple[int, str, str, float]:
+        captured["cmd"] = cmd
+        captured["stdin_input"] = kw.get("stdin_input")
+        return 0, "{}", "", 0.0
+
+    monkeypatch.setattr(builtin, "run_agent_subprocess", fake_run)
+
+    ClaudeAdapter().distill_model().complete("hello")  # type: ignore[union-attr]
+    assert captured["stdin_input"] == "hello"
+    assert "hello" not in captured["cmd"]
+
+    GeminiAdapter().distill_model().complete("hello")  # type: ignore[union-attr]
+    assert captured["stdin_input"] == "hello"
+    assert "hello" not in captured["cmd"]
