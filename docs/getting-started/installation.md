@@ -29,4 +29,4 @@ suites are opt-in via `MANYAGENT_RUN_INTEGRATION=1` / `MANYAGENT_RUN_ONLINE=1`.
 ## Configuration
 
 Copy `manyagent.env.example` to `manyagent.env` (gitignored) and uncomment the tunables you
-need. Precedence is CLI flag > process env > `manyagent.env` > built-in default.
+need. Precedence is CLI flag > process env > `./manyagent.env` > `~/.manyagent/env` > built-in default.

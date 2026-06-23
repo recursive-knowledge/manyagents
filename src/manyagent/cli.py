@@ -804,7 +804,7 @@ async def _do_run_agent(name: str, agent_args: list[str], goal: str | None, *, b
         io[1](
             ui.render(
                 Text(
-                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `manyagent status`",
+                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `ma agent list`",
                     style="yellow",
                 )
             )

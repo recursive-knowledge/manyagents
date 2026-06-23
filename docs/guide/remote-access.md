@@ -100,7 +100,7 @@ overriding the connection tunables (`manyagent.utils`, documented in `manyagent.
 export MANYAGENT_BANK_URL=https://db-swarms.formulacode.org
 export MANYAGENT_BANK_ANON_KEY=...      # the anon key for your (rotated) stack
 export MANYAGENT_BANK_TRUSTED_KEY=...   # only on writers
-ma preflight                            # validates env + Bank reachability + keys
+ma dev preflight                        # validates env + Bank reachability + keys
 ```
 
 ## Tear down
