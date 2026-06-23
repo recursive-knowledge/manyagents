@@ -16,6 +16,9 @@ import datetime
 import uuid
 from typing import Any
 
+from manyagent.utils.facets import aggregate_goals
+from manyagent.utils.slug import slugify
+
 _last_now = ""
 
 
@@ -122,6 +125,8 @@ class FakeBank:
         session_id: str | None = None,
         type: str | None = None,
         goal: str | None = None,
+        goal_slug: str | None = None,
+        roots_only: bool = False,
         since: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -134,6 +139,10 @@ class FakeBank:
             rows = [r for r in rows if r.get("type") == type]
         if goal is not None:
             rows = [r for r in rows if r.get("goal") == goal]
+        if goal_slug is not None:
+            rows = [r for r in rows if slugify(r.get("goal")) == goal_slug]
+        if roots_only:
+            rows = [r for r in rows if r.get("reply_to") is None]
         if not include_quarantined:
             rows = [r for r in rows if not r.get("quarantined", False)]
         if since is not None:
@@ -144,6 +153,19 @@ class FakeBank:
         if limit is not None:
             rows = rows[:limit]
         return rows
+
+    async def list_replies(self, parent_ids: list[str]) -> list[dict[str, Any]]:
+        parents = set(parent_ids)
+        rows = [dict(p) for p in self._packets.values() if p.get("type") == "post" and p.get("reply_to") in parents]
+        rows.sort(key=lambda r: (str(r.get("created_at", "")), r["id"]))
+        return rows
+
+    async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+        # Mirror the SQL goal_facets view via the shared reference aggregation.
+        cards = aggregate_goals([dict(p) for p in self._packets.values()])
+        if slug is not None:
+            cards = [c for c in cards if c["slug"] == slug]
+        return cards
 
     # --- traces ---
     async def put_trace(

@@ -312,6 +312,66 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         rows = await b.list_packets(type=type, since=since, limit=lim, cursor=cursor, include_quarantined=True)
         return _page(rows, lim)
 
+    @app.get("/api/goals")
+    async def goals_index() -> Any:
+        # Per-goal facet cards for the home table, read straight from the DB
+        # `goal_facets` view (migration 00012) — the GROUP BY happens in Postgres,
+        # so this is O(goals), never a corpus scan. Newest-active first.
+        rows = await b.list_goal_facets()
+        goals = [
+            {
+                "slug": r["slug"],
+                "label": r.get("label") or "(ungoaled)",
+                "threads": r.get("threads") or 0,
+                "digests": r.get("digests") or 0,
+                "agents": r.get("agents") or 0,
+                "latest": r.get("latest") or "",
+                "latest_distill_bundle": r.get("latest_distill_bundle"),
+                "latest_reflection_structured": r.get("latest_reflection_structured"),
+            }
+            for r in rows
+        ]
+        goals.sort(key=lambda g: g["latest"], reverse=True)
+        return {"goals": goals}
+
+    @app.get("/api/goal/{slug}")
+    async def goal_view(
+        slug: str,
+        limit: int = Query(default=config.MANYAGENT_WEB_PAGE_LIMIT),
+        cursor: str | None = Query(default=None),
+    ) -> Any:
+        # One goal board, paginated and indexed by the slug column (00012) — no
+        # corpus scan. A page of thread ROOTS (`reply_to is null`) plus their
+        # replies in one follow-up query; the header counts come from the
+        # `goal_facets` view, not from counting the page, so they stay whole
+        # across pagination. Digests (curated, few) ride along unpaginated.
+        lim = _clamp_limit(limit)
+        facet_rows = await b.list_goal_facets(slug)
+        facet = facet_rows[0] if facet_rows else {}
+        roots = await b.list_packets(
+            goal_slug=slug, type="post", roots_only=True, limit=lim, cursor=cursor, include_quarantined=True
+        )
+        parent_ids: list[str] = []
+        for r in roots:
+            parent_ids.append(r["id"])  # replies may cite the full id…
+            parent_ids.append(r["id"].split("/")[-1])  # …or the bare uuid
+        replies = await b.list_replies(parent_ids)
+        digests = await b.list_packets(goal_slug=slug, type="distill", include_quarantined=True)
+        goal = facet.get("label") or next((r["goal"] for r in roots if r.get("goal")), None)
+        nxt = make_cursor(roots[-1]) if len(roots) == lim and roots else None
+        return {
+            "slug": slug,
+            "goal": goal,
+            "facets": {
+                "threads": facet.get("threads", 0),
+                "digests": facet.get("digests", 0),
+                "agents": facet.get("agents", 0),
+            },
+            "packets": [_record(r) for r in (*roots, *replies)],
+            "digests": [_record(d) for d in digests],
+            "next_cursor": nxt,
+        }
+
     async def _gated_raw_packet(session: str, p: str) -> str:
         """The shared gate for every trace projection (cast / terminal text /
         renditions). Same rules as ``?include=raw``: when raw isn't readable
@@ -371,7 +431,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         # The same artifact as plain text: replayed through a VT emulator at
         # the recorded geometry and dumped (scrollback + final screen) — what
         # the terminal actually showed, not a regex guess at it.
-        pid, body = await _gated_trace_body(session, p)
+        _pid, body = await _gated_trace_body(session, p)
         try:
             # Worker thread: pyte feeds ~1 MB/s of ANSI — an 855 KB trace is
             # ~0.5 s of CPU that must not block the event loop.

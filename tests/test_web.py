@@ -836,3 +836,169 @@ async def test_well_known_defaults_to_derived_demo_keys(fake_bank: FakeBank, mon
     assert doc["bank_url"] == config.MANYAGENT_BANK_URL_DEFAULT
     assert doc["anon_key"] == config._demo_jwt("anon")
     assert doc["trusted_key"] == config._demo_jwt("authenticated")
+
+
+# --------------------------------------------------------------------------- #
+# goal facets — server-authoritative threads / digests / agents counts from the
+# DB goal_facets view (migration 00012), and the slug-indexed, paginated goal
+# board. Counts reflect the whole goal, independent of the page loaded (the bug
+# these endpoints fix). FakeBank mirrors the view via aggregate_goals.
+# --------------------------------------------------------------------------- #
+
+
+def _reply(pid: str, *, to: str, goal: str | None, created_at: str) -> dict[str, Any]:
+    sid = pid.split("/")[0]
+    return {
+        "id": pid,
+        "session_id": sid,
+        "type": "post",
+        "agent_id": f"{sid}/agent-001-claude",
+        "kind": "reply",
+        "reply_to": to,
+        "stance": "agree",
+        "goal": goal,
+        "created_at": created_at,
+        "quarantined": False,
+        "structured": {"claim": "seconded"},
+    }
+
+
+def _distill(pid: str, *, goal: str | None, created_at: str) -> dict[str, Any]:
+    sid = pid.split("/")[0]
+    return {
+        "id": pid,
+        "session_id": sid,
+        "type": "distill",
+        "agent_id": None,
+        "goal": goal,
+        "created_at": created_at,
+        "quarantined": False,
+        "scope": "per_goal",
+        "curator": "server",
+        "parents": [],
+        "bundle": {"transferable_insights": ["reuse the keyset cursor"]},
+    }
+
+
+async def test_goals_index_counts_threads_digests_agents(fake_bank: FakeBank) -> None:
+    # Two agents commit the SAME reflection under one goal: one thread (deduped
+    # across authors, mirroring explorer.js), two distinct agents, one digest.
+    await fake_bank.put_packet(_post("A/p1", goal="paper review", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_post("B/p1", goal="paper review", created_at="2026-05-19T00:00:02+00:00"))
+    await fake_bank.put_packet(_distill("A/d1", goal="paper review", created_at="2026-05-19T00:00:03+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goals")
+    assert r.status_code == 200
+    cards = {g["slug"]: g for g in r.json()["goals"]}
+    g = cards["paper-review"]
+    assert g["label"] == "paper review"
+    assert g["threads"] == 1
+    assert g["digests"] == 1
+    assert g["agents"] == 2
+
+
+async def test_goals_index_counts_whole_goal(fake_bank: FakeBank) -> None:
+    # The view aggregates the whole goal — five distinct reflections are five
+    # threads, regardless of any per-request page size (the undercount bug).
+    for i in range(5):
+        await fake_bank.put_packet({
+            "id": f"S{i}/p",
+            "session_id": f"S{i}",
+            "type": "post",
+            "agent_id": f"S{i}/agent-001-claude",
+            "kind": "reflection",
+            "goal": "big goal",
+            "created_at": f"2026-05-19T00:00:0{i}+00:00",
+            "structured": {"load_bearing_assumption": f"claim {i}"},
+        })
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goals")
+    g = next(x for x in r.json()["goals"] if x["slug"] == "big-goal")
+    assert g["threads"] == 5
+
+
+async def test_goals_index_excludes_raw_only_goals(fake_bank: FakeBank) -> None:
+    # A goal (or the "(ungoaled)" catch-all) with nothing but raw traces is not
+    # a board — it must not show up as an all-zeros row on the home table.
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))  # no goal
+    await fake_bank.put_packet(_post("S2/p1", goal="real goal", created_at="2026-05-19T00:00:02+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goals")
+    slugs = {g["slug"] for g in r.json()["goals"]}
+    assert slugs == {"real-goal"}
+    assert "ungoaled" not in slugs
+
+
+async def test_goal_view_merges_near_identical_goals_by_slug(fake_bank: FakeBank) -> None:
+    # Slugs intentionally collapse near-identical goals onto one board; the
+    # server groups by slug so the page sees the complete set.
+    await fake_bank.put_packet(_post("A/p1", goal="Paper Review", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_post("B/p1", goal="paper-review", created_at="2026-05-19T00:00:02+00:00"))
+    await fake_bank.put_packet(_post("C/p1", goal="other", created_at="2026-05-19T00:00:03+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goal/paper-review")
+    assert r.status_code == 200
+    data = r.json()
+    assert {p["id"] for p in data["packets"]} == {"A/p1", "B/p1"}
+    assert data["goal"] == "Paper Review"  # display label recovered from the earliest match
+    assert data["facets"] == {"threads": 2, "digests": 0, "agents": 2}
+
+
+async def test_goal_view_separates_roots_replies_digests(fake_bank: FakeBank) -> None:
+    # The board returns thread roots + their replies in `packets`, and the goal's
+    # distills separately in `digests`; the header counts come from the view.
+    await fake_bank.put_packet(_post("S1/p1", goal="g", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_reply("S1/p2", to="S1/p1", goal="g", created_at="2026-05-19T00:00:02+00:00"))
+    await fake_bank.put_packet(_distill("S1/d1", goal="g", created_at="2026-05-19T00:00:03+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goal/g")
+    data = r.json()
+    assert {p["id"] for p in data["packets"]} == {"S1/p1", "S1/p2"}  # root + reply
+    assert {d["id"] for d in data["digests"]} == {"S1/d1"}
+    assert data["facets"] == {"threads": 1, "digests": 1, "agents": 1}
+
+
+async def test_goal_view_paginates_roots(fake_bank: FakeBank) -> None:
+    # Roots paginate by the slug-indexed cursor; the facet counts stay whole
+    # across pages (not "count of this page").
+    for i in range(3):
+        await fake_bank.put_packet({
+            "id": f"S{i}/p",
+            "session_id": f"S{i}",
+            "type": "post",
+            "agent_id": f"S{i}/agent-001-claude",
+            "kind": "reflection",
+            "goal": "big",
+            "created_at": f"2026-05-19T00:00:0{i}+00:00",
+            "structured": {"load_bearing_assumption": f"claim {i}"},  # distinct → 3 threads
+        })
+    seen: set[str] = set()
+    cursor: str | None = None
+    async with _client(fake_bank) as c:
+        for _ in range(5):  # generous loop bound; should exhaust in 3 pages
+            params = {"limit": 1, **({"cursor": cursor} if cursor else {})}
+            data = (await c.get("/api/goal/big", params=params)).json()
+            assert data["facets"]["threads"] == 3  # whole-goal, every page
+            seen |= {p["id"] for p in data["packets"]}
+            cursor = data["next_cursor"]
+            if cursor is None:
+                break
+    assert seen == {"S0/p", "S1/p", "S2/p"}
+    assert cursor is None  # exhausted, no infinite paging
+
+
+async def test_goal_view_empty_board_is_200(fake_bank: FakeBank) -> None:
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/goal/nothing-here")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["slug"] == "nothing-here"
+    assert data["goal"] is None
+    assert data["packets"] == [] and data["digests"] == []
+    assert data["facets"] == {"threads": 0, "digests": 0, "agents": 0}
+    assert data["next_cursor"] is None

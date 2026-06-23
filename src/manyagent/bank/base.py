@@ -48,11 +48,29 @@ class Bank(Protocol):
         session_id: str | None = None,
         type: str | None = None,
         goal: str | None = None,
+        goal_slug: str | None = None,
+        roots_only: bool = False,
         since: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
         include_quarantined: bool = True,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]:
+        """``goal_slug`` filters on the indexed slug column (migration 00012) —
+        the board's goal scope, since one slug merges near-identical goals.
+        ``roots_only`` keeps only thread roots (``reply_to is null``)."""
+        ...
+
+    async def list_replies(self, parent_ids: list[str]) -> list[dict[str, Any]]:
+        """Every reply post whose ``reply_to`` is in ``parent_ids`` (the board
+        loads a page of roots, then their replies in one query). Oldest-first."""
+        ...
+
+    async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+        """Per-goal facet rows from the ``goal_facets`` view (migration 00012):
+        ``slug, label, threads, digests, agents, latest, latest_distill_bundle,
+        latest_reflection_structured``. One row when ``slug`` is given (or none
+        for an empty board); the whole forum-active set otherwise."""
+        ...
 
     # --- traces (raw scrubbed; public per the 2026-06-10 pre-alpha switch) ---
     async def put_trace(

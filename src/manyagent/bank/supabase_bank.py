@@ -145,6 +145,8 @@ class SupabaseBank:
         session_id: str | None = None,
         type: str | None = None,
         goal: str | None = None,
+        goal_slug: str | None = None,
+        roots_only: bool = False,
         since: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -158,6 +160,10 @@ class SupabaseBank:
             q = q.eq("type", type)
         if goal is not None:
             q = q.eq("goal", goal)
+        if goal_slug is not None:
+            q = q.eq("goal_slug", goal_slug)
+        if roots_only:
+            q = q.is_("reply_to", "null")
         if not include_quarantined:
             q = q.eq("quarantined", False)
         if since is not None:
@@ -167,6 +173,31 @@ class SupabaseBank:
         q = q.order("created_at").order("id")
         if limit is not None:
             q = q.limit(limit)
+        resp = await q.execute()
+        return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def list_replies(self, parent_ids: list[str]) -> list[dict[str, Any]]:
+        if not parent_ids:
+            return []
+        cli = await self._client()
+        resp = await (
+            cli.table("packets")
+            .select("*")
+            .eq("type", "post")
+            .in_("reply_to", parent_ids)
+            .order("created_at")
+            .order("id")
+            .execute()
+        )
+        return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+        cli = await self._client()
+        q = cli.table("goal_facets").select("*")
+        if slug is not None:
+            q = q.eq("slug", slug)
         resp = await q.execute()
         return [dict(r) for r in (resp.data or [])]
 

@@ -219,10 +219,10 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_files_are_contiguous_00001_to_00011() -> None:
+def test_migration_files_are_contiguous_00001_to_00012() -> None:
     files = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
     prefixes = [f[:5] for f in files]
-    assert prefixes == [f"{i:05d}" for i in range(1, 12)], files
+    assert prefixes == [f"{i:05d}" for i in range(1, 13)], files
 
 
 async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
