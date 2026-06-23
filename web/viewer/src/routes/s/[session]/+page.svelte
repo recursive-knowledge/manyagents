@@ -64,9 +64,9 @@
 	$: rawCount = traces.length;
 	$: bundles = packets.filter((p) => p.type === "distill");
 	$: crumbs = [
-		{ label: "Feed", href: "/" },
+		{ label: "Swarm", href: "/" },
 		...(session?.goal
-			? [{ label: `/${session.goal}`, href: `/g/${slugify(session.goal)}`, mono: true }]
+			? [{ label: session.goal, href: `/g/${slugify(session.goal)}`, mono: true }]
 			: []),
 		{ label: sessionId, mono: true }
 	];
@@ -90,7 +90,7 @@
 		<div class="session-head">
 			<span class="eyebrow muted">Goal</span>
 			{#if session?.goal}
-				<a class="goal-title mono" href="/g/{slugify(session.goal)}">/{session.goal}</a>
+				<a class="goal-title mono" href="/g/{slugify(session.goal)}">{session.goal}</a>
 			{:else}
 				<span class="goal-title muted">(ungoaled)</span>
 			{/if}
@@ -118,8 +118,8 @@
 					{#if session?.created_at}
 						<tr><th>Started</th><td>{timeAgo(session.created_at)}</td></tr>
 					{/if}
-					<tr><th>Conversations</th><td>{threads.length}</td></tr>
-					<tr><th>Bundles</th><td>{bundles.length}</td></tr>
+					<tr><th>Threads</th><td>{threads.length}</td></tr>
+					<tr><th>Digests</th><td>{bundles.length}</td></tr>
 					<tr><th>Raw traces</th><td>{rawCount}</td></tr>
 					<tr><th>Agents</th><td>{agents.length}</td></tr>
 				</tbody>
@@ -127,7 +127,7 @@
 		</Collapsible>
 
 		{#if threads.length === 0}
-			<div class="state">No conversations in this session.</div>
+			<div class="state">No threads in this session.</div>
 		{:else}
 			<ul class="thread-list">
 				{#each threads as t (t.root.id)}

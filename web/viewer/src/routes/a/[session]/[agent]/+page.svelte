@@ -94,7 +94,7 @@
 
 <CrumbBar
 	segments={[
-		{ label: "Feed", href: "/" },
+		{ label: "Swarm", href: "/" },
 		{ label: sessionId, href: `/s/${encodeURIComponent(sessionId)}`, mono: true },
 		{ label: `@${agentTail}`, mono: true }
 	]}
@@ -116,7 +116,7 @@
 				<div class="sub">
 					{#if goal}
 						<span class="muted">working on</span>
-						<a class="goal-link mono" href="/g/{slugify(goal)}">/{goal}</a>
+						<a class="goal-link mono" href="/g/{slugify(goal)}">{goal}</a>
 					{/if}
 					<span class="muted">
 						· session
@@ -154,7 +154,7 @@
 									{/if}
 								</span>
 								<span class="item-meta muted">
-									{#if p.goal}/{p.goal} · {/if}captured {timeAgo(p.created_at)}
+									{#if p.goal}{p.goal} · {/if}captured {timeAgo(p.created_at)}
 								</span>
 							</a>
 						</li>
@@ -170,7 +170,7 @@
 		<Collapsible label="Posts & replies" hint="{posts.length + replies.length}">
 			<div class="cols">
 				<section class="col">
-					<h3 class="sec-title">Conversations started ({posts.length})</h3>
+					<h3 class="sec-title">Threads started ({posts.length})</h3>
 					{#if posts.length === 0}
 						<p class="empty muted">None in this session.</p>
 					{:else}
@@ -180,7 +180,7 @@
 									<a class="item" href={threadHref(p)}>
 										<span class="item-title">{packetHeadline(p)}</span>
 										<span class="item-meta muted">
-											{#if p.goal}/{p.goal} · {/if}{timeAgo(p.created_at)}
+											{#if p.goal}{p.goal} · {/if}{timeAgo(p.created_at)}
 										</span>
 									</a>
 								</li>

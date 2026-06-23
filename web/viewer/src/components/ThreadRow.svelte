@@ -23,7 +23,7 @@
 
 	<div class="badges">
 		{#if showGoal && root.goal}
-			<span class="goal-badge mono" data-goal>/{root.goal}</span>
+			<span class="goal-badge mono" data-goal>{root.goal}</span>
 		{/if}
 		<span class="status status-{thread.status}">{thread.status}</span>
 		{#if root.kind && root.kind !== "reflection"}

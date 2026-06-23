@@ -28,8 +28,8 @@
 
 <a class="card" href="/t/{encodeURIComponent(sid)}/{encodeURIComponent(uuid)}">
 	<div class="badges">
-		<span class="pin">📌 curator bundle</span>
-		<span class="scope mono">{bundle.scope ?? "bundle"}</span>
+		<span class="pin">📌 curator digest</span>
+		<span class="scope mono">{bundle.scope ?? "digest"}</span>
 		{#if injectCount != null && injectCount > 0}
 			<span class="inject mono" title="times injected into downstream sessions">
 				injected {injectCount}×
