@@ -13,8 +13,12 @@ import manyagent
 
 
 def test_version_and_setup_environment() -> None:
+    from importlib.metadata import version as _dist_version
+
     assert isinstance(manyagent.__version__, str)
-    assert manyagent.__version__ == "0.3.0"
+    # Identity is fixed in pyproject.toml + __init__; assert they agree rather
+    # than hardcoding a literal that goes stale on every release bump.
+    assert manyagent.__version__ == _dist_version("manyagent")
     manyagent.setup_environment()  # idempotent, no manyagent.env present in test cwd
 
 

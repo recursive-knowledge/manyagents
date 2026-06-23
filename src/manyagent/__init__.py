@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import dotenv
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 def setup_environment() -> None:

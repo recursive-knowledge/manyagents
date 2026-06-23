@@ -6,7 +6,7 @@ agent's CLI). Read after [Quickstart](quickstart.md). Reference: `manyagent._ins
 
 ## The seam
 
-`manyagent <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
+`ma <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
 dry_run)` before spawning the PTY. The default ABC implementation
 (`manyagent.adapters.base.Adapter.install_skills`) returns `None` (no-op), so
 adapters that don't expose an in-agent surface (e.g. the `qwen` stub) are
@@ -43,7 +43,7 @@ The plan is heterogeneous: zero or more `FileOp` (CREATE a new file, or
 MERGE our keys into an existing one) plus zero or more `CLIAction` (run an
 external command to register/unregister with the host agent). Both are
 logged into a per-adapter manifest at `$MANYAGENT_HOME/installed/<name>.json`;
-`manyagent status` lists them; `manyagent uninstall <name>` reverses both layers (CLI
+`ma agent list` lists them; `ma agent unregister <name>` reverses both layers (CLI
 unregisters first, then files).
 
 ```python
@@ -88,7 +88,7 @@ yours.
   `env_vars` or per-tool `approval_mode` flag, so we merge those into
   `~/.codex/config.toml` ourselves via `tomlkit`);
 - you want sha256-tracked rollback (the manifest records sha256-at-write
-  for every CREATE so `manyagent uninstall` skips user-edited files).
+  for every CREATE so `ma agent unregister` skips user-edited files).
 
 ## The three working examples
 

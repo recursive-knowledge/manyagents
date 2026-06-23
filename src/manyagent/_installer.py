@@ -433,7 +433,7 @@ def _format_plan(plan: InstallPlan) -> str:
     lines.append(Text())
     lines.append(
         Text(
-            f"{creates} created · {merges} merged · scope {plan.scope} · reversible: manyagent uninstall {plan.adapter}",
+            f"{creates} created · {merges} merged · scope {plan.scope} · reversible: ma agent unregister {plan.adapter}",
             style="dim",
         )
     )
@@ -508,7 +508,7 @@ def _format_welcome(plan: InstallPlan) -> str:
         lines.append(Text(" · ".join(clauses), style="dim"))
     lines.append(
         Text(
-            f"run `manyagent uninstall {plan.adapter}` to revert changes · press [d] to preview the exact changes",
+            f"run `ma agent unregister {plan.adapter}` to revert changes · press [d] to preview the exact changes",
             style="dim",
         )
     )
@@ -638,7 +638,7 @@ def _record_decline(
         output_fn(
             ui.render(
                 Text(
-                    f"manyagent: install declined (already installed — `manyagent uninstall {adapter}` removes it)",
+                    f"manyagent: install declined (already installed — `ma agent unregister {adapter}` removes it)",
                     style="yellow",
                 )
             )
@@ -758,7 +758,7 @@ def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> M
 
     Not transactional — but a mid-apply failure (e.g. a user-shaped
     ``settings.json`` a merge can't parse) saves a **partial manifest** of
-    everything already written before re-raising, so ``manyagent uninstall`` can
+    everything already written before re-raising, so ``ma agent unregister`` can
     reverse the stranded files and a re-run after the user fixes the file is
     silent (the manifest exists)."""
     entries: list[ManifestEntry] = []
