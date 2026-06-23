@@ -8,7 +8,7 @@ terminal (``MANYAGENT_COLOR=auto``, the default) or when forced
 (``MANYAGENT_COLOR=always``). ``MANYAGENT_COLOR=never`` strips them, and ``NO_COLOR``
 (no-color.org) downgrades ``auto`` to ``never`` — an explicit
 ``MANYAGENT_COLOR=always`` wins, per the spec's "software-level config takes
-precedence" rule — so ``manyagent status | grep`` and captured test output stay
+precedence" rule — so ``ma agent list | grep`` and captured test output stay
 byte-identical to the unstyled text.
 
 Consoles are constructed per call, never cached: a monkeypatched env or a

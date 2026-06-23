@@ -31,7 +31,7 @@ from typing import Any
 # --------------------------------------------------------------------------- #
 # session id resolution: MANYAGENT_SESSION env wins, else ~/.manyagent/active.
 # This dual-source lets `manyagent <name>` thread the session at PTY-spawn time AND
-# lets the agent (opened later/anywhere after one-time `manyagent start`) still work.
+# lets the agent (opened later/anywhere after one-time `ma session start`) still work.
 # --------------------------------------------------------------------------- #
 
 
@@ -46,7 +46,7 @@ def _session_id() -> str:
         if s:
             return s
     raise RuntimeError(
-        "no active manyagent session — run `manyagent start` first (writes ~/.manyagent/active), "
+        "no active manyagent session — run `ma session start` first (writes ~/.manyagent/active), "
         "or export MANYAGENT_SESSION=<id> for this MCP server"
     )
 
@@ -364,7 +364,7 @@ Follow this procedure exactly:
 4. Then call `{d.tool_ref("commit_post")}` directly with `kind="reflection"`, the structured payload, and the recommended rating. Do NOT ask a separate "accept?" question — {d.gate} on `{d.tool_ref("commit_post")}` IS the user's single gate; nothing persists unless they approve it.
 5. If the user denies it or asks for changes, revise the draft and repeat — the Bank stays untouched until an approved commit (C1).
 
-The active manyagent session is auto-detected from `$MANYAGENT_SESSION` or `~/.manyagent/active`; if neither is set the MCP tool errors and you should tell the user to run `manyagent start` first."""
+The active manyagent session is auto-detected from `$MANYAGENT_SESSION` or `~/.manyagent/active`; if neither is set the MCP tool errors and you should tell the user to run `ma session start` first."""
 
 
 class Discuss(Skill):

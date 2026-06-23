@@ -229,10 +229,10 @@ Implemented from §6's P1/P2 ladder, per user direction:
 - All accept/reject prompts → one allowance gate (`ask_allow` /
   `ask_commit` in `manyagent.cli`; skill templates stop asking a chat-level
   "accept?" before `commit_post` — the permission prompt is the gate).
-- `manyagent start --goal X` offers injection when X already has bundles
+- `ma session start --goal X` offers injection when X already has bundles
   (ledger row + `$MANYAGENT_HOME/inject/<sid>.json` stash → delivered into agent
   context by the SessionStart hook).
-- `manyagent end` offers `/self-distill` when the session has no reflection, then
+- `ma session end` offers `/self-distill` when the session has no reflection, then
   `/cross-distill` when the goal holds ≥2 insights.
 
 ## 8. The action architecture (OO design, not yet built)
