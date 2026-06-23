@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -127,25 +128,45 @@ def test_ask_yn_deny_by_default_when_noninteractive() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_argparse_lifecycle_verbs_only() -> None:
-    """M11.4: only the session-lifecycle verbs are CLI subcommands now.
-    self-distill / discuss / cross-distill / inject are no longer here —
-    they're installed as in-agent skills + MCP tools by ``manyagent <name>``.
-    Programmatic callers use ``manyagent._handlers.do_*`` directly."""
-    a = _args("init", "--bank-url", "https://db.example", "--trusted-key", "K")
-    assert (a.verb, a.bank_url, a.trusted_key) == ("init", "https://db.example", "K")
-    assert _args("preflight").verb == "preflight"
-    a = _args("start", "speed", "--id", "S1")
-    assert (a.verb, a.id, a.goal) == ("start", "S1", "speed")
-    a = _args("register", "claude", "--session", "S2")
-    assert (a.verb, a.name, a.session) == ("register", "claude", "S2")
-    assert _args("end", "--session", "S9").verb == "end"
-    assert _args("status").verb == "status"
-    assert _args("uninstall", "claude").verb == "uninstall"
-    # Ripped subcommands raise SystemExit (argparse: invalid choice).
-    for ripped in ("self-distill", "discuss", "cross-distill", "inject"):
+def test_argparse_group_verbs() -> None:
+    """The CLI surface is three reserved groups (agent / session / dev) plus the
+    sniffed `ma <agent>` run path. The knowledge-loop verbs are not here —
+    they're in-agent skills + MCP tools (programmatic callers use
+    ``manyagent._handlers.do_*``)."""
+    a = _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K")
+    assert (a.group, a.verb, a.bank_url, a.trusted_key) == ("dev", "init", "https://db.example", "K")
+    assert (_args("dev", "preflight").group, _args("dev", "preflight").verb) == ("dev", "preflight")
+    a = _args("session", "start", "speed", "--id", "S1")
+    assert (a.group, a.verb, a.id, a.goal) == ("session", "start", "S1", "speed")
+    assert _args("session", "end", "--session", "S9").verb == "end"
+    a = _args("session", "list", "5", "--since", "7d", "--goal", "g")
+    assert (a.group, a.verb, a.n, a.since, a.goal) == ("session", "list", 5, "7d", "g")
+    a = _args("agent", "register", "claude")
+    assert (a.group, a.verb, a.name) == ("agent", "register", "claude")
+    assert _args("agent", "unregister", "claude").name == "claude"
+    assert _args("agent", "list", "-v").verbose is True
+    # Knowledge-loop verbs and old top-level verbs are not argparse choices.
+    for ripped in ("self-distill", "discuss", "start", "init", "status"):
         with pytest.raises(SystemExit):
             _args(ripped)
+
+
+def test_split_run_args_finds_goal_and_agent() -> None:
+    """`ma [--goal G] [goal words] <agent> [agent args]` parsing."""
+    assert cli._split_run_args(["claude"]) == (None, "claude", [])
+    assert cli._split_run_args(["fix the bug", "claude"]) == ("fix the bug", "claude", [])
+    assert cli._split_run_args(["claude", "--resume", "x"]) == (None, "claude", ["--resume", "x"])
+    assert cli._split_run_args(["--goal", "ship v2", "codex", "-y"]) == ("ship v2", "codex", ["-y"])
+    assert cli._split_run_args(["--goal=ship", "gemini"]) == ("ship", "gemini", [])
+
+
+def test_split_run_args_errors_are_helpful() -> None:
+    with pytest.raises(SystemExit, match="no agent"):
+        cli._split_run_args(["deploy the thing"])
+    with pytest.raises(SystemExit, match="session start"):
+        cli._split_run_args(["start", "x"])  # moved verb → redirect
+    with pytest.raises(SystemExit, match="agent unregister"):
+        cli._split_run_args(["uninstall", "claude"])
 
 
 def test_version_action_exits_zero() -> None:
@@ -171,7 +192,7 @@ def test_guard_translates_bank_error_no_traceback(
     assert rc == 1
     err = capsys.readouterr().err
     assert "no key" in err  # the real cause is shown
-    assert "ma init" in err and "ma preflight" in err and "MANYAGENT_DEBUG=1" in err  # actionable
+    assert "ma dev init" in err and "ma dev preflight" in err and "MANYAGENT_DEBUG=1" in err  # actionable
 
 
 def test_guard_debug_env_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,10 +226,13 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
     assert ei.value.code == 2
 
 
-async def test_main_missing_bank_key_returns_1_not_traceback(
+def test_main_missing_bank_key_returns_1_not_traceback(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The reported scenario: `manyagent start` with no Bank key must fail cleanly."""
+    """The reported scenario: `ma session start` with no Bank key must fail
+    cleanly. `main()` is synchronous (it drives the verb under `asyncio.run`),
+    so this is a sync test — an `async def` here would call `asyncio.run` inside
+    the test's own loop and pass for the wrong reason."""
 
     class _NoKeyBank:
         async def put_session(self, *a: Any, **k: Any) -> None:
@@ -216,9 +240,9 @@ async def test_main_missing_bank_key_returns_1_not_traceback(
 
     monkeypatch.delenv("MANYAGENT_DEBUG", raising=False)
     monkeypatch.setattr(cli, "get_bank", lambda *a, **k: _NoKeyBank())
-    rc = cli.main(["start", "demo", "--id", "DEMO-0001"])
+    rc = cli.main(["session", "start", "demo", "--id", "DEMO-0001"])
     assert rc == 1  # not an unhandled traceback
-    assert "ma preflight" in capsys.readouterr().err
+    assert "ma dev preflight" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -265,7 +289,7 @@ async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytes
     _clear_bank_env(monkeypatch)
     s = Scripted()
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", "JWT"), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "JWT"), bank=fake_bank, io=s.io()
     )
     assert rc == 0
     p = cli._user_env_path()
@@ -288,7 +312,7 @@ async def test_init_carries_forward_resolved_anon_and_cf(fake_bank: FakeBank, mo
     monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET", "CF-SECRET")
     s = Scripted()
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K2"), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K2"), bank=fake_bank, io=s.io()
     )
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -308,7 +332,7 @@ async def test_init_values_round_trip_through_dotenv(fake_bank: FakeBank, monkey
     tricky = 'pa ss"word # not-a-comment'
     s = Scripted()
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", tricky), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", tricky), bank=fake_bank, io=s.io()
     )
     assert rc == 0
     parsed = dotenv.dotenv_values(cli._user_env_path())
@@ -317,7 +341,7 @@ async def test_init_values_round_trip_through_dotenv(fake_bank: FakeBank, monkey
     cli._user_env_path().unlink()
     with pytest.raises(SystemExit, match="newline"):
         await cli._do_init(
-            _args("init", "--bank-url", "https://db.example", "--trusted-key", "a\nb"), bank=fake_bank, io=s.io()
+            _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "a\nb"), bank=fake_bank, io=s.io()
         )
     assert not cli._user_env_path().exists()
 
@@ -328,7 +352,7 @@ async def test_init_key_prompt_strips_pasted_assignment(fake_bank: FakeBank, mon
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
     s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT")  # URL prompt, key prompt
-    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert "MANYAGENT_BANK_TRUSTED_KEY=eyJWT\n" in cli._user_env_path().read_text(encoding="utf-8")
 
@@ -343,7 +367,7 @@ async def test_init_overwrite_detail_masks_credentials(fake_bank: FakeBank, monk
     p.write_text("MANYAGENT_BANK_URL=http://old.example\nMANYAGENT_BANK_TRUSTED_KEY=SUPERSECRETJWT\n", encoding="utf-8")
     s = Scripted("d", "n")  # inspect, then decline
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
     assert rc == 1
     shown = "\n".join(s.out)
@@ -359,7 +383,7 @@ async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank, monk
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
     s = Scripted("", "")  # URL prompt, key prompt
-    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
     assert f"MANYAGENT_BANK_URL={config.resolve('MANYAGENT_BANK_URL', config.MANYAGENT_BANK_URL)}\n" in text
@@ -378,7 +402,7 @@ async def test_init_applies_published_connection(fake_bank: FakeBank, monkeypatc
     doc = {"bank_url": "https://db-rotated.example", "anon_key": "NEW-ANON", "trusted_key": "NEW-WRITE"}
     monkeypatch.setattr(cli, "_fetch_published_config", lambda: doc)
     s = Scripted("", "")  # Enter at both prompts accepts the published values
-    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
     assert "MANYAGENT_BANK_URL=https://db-rotated.example\n" in text
@@ -398,7 +422,7 @@ async def test_init_never_fetches_for_custom_bank(fake_bank: FakeBank, monkeypat
 
     monkeypatch.setattr(cli, "_fetch_published_config", _boom)
     s = Scripted("", "")
-    rc = await cli._do_init(_args("init"), bank=fake_bank, io=s.io())
+    rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
     assert "MANYAGENT_BANK_URL=https://my-private-bank.example\n" in text
@@ -411,7 +435,7 @@ async def test_init_overwrite_gate_declined_keeps_file(fake_bank: FakeBank) -> N
     p.write_text("MANYAGENT_BANK_URL=http://keep.me\n", encoding="utf-8")
     s = Scripted("n")  # the single overwrite allowance gate
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
     assert rc == 1
     assert p.read_text(encoding="utf-8") == "MANYAGENT_BANK_URL=http://keep.me\n"
@@ -423,10 +447,10 @@ async def test_init_noninteractive_never_overwrites(fake_bank: FakeBank, monkeyp
     monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     s = Scripted()  # zero prompts allowed — Scripted raises on any pop
     rc = await cli._do_init(
-        _args("init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
     assert rc == 0 and cli._user_env_path().is_file()
-    rc = await cli._do_init(_args("init", "--bank-url", "https://other.example"), bank=fake_bank, io=s.io())
+    rc = await cli._do_init(_args("dev", "init", "--bank-url", "https://other.example"), bank=fake_bank, io=s.io())
     assert rc == 1  # overwrite denied
     assert "db.example" in cli._user_env_path().read_text(encoding="utf-8")
 
@@ -438,7 +462,7 @@ async def test_init_noninteractive_never_overwrites(fake_bank: FakeBank, monkeyp
 
 async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> None:
     s = Scripted()
-    rc = await cli._do_start(_args("start", "g", "--id", "SESS-0001"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "g", "--id", "SESS-0001"), bank=fake_bank, io=s.io())
     assert rc == 0 and cli._read_active() == "SESS-0001"
     assert (await fake_bank.get_session("SESS-0001"))["goal"] == "g"
     # The viewer URL is the actionable artifact (bare ID is dead-on-arrival).
@@ -447,7 +471,7 @@ async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> Non
     assert any(line.startswith("open: http") and "/g/g" in line for line in s.out)
 
     end = Scripted("skip")
-    rc = await cli._do_end(_args("end", "--session", "SESS-0001"), bank=fake_bank, io=end.io())
+    rc = await cli._do_end(_args("session", "end", "--session", "SESS-0001"), bank=fake_bank, io=end.io())
     assert rc == 0 and cli._read_active() is None
     assert (await fake_bank.get_session("SESS-0001"))["status"] == "ended"
 
@@ -500,21 +524,47 @@ def test_open_url_prefers_goal_board_else_session_deeplink(monkeypatch: pytest.M
     assert cli._open_url("X-1", None) == f"{base}/s/X-1"  # ungoaled → session deep-link
 
 
-async def test_register_prints_open_link(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "")
-    monkeypatch.setenv("MANYAGENT_WEB_HOST", "127.0.0.1")
-    monkeypatch.setenv("MANYAGENT_WEB_PORT", "8580")
-    await fake_bank.put_session("SESS-AAAA")
+async def test_agent_register_installs_skills_no_session_needed(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ma agent register <name>` installs the in-agent skills + MCP for an agent
+    (machine-level, session-independent). It calls install_skills and reports;
+    registering the agent as a session Agent stays automatic at run time."""
+    installed: list[dict[str, Any]] = []
+
+    class Installing(FakeAdapter):
+        def install_skills(self, **kw: Any) -> object:
+            installed.append(kw)
+            return object()  # a non-None Manifest stand-in = installed
+
+    from manyagent import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: Installing())
     s = Scripted()
-    rc = await cli._do_register(_args("register", "claude", "--session", "SESS-AAAA"), bank=fake_bank, io=s.io())
+    rc = await cli._do_agent_register(_args("agent", "register", "claude"), bank=fake_bank, io=s.io())
     assert rc == 0
-    assert any(line == "registered SESS-AAAA/agent-001-claude" for line in s.out)
-    assert any(line == "open: http://127.0.0.1:8580/s/SESS-AAAA/a/agent-001-claude" for line in s.out)
+    assert installed and installed[0]["session_id"] is None  # no live session
+    assert any("registered" in line and "claude" in line for line in s.out)
+
+
+async def test_agent_register_reports_when_declined(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Declining(FakeAdapter):
+        def install_skills(self, **kw: Any) -> object | None:
+            return None  # consent declined
+
+    from manyagent import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: Declining())
+    s = Scripted()
+    rc = await cli._do_agent_register(_args("agent", "register", "claude"), bank=fake_bank, io=s.io())
+    assert rc == 1
+    assert any("no skills installed" in line for line in s.out)
 
 
 async def test_resolve_sid_errors_without_session(fake_bank: FakeBank) -> None:
+    """`ma session end` with neither --session nor an active marker errors cleanly."""
     with pytest.raises(SystemExit, match="no active session"):
-        await cli._do_register(_args("register", "claude"), bank=fake_bank, io=Scripted().io())
+        await cli._do_end(_args("session", "end"), bank=fake_bank, io=Scripted().io())
 
 
 # --------------------------------------------------------------------------- #
@@ -541,7 +591,7 @@ async def test_end_star_rates_last_unrated_reflection(fake_bank: FakeBank) -> No
         "rating": None,
     })
     s = Scripted("5")
-    rc = await cli._do_end(_args("end", "--session", "S1"), bank=fake_bank, io=s.io())
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert (await fake_bank.get_packet("S1/r1"))["rating"] == 5
     assert (await fake_bank.get_session("S1"))["status"] == "ended"
@@ -855,7 +905,7 @@ async def _seed_goal_knowledge(bank: FakeBank, goal: str = "speed") -> str:
 async def test_start_offers_goal_context_enter_injects_and_stashes(fake_bank: FakeBank) -> None:
     pid = await _seed_goal_knowledge(fake_bank)
     s = Scripted("")  # Enter at the single allowance gate
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-INJ1"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-INJ1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert any(i["packet_id"] == pid and i["target_session_id"] == "S-INJ1" for i in await fake_bank.list_injections())
     stash = cli._inject_stash_path("S-INJ1")
@@ -867,7 +917,7 @@ async def test_start_offers_goal_context_enter_injects_and_stashes(fake_bank: Fa
 async def test_start_offer_declined_records_nothing(fake_bank: FakeBank) -> None:
     await _seed_goal_knowledge(fake_bank)
     s = Scripted("n")
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-INJ2"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-INJ2"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert await fake_bank.list_injections() == []
     assert not cli._inject_stash_path("S-INJ2").is_file()
@@ -877,12 +927,12 @@ async def test_start_offer_skipped_when_goal_unknown_or_noninteractive(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # no knowledge for the goal → no prompt at all (Scripted would raise on pop)
-    rc = await cli._do_start(_args("start", "fresh", "--id", "S-INJ3"), bank=fake_bank, io=Scripted().io())
+    rc = await cli._do_start(_args("session", "start", "fresh", "--id", "S-INJ3"), bank=fake_bank, io=Scripted().io())
     assert rc == 0
     # knowledge exists but MANYAGENT_NONINTERACTIVE → silent skip, never auto-inject
     await _seed_goal_knowledge(fake_bank)
     monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-INJ4"), bank=fake_bank, io=Scripted().io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-INJ4"), bank=fake_bank, io=Scripted().io())
     assert rc == 0
     assert await fake_bank.list_injections() == []
 
@@ -905,7 +955,7 @@ async def test_end_offers_self_distill_when_session_has_none(
 
     monkeypatch.setattr("manyagent._handlers.do_self_distill", fake_self_distill)
     s = Scripted("")  # Enter = yes, distill
-    rc = await cli._do_end(_args("end", "--session", "S-END1"), bank=fake_bank, io=s.io())
+    rc = await cli._do_end(_args("session", "end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
     assert calls[0]["since"] is None  # bare `manyagent end`: no run window to scope to
@@ -956,7 +1006,7 @@ async def test_start_nudges_cross_distill_when_goal_is_stale(
 
     monkeypatch.setattr("manyagent._handlers.do_cross_distill", fake_cross_distill)
     s = Scripted("", "n")  # Enter = yes to the nudge; n = skip the inject offer
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-NUDGE"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-NUDGE"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["session"] == "S-NUDGE"
     assert pid  # the pre-existing bundle did not suppress the nudge (posts are newer)
@@ -979,7 +1029,7 @@ async def test_start_nudge_quiet_right_after_cross_distill(fake_bank: FakeBank) 
         })
     await _seed_goal_knowledge(fake_bank)  # bundle created AFTER the posts
     s = Scripted("n")  # only the inject offer fires; no nudge prompt
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-NUDGE2"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-NUDGE2"), bank=fake_bank, io=s.io())
     assert rc == 0
 
 
@@ -998,7 +1048,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
 
     monkeypatch.setattr("manyagent._handlers.do_self_distill", fake_self_distill)
     s = Scripted("")
-    rc = await cli._do_end(_args("end", "--session", "S-FUP"), bank=fake_bank, io=s.io())
+    rc = await cli._do_end(_args("session", "end", "--session", "S-FUP"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and pid in (calls[0]["guidance"] or "")
 
@@ -1009,11 +1059,11 @@ async def test_start_goal_continuity_offer(fake_bank: FakeBank) -> None:
     default bucket."""
     await fake_bank.put_session("PREV-1", goal="speed")
     s = Scripted("")  # Enter = continue /speed (no further offers: goal has no bundles)
-    rc = await cli._do_start(_args("start", "--id", "S-CONT"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "--id", "S-CONT"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert (await fake_bank.get_session("S-CONT"))["goal"] == "speed"
     declined = Scripted("n")
-    rc = await cli._do_start(_args("start", "--id", "S-CONT2"), bank=fake_bank, io=declined.io())
+    rc = await cli._do_start(_args("session", "start", "--id", "S-CONT2"), bank=fake_bank, io=declined.io())
     assert rc == 0
     assert (await fake_bank.get_session("S-CONT2"))["goal"] == "misc"
     assert any("/misc" in line for line in declined.out)
@@ -1032,7 +1082,7 @@ async def test_start_quarantine_note_is_informational(fake_bank: FakeBank) -> No
         "quarantined": True,
     })
     s = Scripted()  # informational only — consumes NO input
-    rc = await cli._do_start(_args("start", "speed", "--id", "S-QN"), bank=fake_bank, io=s.io())
+    rc = await cli._do_start(_args("session", "start", "speed", "--id", "S-QN"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert any("quarantined" in line for line in s.out)
 
@@ -1041,24 +1091,20 @@ async def test_end_offers_silent_when_noninteractive(fake_bank: FakeBank, monkey
     monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
     await fake_bank.put_session("S-END3", goal="speed")
     await fake_bank.put_agent("S-END3/agent-001-claude", session_id="S-END3", adapter="claude", seq=1)
-    rc = await cli._do_end(_args("end", "--session", "S-END3"), bank=fake_bank, io=Scripted().io())
+    rc = await cli._do_end(_args("session", "end", "--session", "S-END3"), bank=fake_bank, io=Scripted().io())
     assert rc == 0  # no prompts consumed, no offers fired
 
 
 # --------------------------------------------------------------------------- #
-# agent exit asks ONE question — end? — and `_do_end` owns the distill moment
+# sticky-marker session model: ephemeral runs auto-end, sticky runs stay open
 # --------------------------------------------------------------------------- #
 
 
-async def test_agent_exit_asks_only_end_then_do_end_offers_distill(
-    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Agent exit asks a single question (end the session?); accepting runs
-    the same `_do_end` close path, whose distill offer fires there. (The
-    separate agent-exit distill ask double-prompted: a failed draft was
-    re-offered moments later inside `_do_end`.)"""
-    await fake_bank.put_session("S1", goal="g")
-    cli._write_active("S1")
+async def test_ephemeral_run_auto_ends_and_offers_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bare `ma claude` with no sticky session mints an EPHEMERAL session that
+    auto-ends on clean exit — no 'end?' gate. `_do_end` still owns the distill
+    offer, which fires there."""
+    monkeypatch.setattr(cli.sid, "new", lambda: "EPH-1")
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
     from manyagent import _handlers as h
 
@@ -1070,21 +1116,47 @@ async def test_agent_exit_asks_only_end_then_do_end_offers_distill(
         return 0
 
     monkeypatch.setattr(h, "do_self_distill", fake_self_distill)
-    s = Scripted("", "")  # Enter = yes, end the session; Enter = yes at the distill offer
+    s = Scripted("")  # one Enter at the distill offer; there is NO separate end gate
     rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
     assert rc == 0
-    assert len(calls) == 1 and calls[0]["session"] == "S1"  # asked ONCE, inside _do_end
-    assert (await fake_bank.get_session("S1"))["status"] == "ended"
-    assert cli._read_active() is None  # active cleared by the embedded `manyagent end`
+    assert len(calls) == 1 and calls[0]["session"] == "EPH-1"  # distill offered once, auto-end
+    assert (await fake_bank.get_session("EPH-1"))["status"] == "ended"
+    assert cli._read_active() is None  # ephemeral never wrote the sticky marker
 
 
-async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
+async def test_explicit_goal_run_is_ephemeral_and_does_not_hijack_sticky(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Declining the end offer leaves the session open and asks nothing else —
-    the distill moment belongs to `_do_end`, not to every agent exit."""
+    """`ma "goal" claude` always mints a FRESH ephemeral session under that goal,
+    even when a different sticky session is active — and leaves the sticky marker
+    untouched (auto-ending the ephemeral run must not clear it)."""
+    await fake_bank.put_session("STICKY", goal="kept")
+    cli._write_active("STICKY")
+    monkeypatch.setattr(cli.sid, "new", lambda: "EPH-2")
+    monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
+    from manyagent import _handlers as h
+
+    monkeypatch.setattr(h, "_adapter_for", lambda *a, **k: FakeAdapter())
+
+    async def fake_self_distill(**kw: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(h, "do_self_distill", fake_self_distill)
+    s = Scripted("", "")  # any start/end offers; the run must not stall on input
+    rc = await cli._do_run_agent("claude", [], "fix bug", bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("EPH-2"))["goal"] == "fix bug"
+    assert (await fake_bank.get_session("EPH-2"))["status"] == "ended"  # ephemeral auto-ended
+    assert cli._read_active() == "STICKY"  # the sticky marker survived
+    assert (await fake_bank.get_session("STICKY")).get("status") != "ended"
+
+
+async def test_sticky_session_run_attaches_and_stays_open(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With a sticky `ma session start` session active, a bare `ma claude`
+    attaches to it and leaves it open — no auto-end, no distill ask. The user
+    ends it explicitly with `ma session end`."""
     await fake_bank.put_session("S1", goal="g")
-    cli._write_active("S1")
+    cli._write_active("S1")  # the sticky marker
     monkeypatch.setattr(cli, "_pty_spawn", lambda argv, tee=None: None)
     from manyagent import _handlers as h
 
@@ -1096,14 +1168,68 @@ async def test_agent_exit_decline_keeps_session_open_without_distill_ask(
         return 0
 
     monkeypatch.setattr(h, "do_self_distill", fake_self_distill)
-    s = Scripted("n")  # n = keep the session open; a second prompt would raise (list exhausted)
+    s = Scripted()  # NOTHING should be prompted; any prompt exhausts Scripted and raises
     rc = await cli._do_run_agent("claude", [], None, bank=fake_bank, io=s.io())
     assert rc == 0
     assert distilled == []
-    assert (await fake_bank.get_session("S1")).get("status") != "ended"
-    assert s._r == []  # the single scripted answer went to the end offer
-    # an extra prompt would exhaust Scripted and be swallowed into this line:
-    assert not any("offers skipped" in line for line in s.out)
+    assert (await fake_bank.get_session("S1")).get("status") != "ended"  # left open
+    assert cli._read_active() == "S1"  # still the active sticky session
+    assert s._r == []
+
+
+# --------------------------------------------------------------------------- #
+# ma session list — browse recent sessions
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_when_relative_and_iso() -> None:
+    now = datetime.now(UTC)
+    assert (now - cli._parse_when("1h")).total_seconds() == pytest.approx(3600, abs=5)
+    assert (now - cli._parse_when("2d")).total_seconds() == pytest.approx(2 * 86400, abs=5)
+    iso = cli._parse_when("2026-06-01")
+    assert (iso.year, iso.month, iso.day, iso.tzinfo) == (2026, 6, 1, UTC)
+    with pytest.raises(SystemExit, match="can't parse time"):
+        cli._parse_when("whenever")
+
+
+def test_to_dt_normalizes_z_and_naive() -> None:
+    assert cli._to_dt("2026-06-01T00:00:00Z").tzinfo == UTC
+    assert cli._to_dt("2026-06-01T00:00:00").tzinfo == UTC  # naive → assume UTC
+    assert cli._to_dt("garbage") is None
+
+
+async def test_session_list_renders_filters_and_marks_active(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S-A", goal="alpha")
+    await fake_bank.put_session("S-B", goal="beta")
+    await fake_bank.put_session("S-C", goal="alpha")
+    await fake_bank.put_packet({
+        "id": "S-B/p1",
+        "session_id": "S-B",
+        "type": "post",
+        "agent_id": "S-B/agent-001-claude",
+        "kind": "reflection",
+        "goal": "beta",
+        "structured": dict(_GOOD),
+    })
+    cli._write_active("S-C")
+
+    s = Scripted()
+    rc = await cli._do_session_list(_args("session", "list"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    out = "\n".join(s.out)
+    assert "alpha" in out and "beta" in out
+    assert "★" in out  # the active session is marked
+
+    # --goal filters to one bucket.
+    s = Scripted()
+    await cli._do_session_list(_args("session", "list", "--goal", "beta"), bank=fake_bank, io=s.io())
+    out = "\n".join(s.out)
+    assert "beta" in out and "alpha" not in out
+
+    # No matches → a clean note, not a crash.
+    s = Scripted()
+    await cli._do_session_list(_args("session", "list", "--goal", "nope"), bank=fake_bank, io=s.io())
+    assert any("no sessions match" in line for line in s.out)
 
 
 # --------------------------------------------------------------------------- #

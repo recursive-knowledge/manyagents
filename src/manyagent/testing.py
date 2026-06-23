@@ -513,18 +513,24 @@ class Simulation:
     async def start(self, session: str | None = None, *, goal: str | None = None) -> StepResult:
         from manyagent import cli
 
-        argv = ["start", *([goal] if goal else []), *(["--id", session] if session else [])]
+        argv = ["session", "start", *([goal] if goal else []), *(["--id", session] if session else [])]
         io = ScriptedIO()
         rc = await cli._do_start(cli._build_parser().parse_args(argv), bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
 
     async def register(self, name: str | None = None) -> StepResult:
+        """Register the adapter as a session Agent. This now happens automatically
+        inside ``run_agent`` (the ``ma <name>`` path); the explicit step drives
+        the same real code path (``_handlers._resolve_agent``) so stories that
+        assert on it keep working. (``ma agent register`` is now skill install,
+        a separate machine-level concern.)"""
         from manyagent import cli
+        from manyagent._handlers import _resolve_agent
 
         io = ScriptedIO()
-        args = cli._build_parser().parse_args(["register", name or self.adapter.name])
-        rc = await cli._do_register(args, bank=self.bank, io=io.pair())
-        return StepResult(rc, io.out)
+        agent_id = await _resolve_agent(cli._resolve_sid(None), name or self.adapter.name, bank=self.bank)
+        io.out.append(f"registered {agent_id}")
+        return StepResult(0, io.out)
 
     async def run_agent(self, *agent_args: str, transcript: str) -> StepResult:
         """The ``manyagent <name>`` leg: the stubbed PTY plays ``transcript`` and the
@@ -533,9 +539,10 @@ class Simulation:
 
         self._transcript = transcript
         self.adapter.transcript = transcript
-        # default="n": allowance gates are affirmative-by-default, so any
-        # other fallback would silently ACCEPT the agent-exit end offer and
-        # close the session mid-conversation.
+        # A story always `start()`s first, writing the sticky-session marker, so
+        # `run_agent` ATTACHES to that session and never auto-ends it — the story
+        # closes it explicitly with `end()`. (`default="n"` keeps any stray
+        # allowance gate from silently firing mid-conversation.)
         io = ScriptedIO(default="n")
         rc = await cli._do_run_agent(self.adapter.name, list(agent_args), None, bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
@@ -602,7 +609,7 @@ class Simulation:
         from manyagent import cli
 
         io = ScriptedIO(str(rating))
-        rc = await cli._do_end(cli._build_parser().parse_args(["end"]), bank=self.bank, io=io.pair())
+        rc = await cli._do_end(cli._build_parser().parse_args(["session", "end"]), bank=self.bank, io=io.pair())
         return StepResult(rc, io.out)
 
     # -- assertion helpers ---------------------------------------------------- #

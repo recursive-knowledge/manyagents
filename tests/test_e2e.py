@@ -119,15 +119,16 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
 
     rcs: list[int] = []
 
-    # 1. start <goal>  → writes the active-session file, persists the goal.
-    rc, _ = await _run(cli._do_start, _args("start", "ship the parser fix", "--id", "S-E2E"), fake_bank)
+    # 1. session start <goal>  → writes the sticky active-session marker, persists the goal.
+    rc, _ = await _run(cli._do_start, _args("session", "start", "ship the parser fix", "--id", "S-E2E"), fake_bank)
     rcs.append(rc)
     assert cli._read_active() == "S-E2E"
     assert fake_bank._sessions["S-E2E"]["goal"] == "ship the parser fix"
 
-    # 2. register  → resolves sid from the active file, auto-registers seq=1.
-    rc, _ = await _run(cli._do_register, _args("register", "claude"), fake_bank)
-    rcs.append(rc)
+    # 2. register the agent in the session — now automatic at run time
+    #    (`_resolve_agent`, the same path `_do_run_agent` takes); auto-registers seq=1.
+    agent_id = await h._resolve_agent(cli._resolve_sid(None), "claude", bank=fake_bank)
+    rcs.append(0 if agent_id else 1)
 
     # 3. <name>  → PTY spawn + real capture pipeline → a raw packet.
     rc = await cli._do_run_agent("claude", ["--help"], None, bank=fake_bank, io=Scripted().io())
@@ -181,7 +182,7 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
     assert any("injections row written" in line for line in s7.out)
 
     # 8. end  → marks ended, ★ skipped, clears the active file.
-    rc, _ = await _run(cli._do_end, _args("end"), fake_bank, "skip")
+    rc, _ = await _run(cli._do_end, _args("session", "end"), fake_bank, "skip")
     rcs.append(rc)
 
     # --- the discriminating cross-verb assertions ---------------------------

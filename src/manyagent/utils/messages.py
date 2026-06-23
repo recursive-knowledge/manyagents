@@ -80,7 +80,7 @@ RATING_UNRECOGNIZED = "  (unrecognized — leaving unrated)"
 # --------------------------------------------------------------------------- #
 
 GUARD_BANK_NOTE = (
-    "`ma init` writes {env_path} (loaded from any directory); `ma preflight` "
+    "`ma dev init` writes {env_path} (loaded from any directory); `ma dev preflight` "
     "checks env/Bank/keys. A repo checkout can instead set "
     "MANYAGENT_BANK_TRUSTED_KEY in ./manyagent.env or start a local Bank "
     "with `make bank-up`. Set MANYAGENT_DEBUG=1 for a full traceback."
@@ -91,11 +91,11 @@ INIT_KEEP_HINT = "[Enter=keep current]:"
 INIT_SKIP_HINT = "[Enter=skip — no key yet]:"
 INIT_DEFAULT_HINT = "[{default}]:"
 INIT_OVERWRITE_OFFER = "{path} exists — overwrite it with the new values?"
-INIT_WRITTEN_NOTE = "wrote {path} — run `ma preflight` to validate it"
+INIT_WRITTEN_NOTE = "wrote {path} — run `ma dev preflight` to validate it"
 INIT_NO_KEY_NOTE = "no trusted key written to {path} — using the built-in public demo key (hosted pre-alpha Bank)"
 INIT_FETCHED_NOTE = "fetched the current Bank connection from the deployment's well-known document"
 INIT_OFFLINE_NOTE = (
-    "could not fetch the published Bank connection — using built-in defaults (re-run `ma init` online to refresh)"
+    "could not fetch the published Bank connection — using built-in defaults (re-run `ma dev init` online to refresh)"
 )
 INIT_CUSTOM_BANK_NOTE = "custom Bank configured — keeping it (the published public connection was not applied)"
 
@@ -104,7 +104,9 @@ INIT_CUSTOM_BANK_NOTE = "custom Bank configured — keeping it (the published pu
 # --------------------------------------------------------------------------- #
 
 START_CONTINUE_GOAL_OFFER = "your last session worked on /{goal} — continue that goal here?"
-START_DEFAULT_GOAL_NOTE = "no goal given — filed under /{goal} (next time: `ma start <goal>`)"
+START_DEFAULT_GOAL_NOTE = (
+    'no goal given — filed under /{goal} (next time: `ma "<goal>" claude` or `ma session start <goal>`)'
+)
 START_GOAL_KNOWLEDGE_NOTE = "/{goal} already has {bundles} bundle{bundles_s} · {posts} post{posts_s}"
 START_INJECT_OFFER = "inject latest bundle {packet_id} into this session?"
 START_INJECTED_NOTE = "injected {packet_id} — delivered to the agent's context at harness start (manyagent._hook)"
@@ -116,7 +118,23 @@ START_CROSS_NUDGE_OFFER = "/{goal} has {n} insight{n_s} newer than its last bund
 # --------------------------------------------------------------------------- #
 
 AGENT_TRACE_READY = "view trace at {url}"
-AGENT_EXIT_END_OFFER = "agent finished — end session {session_id} now?"
+# Ephemeral run (no sticky `ma session start` session): the session closes with
+# the agent window — no end gate, just this dim note before `_do_end` runs.
+AGENT_EXIT_AUTO_END_NOTE = (
+    "agent finished — auto-ending session {session_id} (start `ma session start` to keep one open)"
+)
+
+# --------------------------------------------------------------------------- #
+# `ma <agent>` run dispatch — goal/agent sniffing + moved-verb hints
+# --------------------------------------------------------------------------- #
+
+# No token in the run line resolved to an installed/builtin agent.
+RUN_NO_AGENT = (
+    "no agent in `ma {line}` — run an agent with `ma <agent>` (e.g. `ma claude`), "
+    'or start a named session with `ma session start "{line}"`'
+)
+# A removed top-level verb was typed; point at where it lives now.
+RUN_VERB_MOVED = "`ma {old}` has moved — use `ma {new}`"
 
 END_SELF_DISTILL_OFFER = "this session has no saved insight yet — summarize what it learned into a reflection post?"
 END_INJECT_FOLLOWUP_OFFER = "bundle {packet_id} was injected into this session — reflect on whether it held up?"

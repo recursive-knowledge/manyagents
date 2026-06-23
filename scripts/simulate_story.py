@@ -129,9 +129,17 @@ async def verb(bank: FakeBank, *argv: str, inputs: tuple[str, ...] = (), post: s
     elif name == "inject":
         packet = next((tok for tok in argv[1:] if tok.startswith("@")), None)
         rc = await h.do_inject(packet=packet, bank=bank, io=io.pair())
-    else:  # start / register / end / status / uninstall — still on the CLI
-        handler = cli._DISPATCH[name]
-        rc = await handler(_args(*argv), bank=bank, io=io.pair())
+    elif name == "register":
+        # Registering the adapter as a session Agent is now automatic at run
+        # time (`_resolve_agent`, the path `_do_run_agent` takes); drive it
+        # directly. (`ma agent register` is now skill install — a separate
+        # machine-level concern.)
+        agent_id = await h._resolve_agent(cli._resolve_sid(None), argv[1] if len(argv) > 1 else "claude", bank=bank)
+        io.out.append(f"registered {agent_id}")
+        rc = 0
+    else:  # start / end — now under the `ma session` group
+        handler = cli._DISPATCH["session"][name]
+        rc = await handler(_args("session", *argv), bank=bank, io=io.pair())
     if rc != 0:
         raise SystemExit(f"verb {argv!r} failed (rc={rc}): {io.out}")
     return io.out

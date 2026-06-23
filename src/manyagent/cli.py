@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -26,6 +27,7 @@ import signal
 import sys
 import time
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +41,28 @@ from manyagent.utils import config, messages, sid, slug, ui
 # pure helpers (unit-testable in isolation, no I/O)
 # --------------------------------------------------------------------------- #
 
-# Session-lifecycle CLI verbs only. The four knowledge-loop verbs
-# (self-distill / discuss / cross-distill / inject) are no longer CLI
-# subcommands — they live exclusively as in-agent skills + MCP tools
-# (manyagent._mcp + manyagent.adapters.skills.*). M11.4 ripped the bash surface;
-# scripts/programmatic callers use ``manyagent._handlers.do_*`` directly.
-_SUBCOMMANDS = {"init", "preflight", "start", "register", "end", "uninstall", "status"}
+# The reserved top-level group names. Everything else on the command line is an
+# AGENT to run (``ma <agent> …``) — the product's core ergonomic
+# (``ma claude`` ≈ ``claude``). An agent therefore may not be named one of these
+# (clig.dev: a catch-all dispatch must reserve its namespace). The knowledge-loop
+# verbs (self-distill / discuss / cross-distill / inject) are NOT CLI subcommands
+# — they live as in-agent skills + MCP tools (manyagent._mcp); programmatic
+# callers use ``manyagent._handlers.do_*`` directly.
+RESERVED = {"session", "dev", "agent"}
+
+# Removed top-level verbs → where they live now. Typed at the top level they no
+# longer resolve as agents; we map them to a one-line redirect rather than the
+# generic "no agent" error (clig.dev: "if the user did something wrong and you
+# can guess what they meant, suggest it").
+_MOVED = {
+    "start": "session start",
+    "end": "session end",
+    "init": "dev init",
+    "preflight": "dev preflight",
+    "status": "agent list",
+    "register": "agent register",
+    "uninstall": "agent unregister",
+}
 
 
 def preview_tokens(text: str, *, head: int, tail: int) -> str:
@@ -78,10 +96,17 @@ def _write_active(session_id: str) -> None:
     (home / "active").write_text(session_id, encoding="utf-8")
 
 
-def _clear_active() -> None:
+def _clear_active(session_id: str | None = None) -> None:
+    """Remove the sticky-session marker. When ``session_id`` is given, only clear
+    it if it points at that session — so auto-ending an *ephemeral* run never
+    wipes a different sticky session's marker (``ma session start X`` then
+    ``ma "y" claude`` must leave X active)."""
     p = active_session_path()
-    if p.is_file():
-        p.unlink()
+    if not p.is_file():
+        return
+    if session_id is not None and _read_active() != session_id:
+        return
+    p.unlink()
 
 
 def principals_path() -> Path:
@@ -126,7 +151,7 @@ def _resolve_sid(explicit: str | None) -> str:
     """``--session`` wins, else ``~/.manyagent/active``; error if neither."""
     s = explicit or _read_active()
     if not s:
-        raise SystemExit("no active session: run `ma start` or pass --session <id>")
+        raise SystemExit("no active session: run `ma session start` or pass --session <id>")
     return s
 
 
@@ -532,25 +557,25 @@ async def _do_preflight(args: argparse.Namespace, *, bank: Bank, io: tuple[In, O
     return run_preflight()
 
 
-async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    session_id = args.id or sid.new()
-    await bank.put_session(session_id, goal=args.goal)
-    _write_active(session_id)
-    line = Text.assemble(("session ", "dim"), (session_id, "bold"))
-    if args.goal:
-        line.append(f"  goal={args.goal!r}", style="dim")
-    io[1](ui.render(line))
-    # Sensible defaults (2026-06-10): the session-start moments — goal
-    # continuity, quarantine visibility, the stale-goal cross-distill nudge,
-    # and the inject offer. All best-effort: never block `manyagent start`.
-    goal = args.goal  # refined below; the `open:` link is printed with the final goal
+async def _session_start_offers(
+    session_id: str, explicit_goal: str | None, *, bank: Bank, io: tuple[In, Out], allow_continuity: bool
+) -> str:
+    """Resolve the session's goal and fire the best-effort session-start moments
+    (2026-06-10): goal continuity, quarantine visibility, the stale-goal
+    cross-distill nudge, and the inject offer. Returns the resolved goal.
+
+    Shared by ``ma session start`` (``allow_continuity=True``) and the ephemeral
+    ``ma <agent>`` run path (``allow_continuity=False`` — a bare ``ma claude``
+    must not prompt "continue last goal?"). All offers are best-effort: a Bank
+    hiccup here never blocks the session opening."""
+    goal = explicit_goal
+    default_goal = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
     try:
-        default_goal = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
-        goal = args.goal or await _offer_goal_continuity(session_id, bank=bank, io=io)
+        if not goal and allow_continuity:
+            goal = await _offer_goal_continuity(session_id, bank=bank, io=io)
         if not goal:
-            # Every session carries a goal: no goal given and continuity
-            # declined (or noninteractive) files the session under the
-            # default bucket (2026-06-10: goal-first positional).
+            # Every session carries a goal: no goal given (and continuity
+            # declined / disallowed) files the session under the default bucket.
             goal = default_goal
             await bank.put_session(session_id, goal=goal)
             io[1](ui.render(Text(messages.START_DEFAULT_GOAL_NOTE.format(goal=goal), style="dim")))
@@ -564,6 +589,19 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
             await _offer_goal_context(session_id, goal, bank=bank, io=io)
     except Exception as exc:
         io[1](ui.render(Text(f"manyagent: start-time offers skipped ({type(exc).__name__}: {exc})", style="yellow")))
+        goal = goal or default_goal
+    return goal
+
+
+async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    session_id = args.id or sid.new()
+    await bank.put_session(session_id, goal=args.goal)
+    _write_active(session_id)  # the sticky-session marker (only `ma session start` writes it)
+    line = Text.assemble(("session ", "dim"), (session_id, "bold"))
+    if args.goal:
+        line.append(f"  goal={args.goal!r}", style="dim")
+    io[1](ui.render(line))
+    goal = await _session_start_offers(session_id, args.goal, bank=bank, io=io, allow_continuity=True)
     # The viewer URL is the actionable artifact — point it at the goal board (the
     # durable, shareable surface) once the goal is resolved; ungoaled → /s/{id}.
     io[1](ui.render(Text.assemble(("open: ", "dim"), (_open_url(session_id, goal), "underline cyan"))))
@@ -702,22 +740,55 @@ async def _offer_goal_context(session_id: str, goal: str, *, bank: Bank, io: tup
     io[1](ui.render(Text(messages.START_INJECTED_NOTE.format(packet_id=pid), style="green")))
 
 
-async def _do_register(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    from manyagent._handlers import _resolve_agent
+async def _do_agent_register(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma agent register <name>`` — install the in-agent skills + MCP server for
+    an agent. This is the machine-level setup that otherwise happens implicitly
+    the first time you run ``ma <name>``; exposing it lets you install once,
+    up front. Idempotent. Registering the agent as an Agent inside a session
+    stays automatic at run time (``_resolve_agent`` in ``_do_run_agent``)."""
+    from manyagent._handlers import _adapter_for
 
-    sid_ = _resolve_sid(args.session)
-    agent_id = await _resolve_agent(sid_, args.name, bank=bank)
-    io[1](ui.render(Text.assemble(("registered ", "green"), (agent_id, "bold"))))
-    io[1](ui.render(Text.assemble(("open: ", "dim"), (_agent_url(agent_id), "underline cyan"))))
+    name = args.name
+    # The install is user-scoped and session-independent — bind the adapter to
+    # empty ids purely to reach install_skills() (session_id=None is accepted).
+    adapter = _adapter_for(name, session_id="", agent_id="")
+    home = _manyagent_home()
+    home.mkdir(parents=True, exist_ok=True)
+    manifest = adapter.install_skills(session_id=None, oma_home=home, scope="user")
+    if manifest is None:
+        io[1](ui.render(Text.assemble(("manyagent: ", "dim"), (f"no skills installed for {name}", "yellow"))))
+        return 1
+    io[1](ui.render(Text.assemble(("registered ", "green"), (name, "bold"), (" — skills + MCP installed", "dim"))))
+    io[1](ui.render(Text(f"run it with `ma {name}`; inspect with `ma agent list`", style="dim")))
     return 0
 
 
-async def _do_run_agent(
-    name: str, agent_args: list[str], session: str | None, *, bank: Bank, io: tuple[In, Out]
-) -> int:
+async def _resolve_run_session(goal: str | None, *, bank: Bank, io: tuple[In, Out]) -> tuple[str, bool]:
+    """Decide which session ``ma <agent>`` attaches to, and whether it is
+    *ephemeral* (auto-ends on clean exit). The sticky marker (``~/.manyagent/active``,
+    written only by ``ma session start``) is the only state:
+
+    - an explicit goal → always a FRESH ephemeral session under that goal (never
+      hijacks the sticky one — an explicit goal means "new work");
+    - else a sticky active session exists → ATTACH to it, NOT ephemeral;
+    - else → a fresh ephemeral session under the default goal.
+
+    Ephemeral sessions never write the marker. Fresh sessions fire the
+    session-start offers (inject/context), minus the goal-continuity prompt."""
+    if not goal:
+        active = _read_active()
+        if active:
+            return active, False
+    session_id = sid.new()
+    await bank.put_session(session_id, goal=goal)
+    await _session_start_offers(session_id, goal, bank=bank, io=io, allow_continuity=False)
+    return session_id, True
+
+
+async def _do_run_agent(name: str, agent_args: list[str], goal: str | None, *, bank: Bank, io: tuple[In, Out]) -> int:
     from manyagent._handlers import _adapter_for, _resolve_agent
 
-    sid_ = _resolve_sid(session)
+    sid_, ephemeral = await _resolve_run_session(goal, bank=bank, io=io)
     agent_id = await _resolve_agent(sid_, name, bank=bank)
     adapter = _adapter_for(name, session_id=sid_, agent_id=agent_id)
 
@@ -836,26 +907,19 @@ async def _do_run_agent(
 
     # Show the trace link to the user
     io[1](ui.render(Text.assemble(("trace: ", "dim"), (_session_url(sid_), "underline cyan"))))
-    # The session-close moment fires HERE (2026-06-10; revised same day): the
-    # wrapped agent exiting asks ONE question — end the session? — and
-    # `_do_end` owns the distill offer + ★, so the identical close path runs
-    # whether the user accepts here or types `manyagent end` later. (A separate
-    # distill ask before this gate double-prompted: a failed draft was
-    # re-offered moments later inside `_do_end`.) Clean exits only (after a
-    # crash or Ctrl-C the user is dealing with the failure, not reflecting
-    # on it).
-    if agent_rc == 0 and not _noninteractive():
+    # Session close (sticky-marker model, 2026-06-22). An EPHEMERAL session — one
+    # manyagent minted for this run (no `ma session start` sticky marker) — closes
+    # WITH the agent window: auto-end on clean exit, no gate. A STICKY session
+    # (the user ran `ma session start`) is left open; they end it explicitly with
+    # `ma session end`. Clean exits only — after a crash or Ctrl-C the user is
+    # dealing with the failure, not reflecting. `_do_end` owns the distill + ★
+    # offers, so the identical close path runs whether it fires here (auto) or via
+    # `ma session end` later; `since` scopes the end reflection's trace context to
+    # the harness sessions bound during THIS run.
+    if ephemeral and agent_rc == 0:
+        io[1](ui.render(Text(messages.AGENT_EXIT_AUTO_END_NOTE.format(session_id=sid_), style="dim")))
         try:
-            if ask_allow(
-                messages.AGENT_EXIT_END_OFFER.format(session_id=sid_),
-                input_fn=io[0],
-                output_fn=io[1],
-                noninteractive=False,
-            ):
-                # `since` scopes the end-offer reflection's trace context to
-                # the harness sessions bound during THIS run — a `--resume`d
-                # or earlier run's transcript must not be what gets distilled.
-                await _do_end(argparse.Namespace(session=sid_, since=run_started), bank=bank, io=io)
+            await _do_end(argparse.Namespace(session=sid_, since=run_started), bank=bank, io=io)
         except Exception as exc:
             io[1](
                 ui.render(
@@ -885,44 +949,51 @@ def _harness_bindings(sid_: str, *, since: float) -> list[dict[str, object]]:
     return out
 
 
-async def _do_uninstall(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent uninstall <adapter>`` — reverse the install via the saved manifest.
-    Created files are removed iff still matching what we wrote; merged files
-    have only our keys popped (third-party MCP servers etc. survive); any
-    external CLI registrations (``claude mcp add`` etc.) are reversed by
-    their recorded inverse command."""
+async def _do_agent_unregister(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma agent unregister <name>`` — reverse the skill install via the saved
+    manifest. Created files are removed iff still matching what we wrote; merged
+    files have only our keys popped (third-party MCP servers etc. survive); any
+    external CLI registrations (``claude mcp add`` etc.) are reversed by their
+    recorded inverse command."""
     from manyagent._installer import uninstall
 
-    rc = uninstall(args.adapter, _manyagent_home(), output_fn=io[1])
+    rc = uninstall(args.name, _manyagent_home(), output_fn=io[1])
     if rc == 0:
         io[1]("")
         io[1](
-            f"manyagent: skill files are gone from disk; if {args.adapter} is currently "
+            f"manyagent: skill files are gone from disk; if {args.name} is currently "
             "running, restart it so its slash menu refreshes (additions are live; "
             "removals are cached until session restart)."
         )
     return rc
 
 
-async def _do_status(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent status`` — list every adapter that currently has an in-agent
-    install (skills + MCP server entry) along with the files it owns."""
+async def _do_agent_list(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma agent list [-v]`` — list every agent that currently has an in-agent
+    install (skills + MCP server entry). Plain shows one line per agent; ``-v``
+    expands the per-file manifest it owns (the old ``ma status`` detail)."""
     from manyagent._installer import list_installed
 
     manifests = list_installed(_manyagent_home())
     if not manifests:
-        io[1]("manyagent: no in-agent skills installed (run `manyagent <adapter>` to install)")
+        io[1]("manyagent: no agents registered (run `ma agent register <name>`, or just `ma <name>`)")
         return 0
     for m in manifests:
         io[1]("")
         io[1](
             ui.render(
-                Text.assemble((m.adapter, "bold magenta"), (f"  scope {m.scope} · installed {m.installed_at}", "dim"))
+                Text.assemble(
+                    (m.adapter, "bold magenta"),
+                    (f"  scope {m.scope} · installed {m.installed_at}", "dim"),
+                    ("" if getattr(args, "verbose", False) else f"  · {len(m.entries)} file(s)", "dim"),
+                )
             )
         )
+        if not getattr(args, "verbose", False):
+            continue
         for e in m.entries:
             # the verb word, not a bare sigil: `~ ~/.codex/config.toml` would
-            # read as two indistinguishable tildes, and status has no legend.
+            # read as two indistinguishable tildes, and the list has no legend.
             verb = ("+ create", "bold green") if e.kind == "create" else ("~ merge ", "bold yellow")
             line = Text.assemble("  ", verb, " ", ui.tilde(e.path))
             if e.merge_keys:
@@ -1260,9 +1331,9 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
 
 
 # M11.4: the four knowledge-loop verbs moved to ``manyagent._handlers``. They are
-# no longer CLI subcommands — only the session-lifecycle verbs (start /
-# register / <name> / end / status / uninstall) remain on this surface.
-# The user-facing path is in-agent skills + the MCP server (manyagent._mcp).
+# no longer CLI subcommands — the surface is the `ma <agent>` run path plus the
+# reserved groups (`ma agent` / `ma session` / `ma dev`). The user-facing
+# knowledge loop is in-agent skills + the MCP server (manyagent._mcp).
 
 
 async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
@@ -1290,7 +1361,7 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
             io[1](
                 ui.render(Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow")))
             )
-    _clear_active()
+    _clear_active(sid_)
     _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
     io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
     return 0
@@ -1341,19 +1412,135 @@ def _noninteractive() -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# `ma session list` — browse recent sessions
+# --------------------------------------------------------------------------- #
+
+_REL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+
+def _to_dt(iso_str: str) -> datetime | None:
+    """Parse a Bank ``created_at`` into an aware UTC datetime (``Z`` and naive
+    timestamps both normalized), or ``None`` if unparseable."""
+    s = iso_str.strip().replace("Z", "+00:00")
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _parse_when(value: str) -> datetime:
+    """A ``--since``/``--until`` value → aware UTC datetime. Accepts a relative
+    offset ``<N><unit>`` (s/m/h/d/w, e.g. ``7d``/``24h``/``2w``) meaning "N ago",
+    or an ISO date/datetime (``2026-06-01``). SystemExit with a hint otherwise."""
+    s = value.strip()
+    m = re.fullmatch(r"(\d+)([smhdw])", s)
+    if m:
+        return datetime.now(UTC) - timedelta(**{_REL_UNITS[m.group(2)]: int(m.group(1))})
+    dt = _to_dt(s)
+    if dt is None:
+        raise SystemExit(f"can't parse time {value!r} — use an ISO date (2026-06-01) or an offset like 7d/24h/2w")
+    return dt
+
+
+def _short_sid(s: str) -> str:
+    """A browse-friendly session id: the leading uuid segment, abbreviated."""
+    return (s[:8] + "…") if len(s) > 9 else s
+
+
+def _fmt_ts(iso: object) -> str:
+    """Render a timestamp as local ``YYYY-MM-DD HH:MM`` for the list table."""
+    dt = _to_dt(str(iso or ""))
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt else (str(iso or "—")[:16])
+
+
+async def _do_session_list(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma session list [N] [--since W] [--until W] [--goal G]`` — the local
+    session browser. Defaults to the 10 most recent; filters by goal and a
+    created-at window before slicing. Renders a rich table (★ marks the sticky
+    active session). Post counts + last-updated are computed only for the rows
+    actually shown."""
+    from rich.table import Table
+
+    since = _parse_when(args.since) if getattr(args, "since", None) else None
+    until = _parse_when(args.until) if getattr(args, "until", None) else None
+    goal_filter = getattr(args, "goal", None)
+    rows = []
+    for s in await bank.list_sessions():
+        if goal_filter and (s.get("goal") or "") != goal_filter:
+            continue
+        created = _to_dt(str(s.get("created_at") or ""))
+        if since and (created is None or created < since):
+            continue
+        if until and (created is None or created > until):
+            continue
+        rows.append(s)
+    rows.sort(key=lambda s: str(s.get("created_at") or ""), reverse=True)
+    rows = rows[: (getattr(args, "n", None) or 10)]
+    if not rows:
+        io[1]("manyagent: no sessions match")
+        return 0
+    active = _read_active()
+    table = Table(box=None, pad_edge=False, header_style="bold")
+    for col, just in (
+        ("", "left"),
+        ("goal", "left"),
+        ("session", "left"),
+        ("status", "left"),
+        ("posts", "right"),
+        ("created", "left"),
+        ("updated", "left"),
+    ):
+        table.add_column(col, justify=just)  # type: ignore[arg-type]
+    for s in rows:
+        sid_s = str(s.get("id") or "")
+        packets = await bank.list_packets(session_id=sid_s)
+        posts = sum(1 for p in packets if p.get("type") == "post")
+        last = max((str(p.get("created_at") or "") for p in packets), default=str(s.get("created_at") or ""))
+        table.add_row(
+            "★" if sid_s == active else "",
+            str(s.get("goal") or "—"),
+            _short_sid(sid_s),
+            str(s.get("status") or ""),
+            str(posts),
+            _fmt_ts(s.get("created_at")),
+            _fmt_ts(last),
+        )
+    io[1](ui.render(table))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # argparse + sniffing dispatch
 # --------------------------------------------------------------------------- #
 
 _EPILOG = """\
-session lifecycle (the only verbs on this CLI):
-  ma init                          first-run setup: write ~/.manyagent/env (Bank URL + key; loaded from any directory)
-  ma preflight                     validate env / Bank reachability / keys
-  ma start [goal] [--id UUID]      start/join a session (goal defaults to 'misc'; writes ~/.manyagent/active)
-  ma register <name>               register an adapter as an Agent
-  ma <name> [args...]              install in-agent skills + run the wrapped agent under a PTY
-  ma end [--session id]            end the session (optional ★ prompt)
-  ma status                        list installed in-agent skill bundles
-  ma uninstall <adapter>           reverse the install via the saved manifest
+examples:
+  ma claude                        run claude in a quick session (auto-ends when it closes)
+  ma "fix the parser bug" claude   run claude in a new session named by that goal
+  ma --goal "ship v2" codex        same, with the goal as a flag (unambiguous)
+  ma session start "ship v2"       open a session that stays active across runs
+  ma session list                  browse your recent sessions
+
+run an agent:
+  ma [--goal G] <agent> [args...]  run a wrapped agent; with a sticky session
+                                   active it attaches, else it auto-ends on exit
+
+agent tooling (skills + MCP server):
+  ma agent register <name>         install the in-agent skills + MCP server
+  ma agent unregister <name>       reverse the install via the saved manifest
+  ma agent list [-v]               list registered agents (-v: the file manifest)
+
+sessions:
+  ma session start [goal] [--id]   start a sticky session (writes ~/.manyagent/active)
+  ma session end [--session id]    end the active (or given) session
+  ma session list [N] [--since W] [--until W] [--goal G]   browse recent sessions
+
+setup / diagnostics:
+  ma dev init                      first-run setup: write ~/.manyagent/env (Bank URL + key)
+  ma dev preflight                 validate env / Bank reachability / keys
 
 knowledge-loop verbs (typed INSIDE the wrapped agent, not on this CLI):
   /self-distill                   (Claude Code, Gemini CLI)
@@ -1362,64 +1549,71 @@ knowledge-loop verbs (typed INSIDE the wrapped agent, not on this CLI):
   /inject [@packet]
   $self-distill, $discuss, ...    (Codex CLI — `/` is reserved for built-ins)
 
-Skills + MCP server install on `ma <name>`; the human surface stays one tap
-(Design Principles §11): the agent generates the structured post, proposes
-the ★, and your in-agent permission prompt is the accept gate (C1).
+Skills + MCP server install on `ma <agent>` (or up front with `ma agent
+register`); the human surface stays one tap (Design Principles §11): the agent
+generates the structured post, proposes the ★, and your in-agent permission
+prompt is the accept gate (C1).
 """
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the full argparse tree. Only the reserved groups (``agent`` /
+    ``session`` / ``dev``) live here; ``ma <agent> …`` is sniffed in ``main()``
+    before argparse sees it (clig.dev: a catch-all dispatch with a reserved
+    namespace). Each group's bare form prints that group's help."""
     p = argparse.ArgumentParser(
         prog="ma",
-        description="Wrap installed coding-agent CLIs; curate cross-session knowledge.",
+        description="Run your coding agents through manyagent; curate cross-session knowledge.",
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--version", action="version", version=f"ma {__version__}")
-    sub = p.add_subparsers(dest="verb")
+    group = p.add_subparsers(dest="group")
 
-    # First-run setup for installed-wheel users: write the user-level env file.
-    i = sub.add_parser("init")
+    # --- ma agent … : the in-agent tooling (skills + MCP) surface ------------
+    agent = group.add_parser("agent", help="install/list the in-agent skills + MCP server")
+    agent_sub = agent.add_subparsers(dest="verb")
+    ar = agent_sub.add_parser("register", help="install in-agent skills + MCP for an agent")
+    ar.add_argument("name")
+    au = agent_sub.add_parser("unregister", help="reverse the skill install via the saved manifest")
+    au.add_argument("name")
+    al = agent_sub.add_parser("list", help="list registered agents")
+    al.add_argument("-v", "--verbose", action="store_true", help="show the per-file manifest")
+
+    # --- ma session … : session lifecycle + local browsing ------------------
+    session = group.add_parser("session", help="start/end/browse sessions")
+    session_sub = session.add_subparsers(dest="verb")
+    ss = session_sub.add_parser("start", help="start a sticky session")
+    ss.add_argument("goal", nargs="?")
+    ss.add_argument("--id")
+    se = session_sub.add_parser("end", help="end the active (or given) session")
+    se.add_argument("--session")
+    sl = session_sub.add_parser("list", help="browse recent sessions")
+    sl.add_argument("n", nargs="?", type=int, help="how many to show (default 10)")
+    sl.add_argument("--since", help="only sessions created after (ISO date or offset like 7d)")
+    sl.add_argument("--until", help="only sessions created before (ISO date or offset like 7d)")
+    sl.add_argument("--goal", help="only sessions filed under this goal")
+
+    # --- ma dev … : first-run setup + diagnostics ---------------------------
+    dev = group.add_parser("dev", help="first-run setup + diagnostics")
+    dev_sub = dev.add_subparsers(dest="verb")
+    i = dev_sub.add_parser("init", help="write ~/.manyagent/env (Bank URL + key)")
     i.add_argument("--bank-url")
     i.add_argument("--trusted-key")
     i.add_argument("--anon-key")
     i.add_argument("--cf-access-client-id")
     i.add_argument("--cf-access-client-secret")
+    dev_sub.add_parser("preflight", help="validate env / Bank reachability / keys")
 
-    sub.add_parser("preflight")
-
-    s = sub.add_parser("start")
-    s.add_argument("goal", nargs="?")
-    s.add_argument("--id")
-
-    r = sub.add_parser("register")
-    r.add_argument("name")
-    r.add_argument("--session")
-
-    # M11.4: self-distill / discuss / cross-distill / inject are NOT CLI
-    # subcommands — they're installed as in-agent skills + MCP tools by
-    # ``manyagent <name>``. Programmatic callers use ``manyagent._handlers.do_*`` directly.
-
-    e = sub.add_parser("end")
-    e.add_argument("--session")
-
-    # M11: in-agent install lifecycle. `manyagent <name>` runs the install
-    # implicitly; these expose the inspect + reverse paths.
-    us = sub.add_parser("uninstall")
-    us.add_argument("adapter")
-
-    sub.add_parser("status")
     return p
 
 
-_DISPATCH: dict[str, Callable[..., Coroutine[Any, Any, int]]] = {
-    "init": _do_init,
-    "preflight": _do_preflight,
-    "start": _do_start,
-    "register": _do_register,
-    "uninstall": _do_uninstall,
-    "status": _do_status,
-    "end": _do_end,
+# group → {verb → handler}. ``main()`` resolves ``args.group``/``args.verb``;
+# a group with no verb prints that group's help.
+_DISPATCH: dict[str, dict[str, Callable[..., Coroutine[Any, Any, int]]]] = {
+    "agent": {"register": _do_agent_register, "unregister": _do_agent_unregister, "list": _do_agent_list},
+    "session": {"start": _do_start, "end": _do_end, "list": _do_session_list},
+    "dev": {"init": _do_init, "preflight": _do_preflight},
 }
 
 
@@ -1452,6 +1646,71 @@ def _guard(coro: Coroutine[Any, Any, int]) -> int:
         return 1
 
 
+def _is_agent_token(tok: str) -> bool:
+    """True if ``tok`` names a known agent (installed local / builtin / hub) and
+    is not a reserved group word — the anchor ``_split_run_args`` uses to locate
+    where the goal ends and the agent begins. Never raises (resolve failures and
+    the offline hub seam both mean "not an agent here")."""
+    if tok in RESERVED:
+        return False
+    from manyagent.adapters import registry
+
+    try:
+        registry.resolve(tok)
+        return True
+    except Exception:
+        return False
+
+
+def _split_run_args(raw: list[str]) -> tuple[str | None, str, list[str]]:
+    """Parse a run line ``ma [--goal G] [GOAL words…] <agent> [agent args…]`` into
+    ``(goal, agent, agent_args)``. The agent is the first token that names a known
+    agent; tokens before it form the goal (or pass ``--goal``/``-g``, the
+    unambiguous escape hatch — clig.dev prefers flags). SystemExit with a helpful
+    hint when nothing resolves to an agent, mapping a removed top-level verb to
+    its new home where we can."""
+    goal_flag: str | None = None
+    goal_words: list[str] = []
+    i, n = 0, len(raw)
+    while i < n:
+        t = raw[i]
+        if t in ("--goal", "-g"):
+            if i + 1 >= n:
+                raise SystemExit('`--goal` needs a value, e.g. `ma --goal "fix bug" claude`')
+            goal_flag, i = raw[i + 1], i + 2
+            continue
+        if t.startswith("--goal="):
+            goal_flag, i = t.split("=", 1)[1], i + 1
+            continue
+        if not t.startswith("-") and _is_agent_token(t):
+            goal = goal_flag if goal_flag is not None else (" ".join(goal_words) or None)
+            return goal, t, raw[i + 1 :]
+        if t.startswith("-"):
+            raise SystemExit(f"unknown option {t!r} before an agent name — run `ma -h` for usage")
+        # A bare non-agent word: a removed top-level verb (only as the first
+        # token) gets a redirect; otherwise it's part of the goal.
+        if not goal_words and goal_flag is None and t in _MOVED:
+            raise SystemExit(messages.RUN_VERB_MOVED.format(old=t, new=_MOVED[t]))
+        goal_words.append(t)
+        i += 1
+    raise SystemExit(messages.RUN_NO_AGENT.format(line=" ".join(raw)))
+
+
+def _dispatch_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace, io: tuple[In, Out]) -> int:
+    """Route a parsed reserved-group command. A bare group (``ma agent``) prints
+    that group's help; a group+verb runs its handler under ``_guard``."""
+    group = getattr(args, "group", None)
+    if not group:
+        parser.print_help()
+        return 0
+    verb = getattr(args, "verb", None)
+    if not verb:
+        with contextlib.suppress(SystemExit):
+            parser.parse_args([group, "--help"])  # argparse prints the group's help
+        return 0
+    return _guard(_DISPATCH[group][verb](args, bank=get_bank(), io=io))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entrypoint. Returns a process exit code."""
     raw = list(argv) if argv is not None else sys.argv[1:]
@@ -1464,16 +1723,14 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _sigint_handler)
     first = raw[0]
 
-    # Not a known verb and not a flag → `manyagent <name> [args]` (run an agent).
-    if first not in _SUBCOMMANDS and not first.startswith("-"):
-        return _guard(_do_run_agent(first, raw[1:], None, bank=get_bank(), io=io))
+    # Reserved group, or a help/version flag → argparse. Everything else is a
+    # run line: `ma [--goal G] [goal…] <agent> [args…]` (the default path).
+    if first in RESERVED or first in ("-h", "--help", "--version"):
+        parser = _build_parser()
+        return _dispatch_parsed(parser, parser.parse_args(raw), io)
 
-    parser = _build_parser()
-    args = parser.parse_args(raw)
-    if not getattr(args, "verb", None):
-        parser.print_help()
-        return 0
-    return _guard(_DISPATCH[args.verb](args, bank=get_bank(), io=io))
+    goal, agent, agent_args = _split_run_args(raw)
+    return _guard(_do_run_agent(agent, agent_args, goal, bank=get_bank(), io=io))
 
 
 if __name__ == "__main__":
