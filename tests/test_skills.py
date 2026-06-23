@@ -140,7 +140,7 @@ _CLAUDE = Dialect(
 )
 _CODEX = Dialect(
     tool_ref=lambda n: f"manyagent.{n}",
-    invocation=lambda s: f"$manyagent-{s}",
+    invocation=lambda s: f"${s}",
     args="the user's request",
     gate="Codex's per-tool approval prompt",
 )
@@ -180,7 +180,7 @@ def test_self_distill_body_renders_codex_tokens() -> None:
 def test_discuss_body_cross_references_self_distill_invocation() -> None:
     # /discuss tells the user to run self-distill first — in the host's own syntax.
     assert "`/self-distill`" in Discuss().body(_CLAUDE)
-    assert "$manyagent-self-distill" in Discuss().body(_CODEX)
+    assert "$self-distill" in Discuss().body(_CODEX)
 
 
 def test_cross_distill_quotes_literal_sentinel_but_dialect_instruction() -> None:
@@ -188,9 +188,9 @@ def test_cross_distill_quotes_literal_sentinel_but_dialect_instruction() -> None
     # The tool's literal sentinel stays verbatim (it's what the tool returns) …
     assert '"Run /self-distill first!"' in body
     # … but the instruction to the user uses the host invocation.
-    assert "tell the user to run `$manyagent-self-distill` first" in body
+    assert "tell the user to run `$self-distill` first" in body
     # cross-distill points at the inject verb in the host's syntax.
-    assert "$manyagent-inject @<bundle_id>" in body
+    assert "$inject @<bundle_id>" in body
 
 
 def test_inject_body_renders_gemini_args_and_tools() -> None:
@@ -210,6 +210,6 @@ def test_real_adapter_dialects_match_their_hosts() -> None:
     assert claude_d.tool_ref("commit_post") == "mcp__manyagent__commit_post"
     assert claude_d.invocation("self-distill") == "/self-distill"
     assert codex_d.tool_ref("commit_post") == "manyagent.commit_post"
-    assert codex_d.invocation("self-distill") == "$manyagent-self-distill"
+    assert codex_d.invocation("self-distill") == "$self-distill"
     assert gemini_d.tool_ref("commit_post") == "mcp__manyagent__commit_post"
     assert gemini_d.args == "{{args}}"

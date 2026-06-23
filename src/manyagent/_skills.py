@@ -293,7 +293,7 @@ class Dialect:
     (Codex)."""
     invocation: Callable[[str], str]
     """Verb slug → host invocation, e.g. ``"self-distill"`` → ``"/self-distill"``
-    (Claude/Gemini) or ``"$manyagent-self-distill"`` (Codex)."""
+    (Claude/Gemini) or ``"$self-distill"`` (Codex)."""
     args: str
     """How the host exposes user arguments to the skill body
     (``"$ARGUMENTS"`` / ``"{{args}}"`` / ``"the user's request"``)."""

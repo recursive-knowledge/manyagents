@@ -95,7 +95,7 @@ yours.
 | Adapter | Skills files | MCP/register surface | Slash invocation |
 |---|---|---|---|
 | `claude` | `~/.claude/skills/<verb>/SKILL.md` (CREATE × 4) | `claude mcp add --scope user manyagent -- <python> -m manyagent._mcp` (CLIAction, with `remove` pre-clear for idempotency) | `/<verb>` |
-| `codex` | `~/.codex/skills/manyagent-<verb>/SKILL.md` (CREATE × 4) | `tomlkit`-preserving MERGE of `~/.codex/config.toml`: `[mcp_servers.manyagent]` + `[mcp_servers.manyagent.tools.commit_post]` + `[mcp_servers.manyagent.tools.inject_commit]` — Codex's `mcp add` doesn't expose `env_vars` or per-tool approval-modes, so direct TOML merge gives full control | `$manyagent-<verb>` (Codex reserves `/` for built-ins) |
+| `codex` | `~/.codex/skills/<verb>/SKILL.md` (CREATE × 4) | `tomlkit`-preserving MERGE of `~/.codex/config.toml`: `[mcp_servers.manyagent]` + `[mcp_servers.manyagent.tools.commit_post]` + `[mcp_servers.manyagent.tools.inject_commit]` — Codex's `mcp add` doesn't expose `env_vars` or per-tool approval-modes, so direct TOML merge gives full control | `$<verb>` (Codex reserves `/` for built-ins) |
 | `gemini` | bundle at `$MANYAGENT_HOME/extensions/gemini-manyagent/` (CREATE × 6 — `gemini-extension.json` + `GEMINI.md` + 4 `commands/<verb>.toml`) | `gemini extensions link <bundle> --consent` with `"1\n"` piped to stdin (CLIAction) — the workspace-trust prompt has no skip flag that coexists with `--consent` | `/<verb>` |
 
 Cross-cutting facts:

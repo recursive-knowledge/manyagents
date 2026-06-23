@@ -474,18 +474,18 @@ def test_gemini_uninstall_runs_extensions_uninstall(fake_home: Path, captured_cl
 # --------------------------------------------------------------------------- #
 
 
-def test_codex_plan_creates_manyagent_prefixed_skills_and_toml_merges(fake_home: Path) -> None:
-    """Codex reserves the ``/`` namespace — skills are invoked as ``$manyagent-<verb>``."""
+def test_codex_plan_creates_bare_verb_skills_and_toml_merges(fake_home: Path) -> None:
+    """Codex reserves the ``/`` namespace — skills are invoked as ``$<verb>``."""
     from manyagent.adapters.skills.codex import build_plan
 
     plan = build_plan(session_id="S1", scope="user")
     creates = [op for op in plan.ops if op.kind == "create"]
     merges = [op for op in plan.ops if op.kind == "merge"]
     assert {Path(op.path).parent.name for op in creates} == {
-        "manyagent-self-distill",
-        "manyagent-discuss",
-        "manyagent-cross-distill",
-        "manyagent-inject",
+        "self-distill",
+        "discuss",
+        "cross-distill",
+        "inject",
     }
     # Three TOML merges: the main server entry + two per-tool approval modes.
     assert len(merges) == 3
@@ -512,7 +512,7 @@ def test_codex_install_writes_skills_and_merges_toml(fake_home: Path) -> None:
     assert 'approval_mode = "prompt"' in text
     assert "MANYAGENT_SESSION" in text  # env_vars allowlist
     for verb in ("self-distill", "discuss", "cross-distill", "inject"):
-        assert (fake_home / ".codex" / "skills" / f"manyagent-{verb}" / "SKILL.md").is_file()
+        assert (fake_home / ".codex" / "skills" / verb / "SKILL.md").is_file()
 
 
 def test_codex_install_preserves_third_party_mcp_server_round_trip(fake_home: Path) -> None:

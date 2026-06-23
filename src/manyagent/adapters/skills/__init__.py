@@ -16,5 +16,5 @@ from manyagent._skills import REGISTRY
 # Derived from the single ``Skill`` registry (manyagent._skills) so the verbs, their
 # order, and their blurbs have one source of truth; each adapter prefixes its
 # own invocation syntax (`/self-distill` for claude/gemini,
-# `$manyagent-self-distill` for codex).
+# `$self-distill` for codex).
 USAGE: tuple[tuple[str, str], ...] = tuple((s.slug, s.blurb) for s in REGISTRY)
