@@ -285,9 +285,9 @@ def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
     """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
-    exactly the non-empty values, 0600, no prompts (Scripted is empty)."""
+    exactly the non-empty values, 0600. One Enter accepts the disclosure confirm."""
     _clear_bank_env(monkeypatch)
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "JWT"), bank=fake_bank, io=s.io()
     )
@@ -310,7 +310,7 @@ async def test_init_carries_forward_resolved_anon_and_cf(fake_bank: FakeBank, mo
     monkeypatch.setenv("MANYAGENT_BANK_ANON_KEY", "ANON-1")
     monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_ID", "CF-ID")
     monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET", "CF-SECRET")
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K2"), bank=fake_bank, io=s.io()
     )
@@ -330,14 +330,15 @@ async def test_init_values_round_trip_through_dotenv(fake_bank: FakeBank, monkey
 
     _clear_bank_env(monkeypatch)
     tricky = 'pa ss"word # not-a-comment'
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", tricky), bank=fake_bank, io=s.io()
     )
     assert rc == 0
     parsed = dotenv.dotenv_values(cli._user_env_path())
     assert parsed["MANYAGENT_BANK_TRUSTED_KEY"] == tricky
-    # A newline cannot be represented losslessly — refused, nothing written.
+    # A newline cannot be represented losslessly — refused, nothing written
+    # (the newline check fires before the disclosure prompt, so no extra tap).
     cli._user_env_path().unlink()
     with pytest.raises(SystemExit, match="newline"):
         await cli._do_init(
@@ -351,7 +352,7 @@ async def test_init_key_prompt_strips_pasted_assignment(fake_bank: FakeBank, mon
     must store the key, not a `NAME=`-prefixed wrong value."""
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
-    s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT")  # URL prompt, key prompt
+    s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert "MANYAGENT_BANK_TRUSTED_KEY=eyJWT\n" in cli._user_env_path().read_text(encoding="utf-8")
@@ -365,7 +366,7 @@ async def test_init_overwrite_detail_masks_credentials(fake_bank: FakeBank, monk
     p = cli._user_env_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("MANYAGENT_BANK_URL=http://old.example\nMANYAGENT_BANK_TRUSTED_KEY=SUPERSECRETJWT\n", encoding="utf-8")
-    s = Scripted("d", "n")  # inspect, then decline
+    s = Scripted("", "d", "n")  # disclosure confirm, then inspect overwrite, then decline
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
@@ -382,7 +383,7 @@ async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank, monk
     the branch is deterministic in CI and a configured dev shell alike."""
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
-    s = Scripted("", "")  # URL prompt, key prompt
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -401,7 +402,7 @@ async def test_init_applies_published_connection(fake_bank: FakeBank, monkeypatc
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
     doc = {"bank_url": "https://db-rotated.example", "anon_key": "NEW-ANON", "trusted_key": "NEW-WRITE"}
     monkeypatch.setattr(cli, "_fetch_published_config", lambda: doc)
-    s = Scripted("", "")  # Enter at both prompts accepts the published values
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -421,7 +422,7 @@ async def test_init_never_fetches_for_custom_bank(fake_bank: FakeBank, monkeypat
         raise AssertionError("must not fetch the published config for a custom Bank")
 
     monkeypatch.setattr(cli, "_fetch_published_config", _boom)
-    s = Scripted("", "")
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -433,7 +434,7 @@ async def test_init_overwrite_gate_declined_keeps_file(fake_bank: FakeBank) -> N
     p = cli._user_env_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("MANYAGENT_BANK_URL=http://keep.me\n", encoding="utf-8")
-    s = Scripted("n")  # the single overwrite allowance gate
+    s = Scripted("", "n")  # disclosure confirm, then decline the overwrite gate
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
@@ -453,6 +454,53 @@ async def test_init_noninteractive_never_overwrites(fake_bank: FakeBank, monkeyp
     rc = await cli._do_init(_args("dev", "init", "--bank-url", "https://other.example"), bank=fake_bank, io=s.io())
     assert rc == 1  # overwrite denied
     assert "db.example" in cli._user_env_path().read_text(encoding="utf-8")
+
+
+async def test_init_disclosure_printed_and_confirmed_interactively(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The open-corpus disclosure is always printed before writing the env file.
+    Interactive path: the user must accept the confirm tap to proceed."""
+    _clear_bank_env(monkeypatch)
+    s = Scripted("")  # Enter at the disclosure confirm tap
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0
+    # The disclosure text appeared in the output.
+    shown = "\n".join(s.out)
+    assert "public" in shown and "scrubbed" in shown
+    assert "MANYAGENT_WEB_PUBLIC_RAW" in shown
+
+
+async def test_init_disclosure_declined_aborts_write(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declining the disclosure confirm tap (n) returns rc=1 without writing the
+    env file."""
+    _clear_bank_env(monkeypatch)
+    s = Scripted("n")  # decline the disclosure confirm
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 1
+    assert not cli._user_env_path().exists()
+    # The disclosure itself was still printed.
+    assert any("public" in line for line in s.out)
+
+
+async def test_init_disclosure_shown_but_no_confirm_under_noninteractive(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under MANYAGENT_NONINTERACTIVE the disclosure is printed but no confirm
+    tap is issued — automation must not be blocked."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    s = Scripted()  # zero prompts: any pop would raise
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0 and cli._user_env_path().is_file()
+    # Disclosure was still emitted.
+    assert any("public" in line for line in s.out)
 
 
 # --------------------------------------------------------------------------- #

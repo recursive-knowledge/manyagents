@@ -99,6 +99,18 @@ INIT_OFFLINE_NOTE = (
 )
 INIT_CUSTOM_BANK_NOTE = "custom Bank configured — keeping it (the published public connection was not applied)"
 
+# Open-corpus disclosure printed before the env file is written (decision #3).
+# Always printed; the confirm tap is skipped under MANYAGENT_NONINTERACTIVE.
+INIT_DISCLOSURE = (
+    "Open corpus notice: captured session traces are scrubbed for secrets, then stored in a "
+    "shared, public-by-default Knowledge Bank — anyone can read them. "
+    "Writes are open: contributed knowledge is public and reusable by others. "
+    "The scrubber is best-effort; review sensitive sessions before contributing. "
+    "To opt out of public raw traces, set MANYAGENT_WEB_PUBLIC_RAW=0. "
+    "Quarantine is available as a takedown lever."
+)
+INIT_DISCLOSURE_CONFIRM = "Proceed with setup? (public corpus — see above)"
+
 # --------------------------------------------------------------------------- #
 # `manyagent start` — session-start offers and notes
 # --------------------------------------------------------------------------- #

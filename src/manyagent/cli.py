@@ -479,8 +479,11 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     both, and a re-run never silently drops a stored anon key / CF Access
     pair. The URL and trusted key additionally prompt interactively. Only
     non-empty values are written; the rendered file is parse-back-verified
-    through dotenv before it lands. Overwriting an existing file sits behind
-    one allowance gate (``d`` shows the file it would replace, credentials
+    through dotenv before it lands. An open-corpus disclosure is always
+    printed; the interactive confirm tap is skipped under
+    ``MANYAGENT_NONINTERACTIVE`` (automation must not be blocked, but the
+    disclosure is still shown). Overwriting an existing file sits behind one
+    allowance gate (``d`` shows the file it would replace, credentials
     masked; deny-by-default under ``MANYAGENT_NONINTERACTIVE``, Open-Q §B5)."""
     noninteractive = _noninteractive()
     resolved_url = config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
@@ -521,6 +524,18 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     for name, value in pairs:
         if value and parsed.get(name) != value:
             raise SystemExit(f"{name} value does not survive the env-file format — remove special characters")
+    # Open-corpus disclosure (decision #3): the user must be told, at setup time,
+    # that traces are stored in a shared public-by-default Bank. Always printed.
+    # Under MANYAGENT_NONINTERACTIVE: print the disclosure but skip the confirm tap
+    # (don't block automation).
+    io[1](ui.render(Text(messages.INIT_DISCLOSURE, style="dim")))
+    if not noninteractive and not ask_allow(
+        messages.INIT_DISCLOSURE_CONFIRM,
+        input_fn=io[0],
+        output_fn=io[1],
+        noninteractive=False,
+    ):
+        return 1
     path = _user_env_path()
     shown = ui.tilde(path)
     if path.is_file() and not ask_allow(
