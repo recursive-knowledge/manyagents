@@ -179,6 +179,33 @@ async def test_reuse_score_accept_bonus(fake_bank: FakeBank) -> None:
     assert (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"] == 4.0
 
 
+async def test_mark_injection_helpful_roundtrips_capture_only(fake_bank: FakeBank) -> None:
+    """00013 tap: mark_injection_helpful stamps helpful/helpful_note onto the
+    injection row (surfaced by list_injections), and reuse_score is UNCHANGED
+    (capture-only — the formal eval is deferred)."""
+    await fake_bank.put_session("SRC")
+    await fake_bank.put_session("TGT")
+    await fake_bank.put_packet({"id": "SRC/p", "session_id": "SRC", "type": "post"})
+    await fake_bank.record_injection("SRC/p", "TGT")
+
+    # fresh row: tap unset
+    rows = await fake_bank.list_injections(target_session_id="TGT")
+    assert rows[0]["helpful"] is None and rows[0]["helpful_note"] is None
+    before = (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"]
+
+    await fake_bank.mark_injection_helpful("SRC/p", "TGT", True, note="unblocked the retry loop")
+    rows = await fake_bank.list_injections(packet_id="SRC/p")
+    assert rows[0]["helpful"] is True and rows[0]["helpful_note"] == "unblocked the retry loop"
+
+    # capture-only: the signal does not move reuse_score
+    assert (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"] == before
+
+    # not-helpful round-trips too; no-op on an unknown injection
+    await fake_bank.mark_injection_helpful("SRC/p", "TGT", False)
+    assert (await fake_bank.list_injections(packet_id="SRC/p"))[0]["helpful"] is False
+    await fake_bank.mark_injection_helpful("SRC/p", "NOPE", True)  # no such row → no error
+
+
 # --------------------------------------------------------------------------- #
 # quarantine + pagination
 # --------------------------------------------------------------------------- #
@@ -219,10 +246,11 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_files_are_contiguous_00001_to_00012() -> None:
+def test_migration_files_are_contiguous() -> None:
     files = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
     prefixes = [f[:5] for f in files]
-    assert prefixes == [f"{i:05d}" for i in range(1, 13)], files
+    # Length-based so a new migration never re-hardcodes the count (tests.md LOW).
+    assert prefixes == [f"{i:05d}" for i in range(1, len(prefixes) + 1)], files
 
 
 async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
@@ -255,6 +283,7 @@ async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
         ("00006_swarms_taxonomy.sql", ["type in ('raw', 'post', 'distill')", "rating", "goal"]),
         ("00007_injection_ledger.sql", ["injections", "reuse_score", "create role curator"]),
         ("00011_agent_principal.sql", ["principal_id", "agents_principal_idx", "add column if not exists"]),
+        ("00013_injection_helpful.sql", ["helpful", "helpful_note", "trusted_update", "for update"]),
     ],
 )
 def test_migration_content_tokens(fname: str, must_contain: list[str]) -> None:

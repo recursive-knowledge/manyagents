@@ -210,7 +210,20 @@ class FakeBank:
                 "packet_id": packet_id,
                 "target_session_id": target_session_id,
                 "injected_at": _now(),
+                "helpful": None,  # 00013 tap; capture-only (no reuse_score effect)
+                "helpful_note": None,
             }
+
+    async def mark_injection_helpful(
+        self, packet_id: str, target_session_id: str, helpful: bool, *, note: str | None = None
+    ) -> None:
+        """Set the 00013 "did this help?" tap on one injection row. Capture-only:
+        ``reuse_score`` is deliberately UNCHANGED (the deferred formal eval). No-op
+        if the (packet_id, target_session_id) injection was never recorded."""
+        row = self._injections.get((packet_id, target_session_id))
+        if row is not None:
+            row["helpful"] = helpful
+            row["helpful_note"] = note
 
     async def list_injections(
         self, *, packet_id: str | None = None, target_session_id: str | None = None

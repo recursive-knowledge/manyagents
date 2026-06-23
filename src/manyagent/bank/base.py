@@ -91,6 +91,11 @@ class Bank(Protocol):
     async def list_injections(
         self, *, packet_id: str | None = None, target_session_id: str | None = None
     ) -> list[dict[str, Any]]: ...
+    # Per-injection "did this help?" tap (00013; capture-only — does NOT feed
+    # reuse_score, which stays correlation-only pending the deferred formal eval).
+    async def mark_injection_helpful(
+        self, packet_id: str, target_session_id: str, helpful: bool, *, note: str | None = None
+    ) -> None: ...
     async def reuse_score(self, packet_id: str | None = None) -> list[dict[str, Any]]: ...
 
     # --- quarantine (append-only; visible, excluded from curation/inject) ---

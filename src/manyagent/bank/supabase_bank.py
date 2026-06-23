@@ -275,6 +275,21 @@ class SupabaseBank:
         return [dict(r) for r in (resp.data or [])]
 
     @with_backoff()
+    async def mark_injection_helpful(
+        self, packet_id: str, target_session_id: str, helpful: bool, *, note: str | None = None
+    ) -> None:
+        # 00013 tap (capture-only): UPDATE the existing injection row on its
+        # composite PK. reuse_score is intentionally untouched (deferred eval).
+        cli = await self._client()
+        await (
+            cli.table("injections")
+            .update({"helpful": helpful, "helpful_note": note})
+            .eq("packet_id", packet_id)
+            .eq("target_session_id", target_session_id)
+            .execute()
+        )
+
+    @with_backoff()
     async def reuse_score(self, packet_id: str | None = None) -> list[dict[str, Any]]:
         cli = await self._client()
         q = cli.table("reuse_score").select("*")
