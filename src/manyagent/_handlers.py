@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
 from manyagent.bank import Bank
 from manyagent.utils import config, messages, ui
+
+_log = logging.getLogger(__name__)
 
 # These three helpers stay in manyagent.cli (CLI-state and prompt helpers); import
 # them lazily inside handlers to avoid circular import at module load.
@@ -54,7 +57,8 @@ async def _agent_json(adapter: Any, prompt: str) -> Any:
             try:
                 return json.loads(raw[a : b + 1])
             except json.JSONDecodeError:
-                return None
+                pass
+    _log.debug("_agent_json: no JSON object recovered from model output: %r", raw[:200])
     return None
 
 
