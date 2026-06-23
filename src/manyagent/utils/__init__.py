@@ -5,7 +5,7 @@ Small, depended on by everything (the ``ds.utils`` analog).
 
 from __future__ import annotations
 
-from manyagent.utils import config, log, provider, sid, ui
+from manyagent.utils import config, log, provider, sid, slug, ui
 from manyagent.utils.log import get_logger
 from manyagent.utils.provider import (
     OpenAICompatibleProvider,
@@ -15,6 +15,7 @@ from manyagent.utils.provider import (
     rate_limit_signal,
     resolve,
 )
+from manyagent.utils.slug import normalize_goal, slugify
 
 __all__ = [
     "OpenAICompatibleProvider",
@@ -24,9 +25,12 @@ __all__ = [
     "config",
     "get_logger",
     "log",
+    "normalize_goal",
     "provider",
     "rate_limit_signal",
     "resolve",
     "sid",
+    "slug",
+    "slugify",
     "ui",
 ]

@@ -476,6 +476,77 @@ async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> Non
     assert (await fake_bank.get_session("SESS-0001"))["status"] == "ended"
 
 
+async def test_start_slug_normalizes_goal_on_write(fake_bank: FakeBank) -> None:
+    # decision #1: the stored goal is the canonical slug, so case/spacing
+    # variants land in ONE aggregation bucket instead of fragmenting.
+    s = Scripted()
+    rc = await cli._do_start(_args("session", "start", "  CFD Solver ", "--id", "S-NORM"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-NORM"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_offers_existing_and_selecting_reuses_slug(fake_bank: FakeBank) -> None:
+    # Seed an existing bucket, then start with a DIFFERENT typed goal so the
+    # picker lists buckets; pick "1" → reuse that exact slug (no parallel bucket).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted("1")  # the picker prompt: select bucket #1
+    rc = await cli._do_start(_args("session", "start", "new thing", "--id", "S-PICK"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-PICK"))["goal"] == "cfd-solver"
+    assert any("existing goals" in line for line in s.out)
+
+
+async def test_goal_picker_typed_variant_folds_into_existing_bucket(fake_bank: FakeBank) -> None:
+    # An explicit goal that normalizes to an existing bucket reuses it with NO
+    # list/prompt (consumes no input).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # "CFD Solver" → cfd-solver, already a bucket: confirm-reuse, no input
+    rc = await cli._do_start(_args("session", "start", "CFD Solver", "--id", "S-TYPE"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-TYPE"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_typing_variant_at_list_folds_into_bucket(fake_bank: FakeBank) -> None:
+    # Start with a non-matching explicit goal so the list shows, then type a
+    # case/spacing variant of an existing bucket → folds in (match note shown).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted("CFD_Solver")  # at the list prompt: a variant of the existing slug
+    rc = await cli._do_start(_args("session", "start", "brand new", "--id", "S-FOLD"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-FOLD"))["goal"] == "cfd-solver"
+    assert any("matches an existing bucket" in line for line in s.out)
+
+
+async def test_goal_picker_explicit_goal_matching_bucket_reuses_without_listing(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # an explicit goal already in a bucket consumes NO input
+    rc = await cli._do_start(_args("session", "start", "cfd_solver", "--id", "S-EXP"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-EXP"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_skipped_when_noninteractive(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # noninteractive: no prompt, just normalize the passed goal
+    rc = await cli._do_start(_args("session", "start", "GPU Kernels", "--id", "S-NI"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-NI"))["goal"] == "gpu-kernels"
+    assert not any("existing goals" in line for line in s.out)
+
+
+async def test_goal_picker_survives_bank_failure(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A Bank hiccup fetching goals must not block starting a session.
+    async def _boom() -> Any:
+        raise RuntimeError("bank down")
+
+    monkeypatch.setattr(fake_bank, "list_sessions", _boom)
+    s = Scripted()
+    rc = await cli._do_start(_args("session", "start", "Fluid Sim", "--id", "S-FAIL"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-FAIL"))["goal"] == "fluid-sim"
+
+
 def test_session_url_defaults_to_hosted_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI's `open:` links point at the hosted viewer by default — the
     deployment may move, so the base is the MANYAGENT_WEB_PUBLIC_URL tunable, never
@@ -1145,7 +1216,7 @@ async def test_explicit_goal_run_is_ephemeral_and_does_not_hijack_sticky(
     s = Scripted("", "")  # any start/end offers; the run must not stall on input
     rc = await cli._do_run_agent("claude", [], "fix bug", bank=fake_bank, io=s.io())
     assert rc == 0
-    assert (await fake_bank.get_session("EPH-2"))["goal"] == "fix bug"
+    assert (await fake_bank.get_session("EPH-2"))["goal"] == "fix-bug"  # slug-normalized on write
     assert (await fake_bank.get_session("EPH-2"))["status"] == "ended"  # ephemeral auto-ended
     assert cli._read_active() == "STICKY"  # the sticky marker survived
     assert (await fake_bank.get_session("STICKY")).get("status") != "ended"
