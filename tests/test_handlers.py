@@ -500,12 +500,16 @@ async def test_resolve_agent_existing_row_skips_gate(
 
 
 async def test_resolve_agent_stamps_stable_principal_across_sessions(
-    fake_bank: FakeBank, adapter_gate: Any, monkeypatch: pytest.MonkeyPatch
+    fake_bank: FakeBank,
 ) -> None:
     """Registering the same adapter in two sessions yields the SAME principal
     (cross-goal identity, 00011); a different adapter yields a different one.
-    MANYAGENT_HOME is the autouse tmp dir, so principals.json is sandboxed."""
-    monkeypatch.setattr(h, "_validate_adapter", adapter_gate)
+    MANYAGENT_HOME is the autouse tmp dir, so principals.json is sandboxed.
+
+    The autouse ``adapter_gate`` fixture no-ops ``_validate_adapter`` here: this
+    test mints real ``claude``/``codex`` agents and is about principal identity,
+    not the PATH gate — re-installing the real gate would fail offline/CI where
+    neither CLI is on PATH (the sibling gate tests cover that path explicitly)."""
     await _seed_session(fake_bank, sid="S1", goal="parser")
     await _seed_session(fake_bank, sid="S2", goal="solver")
     await h._resolve_agent("S1", "claude", bank=fake_bank)
