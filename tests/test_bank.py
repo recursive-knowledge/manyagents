@@ -214,6 +214,95 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
     assert [p["id"] for p in page2] == ["S/p2", "S/p3"]
 
 
+async def test_list_packets_cursor_pagination_tied_timestamps(fake_bank: FakeBank) -> None:
+    """Regression: two packets sharing the same created_at must not be skipped
+    or duplicated across pages — the compound keyset (created_at, id) must be
+    used, not timestamp alone.
+
+    FakeBank.list_packets sorts by (created_at, id) and evaluates the cursor
+    as (created_at, id) > _split_cursor(cursor), so both rows are reachable
+    exactly once even when they share a timestamp.
+    """
+    shared_ts = "2026-06-22T10:00:00"
+    await fake_bank.put_session("S")
+    # Two packets with the SAME created_at, distinct ids (id ordering: p-a < p-b)
+    await fake_bank.put_packet({"id": "S/p-a", "session_id": "S", "type": "post", "created_at": shared_ts})
+    await fake_bank.put_packet({"id": "S/p-b", "session_id": "S", "type": "post", "created_at": shared_ts})
+
+    page1 = await fake_bank.list_packets(session_id="S", limit=1)
+    assert len(page1) == 1
+    page2 = await fake_bank.list_packets(session_id="S", limit=1, cursor=make_cursor(page1[-1]))
+    assert len(page2) == 1
+    # Must retrieve two DISTINCT packets; no skip, no dup
+    assert page1[0]["id"] != page2[0]["id"]
+    assert {page1[0]["id"], page2[0]["id"]} == {"S/p-a", "S/p-b"}
+
+
+async def test_supabase_bank_list_packets_cursor_compound_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SupabaseBank.list_packets must emit a compound keyset boundary for cursor
+    pagination — not a timestamp-only filter — so rows sharing the same
+    created_at are never skipped or duplicated.
+
+    We double _client() to return a recording stub and inspect the query
+    parameters that were built by the time .execute() is called.  The stub
+    captures every .or_() call; we assert that the compound expression
+    (created_at.gt.<ts> OR (created_at.eq.<ts> AND id.gt.<id>)) is present.
+
+    Limitation: the stub verifies the *parameters carried by the query builder*,
+    not the actual PostgREST wire format; integration tests against a live
+    Supabase instance are needed to confirm the SQL is also correct.
+    """
+    from manyagent.bank.supabase_bank import SupabaseBank
+
+    or_calls: list[str] = []
+
+    class _FakeQuery:
+        """Minimal recording query builder stub."""
+
+        def eq(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def gte(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def or_(self, filters: str, *_: object, **__: object) -> _FakeQuery:
+            or_calls.append(filters)
+            return self
+
+        def order(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def limit(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        async def execute(self) -> object:
+            class _R:
+                data: list[object] = []
+
+            return _R()
+
+    class _FakeTable:
+        def select(self, *_: object, **__: object) -> _FakeQuery:
+            return _FakeQuery()
+
+    class _FakeCli:
+        def table(self, *_: object, **__: object) -> _FakeTable:
+            return _FakeTable()
+
+    bank = SupabaseBank.__new__(SupabaseBank)
+    bank._cli = _FakeCli()
+
+    cursor = "2026-06-22T10:00:00|some-uuid"
+    await bank.list_packets(cursor=cursor)
+
+    assert len(or_calls) == 1, f"expected exactly one .or_() call, got {or_calls!r}"
+    expr = or_calls[0]
+    # Both branches of the compound keyset must be present
+    assert "created_at.gt.2026-06-22T10:00:00" in expr, f"missing gt branch in {expr!r}"
+    assert "created_at.eq.2026-06-22T10:00:00" in expr, f"missing eq branch in {expr!r}"
+    assert "id.gt.some-uuid" in expr, f"missing id.gt branch in {expr!r}"
+
+
 # --------------------------------------------------------------------------- #
 # migration integrity (offline; full apply/no-op is the gated integration suite)
 # --------------------------------------------------------------------------- #
