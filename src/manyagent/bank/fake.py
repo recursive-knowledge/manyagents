@@ -16,6 +16,7 @@ import datetime
 import uuid
 from typing import Any
 
+from manyagent.bank.base import Bank
 from manyagent.utils.facets import aggregate_goals
 from manyagent.utils.slug import slugify
 
@@ -112,6 +113,10 @@ class FakeBank:
         row.setdefault("created_at", prev.get("created_at", _now()))
         row.setdefault("quarantined", prev.get("quarantined", False))
         row.setdefault("parents", prev.get("parents", []))
+        # Auto-derive session_id from the composite id ("{sid}/{uuid}") so that
+        # list_packets(session_id=...) filters correctly even when callers omit it.
+        if "session_id" not in row:
+            row["session_id"] = str(pid).split("/")[0]
         self._packets[pid] = {**prev, **row}
         return str(pid)
 
@@ -272,3 +277,9 @@ def _split_cursor(cursor: str) -> tuple[str, str]:
 def make_cursor(row: dict[str, Any]) -> str:
     """Opaque pagination cursor: ``created_at|id`` (manyagent.web M9 reuses this)."""
     return f"{row.get('created_at', '')}|{row['id']}"
+
+
+# Module-level conformance check: FakeBank must satisfy the Bank Protocol.
+# This is checked by mypy at import time and surfaced as a type error if the
+# two drift apart (e.g. a new Bank method is added without a FakeBank impl).
+_: Bank = FakeBank()

@@ -393,6 +393,8 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         body = (trace or {}).get("body")
         if not body:
             raise HTTPException(status_code=404, detail=f"no stored trace body for {pid!r}")
+        if not isinstance(body, str):
+            raise HTTPException(status_code=422, detail=f"stored trace body for {pid!r} is not a string")
         return pid, body
 
     # Traces are immutable, and the projections refetch + re-render the whole

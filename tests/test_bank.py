@@ -261,3 +261,24 @@ def test_migration_content_tokens(fname: str, must_contain: list[str]) -> None:
     text = (_MIGRATIONS / fname).read_text().lower()
     for token in must_contain:
         assert token.lower() in text, f"{fname} missing {token!r}"
+
+
+# --------------------------------------------------------------------------- #
+# FakeBank conformance: session_id filter gap (fix/type-boundary)
+# --------------------------------------------------------------------------- #
+
+
+async def test_list_packets_session_id_filter_without_explicit_session_id(fake_bank: FakeBank) -> None:
+    """put_packet must auto-derive session_id from the composite id so that
+    list_packets(session_id=...) works even when callers omit session_id from
+    the record (the behavioral gap caught by the Bank Protocol conformance PR).
+    """
+    # Put a packet WITHOUT an explicit session_id key in the record.
+    await fake_bank.put_packet({"id": "SX/p1", "type": "raw", "agent_id": None})
+    rows = await fake_bank.list_packets(session_id="SX")
+    assert len(rows) == 1
+    assert rows[0]["id"] == "SX/p1"
+    assert rows[0]["session_id"] == "SX"
+    # A different session must not see it.
+    other = await fake_bank.list_packets(session_id="OTHER")
+    assert other == []
