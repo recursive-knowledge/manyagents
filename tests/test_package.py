@@ -14,7 +14,7 @@ import manyagent
 
 def test_version_and_setup_environment() -> None:
     assert isinstance(manyagent.__version__, str)
-    assert manyagent.__version__ == "0.3.0"
+    assert manyagent.__version__ == "0.5.0"
     manyagent.setup_environment()  # idempotent, no manyagent.env present in test cwd
 
 
