@@ -113,6 +113,13 @@ START_INJECTED_NOTE = "injected {packet_id} — delivered to the agent's context
 START_QUARANTINE_NOTE = "{n} quarantined packet{n_s} under /{goal} awaiting review (never injected)"
 START_CROSS_NUDGE_OFFER = "/{goal} has {n} insight{n_s} newer than its last bundle — cross-distill them now?"
 
+# Existing-goals picker (slug-normalize-on-write keystone): reuse an existing
+# bucket instead of fragmenting the corpus into near-duplicate goals.
+START_GOAL_PICKER_HEADER = "existing goals (reuse a bucket so knowledge aggregates):"
+START_GOAL_PICKER_ROW = "  {n}. /{goal}"
+START_GOAL_PICKER_PROMPT = "pick a number to reuse, or type a new goal (Enter to skip):"
+START_GOAL_PICKER_MATCH_NOTE = "/{goal} matches an existing bucket — reusing it (knowledge aggregates)"
+
 # --------------------------------------------------------------------------- #
 # agent exit / `manyagent end` — session-end offers
 # --------------------------------------------------------------------------- #

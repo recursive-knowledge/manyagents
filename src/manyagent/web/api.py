@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from manyagent.bank import Bank, get_bank, make_cursor
 from manyagent.core import Agent, Packet
-from manyagent.utils import config
+from manyagent.utils import config, slug
 
 # Identities that always read raw trace bodies (manyagent.web.md "Trace/PII").
 # The public identity reads them too while MANYAGENT_WEB_PUBLIC_RAW is on (pre-alpha
@@ -469,7 +469,9 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         # Behavioral corpus signal for researchers: packets matching goal/since
         # joined to their injection reuse score. Quarantined packets are
         # excluded — this is the "use as context" affordance (manyagent.web.md).
-        rows = await b.list_packets(goal=goal, since=since, include_quarantined=False)
+        # Normalize the query goal to the canonical slug so it matches the
+        # normalized form stored on write (decision #1).
+        rows = await b.list_packets(goal=slug.normalize_goal(goal), since=since, include_quarantined=False)
         scored = {s["packet_id"]: s for s in await b.reuse_score()}
         reuse = []
         for r in rows:
