@@ -662,6 +662,47 @@ def test_pty_spawn_non_tty_tees_instead_of_exec_replacing(tmp_path: Any, monkeyp
     assert offsets == sorted(offsets)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="_pipe_spawn uses select() which is POSIX-only",
+)
+def test_pty_spawn_broken_pipe_does_not_escape(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: `os.write(sys.stdout.fileno(), data)` in the PTY bridge pump
+    was unguarded — a downstream pipe close (e.g. `ma claude | head`) raised
+    BrokenPipeError out of the loop and crashed the bridge.  The fix wraps the
+    stdout write in try/except OSError: break (PTY path) and keeps the existing
+    contextlib.suppress(OSError) on the _pipe_spawn path.
+
+    We drive the non-TTY code path (stdin not a tty → _pipe_spawn is called),
+    monkeypatch os.write at the stdout fd to immediately raise BrokenPipeError,
+    and assert _pty_spawn returns without raising.  The tee file proves the pump
+    ran at least one iteration before breaking (capture survives the broken pipe).
+    """
+    import os as _os
+    import sys as _sys
+    import types
+
+    monkeypatch.setattr(cli.sys, "stdin", types.SimpleNamespace(isatty=lambda: False))
+
+    stdout_fd = _sys.stdout.fileno()
+    original_write = _os.write
+
+    def _failing_write(fd: int, data: bytes) -> int:
+        if fd == stdout_fd:
+            raise BrokenPipeError(32, "Broken pipe")
+        return original_write(fd, data)
+
+    monkeypatch.setattr(cli.os, "write", _failing_write)
+
+    tee = tmp_path / "tee.log"
+    code = "import sys; sys.stdout.write('x' * 4096); sys.stdout.flush(); sys.exit(0)"
+    # Must not raise — the broken-pipe OSError must be absorbed by the loop.
+    rc = cli._pty_spawn([_sys.executable, "-c", code], tee=tee)
+    assert rc == 0
+    # The tee write uses a different fd so it succeeds: capture is intact.
+    assert tee.read_bytes()  # at least one read was tee'd before the loop broke
+
+
 # --------------------------------------------------------------------------- #
 # _timed_capture — timing sidecar → timestamped TraceEvents + geometry
 # --------------------------------------------------------------------------- #
