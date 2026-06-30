@@ -213,7 +213,7 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     async def _no_session() -> int:
-        raise SystemExit("no active session: run `manyagent start` or pass --session <id>")
+        raise SystemExit("no active session: run `ma session start` or pass --session <id>")
 
     assert cli._guard(_no_session()) == 1
     assert "no active session" in capsys.readouterr().err
@@ -284,7 +284,7 @@ def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
+    """`ma dev init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
     exactly the non-empty values, 0600, no prompts (Scripted is empty)."""
     _clear_bank_env(monkeypatch)
     s = Scripted()
@@ -574,7 +574,7 @@ async def test_resolve_sid_errors_without_session(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# manyagent end — ★ lands on the most recent unrated reflection post
+# ma session end — ★ lands on the most recent unrated reflection post
 # --------------------------------------------------------------------------- #
 
 
@@ -958,7 +958,7 @@ async def test_end_offers_self_distill_when_session_has_none(
     rc = await cli._do_end(_args("session", "end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
-    assert calls[0]["since"] is None  # bare `manyagent end`: no run window to scope to
+    assert calls[0]["since"] is None  # bare `ma session end`: no run window to scope to
 
 
 async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -983,7 +983,7 @@ async def test_start_nudges_cross_distill_when_goal_is_stale(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """≥ MANYAGENT_CROSS_NUDGE_MIN reflections newer than the goal's newest bundle
-    → `manyagent start` offers cross-distillation (the moment a fresh bundle is
+    → `ma session start` offers cross-distillation (the moment a fresh bundle is
     about to be useful). Replaces the end-of-session cross offer."""
     pid = await _seed_goal_knowledge(fake_bank)  # bundle at T0
     for i in range(3):
@@ -1054,7 +1054,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
 
 
 async def test_start_goal_continuity_offer(fake_bank: FakeBank) -> None:
-    """`manyagent start` without a goal offers the previous session's goal; Enter
+    """`ma session start` without a goal offers the previous session's goal; Enter
     adopts it onto the new session; declining files the session under the
     default bucket."""
     await fake_bank.put_session("PREV-1", goal="speed")
