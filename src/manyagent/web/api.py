@@ -33,10 +33,117 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, ConfigDict
 
 from manyagent.bank import Bank, get_bank, make_cursor
-from manyagent.core import Agent, Packet
+from manyagent.core import Agent, KnowledgePacket, Packet
 from manyagent.utils import config
+
+# --------------------------------------------------------------------------- #
+# Response models (M9 follow-up: give the read API an OpenAPI schema + response
+# validation without filtering any field a client already relies on).
+#
+# Every model is ``extra="allow"`` so a ``response_model`` NEVER drops a key the
+# handler emits (FastAPI's response_model filters output to *declared* fields;
+# allowing extras makes that filter a no-op while still publishing the known
+# fields' types). The declared fields document the contract; the extras keep it
+# additive — including the conditional ``trace`` (#11 quarantine gating) and the
+# summary route's per-type / completeness fields (#24). The packet payloads
+# reuse the canonical ``KnowledgePacket`` (manyagent.core) shape.
+# --------------------------------------------------------------------------- #
+
+
+class _ResponseBase(BaseModel):
+    """Permissive base: declared fields are documented; undeclared fields the
+    handler returns pass through untouched (no response_model filtering)."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PacketRecord(KnowledgePacket):
+    """The canonical public packet for the ``?p=`` single-packet path.
+
+    ``extra="allow"`` so the optional, gated ``trace`` body the
+    ``?p=&include=raw`` path attaches passes through verbatim WHEN PRESENT — it
+    is deliberately NOT a declared field, so an unset response never grows a
+    spurious ``trace: null`` key (the #11 quarantine gate hides the body by
+    *omitting* it, and a client tests ``"trace" not in payload``)."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PacketPage(_ResponseBase):
+    """The canonical paginated envelope (``/api/packets``, ``/s/{session}``)."""
+
+    packets: list[KnowledgePacket]
+    next_cursor: str | None = None
+
+
+class SessionView(PacketPage):
+    """A session landing page: its metadata row plus a packet page."""
+
+    session: dict[str, Any]
+
+
+class AgentsView(_ResponseBase):
+    """``/s/{session}/agents`` — the derived activity spans."""
+
+    agents: list[Agent]
+
+
+class AgentView(_ResponseBase):
+    """``/s/{session}/a/{agent}`` — one agent + the packets it owns."""
+
+    agent: Agent
+    packets: list[KnowledgePacket]
+
+
+class PrincipalGoal(_ResponseBase):
+    """One (session, agent, packets) group under a principal."""
+
+    session: dict[str, Any] | None = None
+    agent: Agent
+    packets: list[KnowledgePacket]
+
+
+class PrincipalView(_ResponseBase):
+    """``/api/principal/{id}`` — cross-goal activity for one principal."""
+
+    principal_id: str
+    adapter: str | None = None
+    goals: list[PrincipalGoal]
+
+
+class ReuseRow(_ResponseBase):
+    """One row of the ``/api/reuse`` behavioral signal."""
+
+    packet_id: str
+    goal: str | None = None
+    type: str | None = None
+    created_at: str | None = None
+    inject_count: int = 0
+    reuse_score: float = 0.0
+
+
+class ReuseView(_ResponseBase):
+    """``/api/reuse`` — the corpus reuse signal."""
+
+    reuse: list[ReuseRow]
+
+
+class SessionSummary(_ResponseBase):
+    """``/api/session/{session}/summary`` — heterogeneous per-packet timeline.
+
+    The ``conversation`` items vary by packet type (raw / post / distill) and
+    by gating (raw bodies, mined conversation), so each item is a permissive
+    dict; ``extra="allow"`` on every layer keeps the full current shape intact.
+    """
+
+    session: dict[str, Any]
+    agents: list[dict[str, Any]]
+    conversation: list[dict[str, Any]]
+    summary: dict[str, Any]
+
 
 # Identities that always read raw trace bodies (manyagent.web.md "Trace/PII").
 # The public identity reads them too while MANYAGENT_WEB_PUBLIC_RAW is on (pre-alpha
@@ -206,14 +313,14 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     app.state.bank = b
     app.state.identity = identity
 
-    @app.get("/s/{session}")
+    @app.get("/s/{session}", response_model=PacketRecord | SessionView)
     async def session_view(
         session: str,
         p: str | None = Query(default=None),
         include: str | None = Query(default=None),
         limit: int = Query(default=config.MANYAGENT_WEB_PAGE_LIMIT),
         cursor: str | None = Query(default=None),
-    ) -> Any:
+    ) -> PacketRecord | SessionView | dict[str, Any]:
         # `?p=` → one packet. The id is `{session}/{p}` — the exact URL
         # manyagent.distill emits (a curator bundle lives under the synthetic
         # `curator/<hex>` id, so /s/curator?p=<hex> round-trips; no session
@@ -247,15 +354,15 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         rows = await b.list_packets(session_id=session, limit=lim, cursor=cursor, include_quarantined=True)
         return {"session": meta, **_page(rows, lim)}
 
-    @app.get("/s/{session}/agents")
-    async def session_agents(session: str) -> Any:
+    @app.get("/s/{session}/agents", response_model=AgentsView)
+    async def session_agents(session: str) -> dict[str, Any]:
         agent_rows = await b.list_agents(session)
         pkt_rows = await b.list_packets(session_id=session, include_quarantined=True)
         agents = [Agent.from_activity(r, packets=pkt_rows).model_dump(mode="json") for r in agent_rows]
         return {"agents": agents}
 
-    @app.get("/s/{session}/a/{agent}")
-    async def agent_view(session: str, agent: str) -> Any:
+    @app.get("/s/{session}/a/{agent}", response_model=AgentView)
+    async def agent_view(session: str, agent: str) -> dict[str, Any]:
         # Per-agent deep link. ``{agent}`` is the tail of the canonical id
         # (``agent-{NNN}-{adapter}``); the full id is reconstructed as
         # ``{session}/{agent}`` — same round-trip convention as ``?p=`` on the
@@ -274,8 +381,8 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
             "packets": [_record(r) for r in owned],
         }
 
-    @app.get("/api/principal/{principal_id}")
-    async def principal_view(principal_id: str) -> Any:
+    @app.get("/api/principal/{principal_id}", response_model=PrincipalView)
+    async def principal_view(principal_id: str) -> dict[str, Any]:
         # Cross-goal activity for one persistent principal (00011): every agents
         # row carrying this principal_id, grouped by the session/goal it worked
         # in, with that agent's packets per session. A read over the already-
@@ -301,13 +408,13 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
             "goals": goals,
         }
 
-    @app.get("/api/packets")
+    @app.get("/api/packets", response_model=PacketPage)
     async def corpus_packets(
         type: str | None = Query(default=None),
         since: str | None = Query(default=None),
         limit: int = Query(default=config.MANYAGENT_WEB_PAGE_LIMIT),
         cursor: str | None = Query(default=None),
-    ) -> Any:
+    ) -> dict[str, Any]:
         lim = _clamp_limit(limit)
         rows = await b.list_packets(type=type, since=since, limit=lim, cursor=cursor, include_quarantined=True)
         return _page(rows, lim)
@@ -408,7 +515,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         # explicit values override for odd viewports.
         cols: int | None = Query(default=None, ge=40, le=400),
         rows: int | None = Query(default=None, ge=10, le=120),
-    ) -> Any:
+    ) -> PlainTextResponse:
         # The asciinema rendition of a raw trace, synthesized on the fly from
         # the stored envelope. Lives under /api/ so the dev proxy forwards it
         # and it can never shadow the viewer's /t/ page routes.
@@ -427,7 +534,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         p: str,
         cols: int | None = Query(default=None, ge=40, le=400),
         rows: int | None = Query(default=None, ge=10, le=120),
-    ) -> Any:
+    ) -> PlainTextResponse:
         # The same artifact as plain text: replayed through a VT emulator at
         # the recorded geometry and dumped (scrollback + final screen) — what
         # the terminal actually showed, not a regex guess at it.
@@ -441,7 +548,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         return PlainTextResponse(text, media_type="text/plain", headers=_PROJECTION_HEADERS)
 
     @app.get("/api/rendition/{session}/{p}/{fmt}")
-    async def trace_rendition(session: str, p: str, fmt: str) -> Any:
+    async def trace_rendition(session: str, p: str, fmt: str) -> JSONResponse:
         # Derived projections persisted at run end (M13: 'harness' — the
         # conversation mined from the harness's own transcript). Same gates
         # as the other projections; the body is stored JSON, returned parsed.
@@ -461,11 +568,11 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
             raise HTTPException(status_code=422, detail="stored rendition body is not JSON") from exc
         return JSONResponse(artifact, headers=_PROJECTION_HEADERS)
 
-    @app.get("/api/reuse")
+    @app.get("/api/reuse", response_model=ReuseView)
     async def reuse_signal(
         goal: str | None = Query(default=None),
         since: str | None = Query(default=None),
-    ) -> Any:
+    ) -> dict[str, Any]:
         # Behavioral corpus signal for researchers: packets matching goal/since
         # joined to their injection reuse score. Quarantined packets are
         # excluded — this is the "use as context" affordance (manyagent.web.md).
@@ -484,8 +591,8 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
             })
         return {"reuse": reuse}
 
-    @app.get("/api/session/{session}/summary")
-    async def session_summary(session: str) -> Any:  # noqa: C901 — one aggregation pass with a branch per packet type; splitting would scatter the timeline build
+    @app.get("/api/session/{session}/summary", response_model=SessionSummary)
+    async def session_summary(session: str) -> dict[str, Any]:  # noqa: C901 — one aggregation pass with a branch per packet type; splitting would scatter the timeline build
         """Retrieve complete session summary in JSON format.
 
         Returns a comprehensive JSON object with:
