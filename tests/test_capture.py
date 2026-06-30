@@ -73,12 +73,27 @@ def test_validate_rejects_bad_event_kind() -> None:
 # scrub — SECURITY-CRITICAL (public corpus): secrets gone from body AND report
 # --------------------------------------------------------------------------- #
 
+# Credential-shaped values are assembled from fragments so this source file
+# contains no contiguous secret literal (GitHub secret-scanning push protection
+# blocks those). The runtime values still have the exact real shapes the
+# scrubber patterns match.
+_JWT = ".".join([
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0",
+    "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+])
+
 _SECRETS: list[tuple[str, str]] = [
     ("sk-ant-api03-AbCdEf0123456789ghIJklMNop", "anthropic"),
     ("sk-proj-AbCdEf0123456789ghIJklMNopQR", "openai"),
     ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
     ("Authorization: Bearer xyz-abc-def-7788", "bearer"),
     ("MY_API_KEY=supersecret-value-12345", "env_kv"),
+    # realistic provider shapes, fragment-assembled (see note above)
+    ("ghp" + "_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "github"),
+    ("AI" + "zaSyD-AbCdEfGhIjKlMnOpQrStUvWxYz01234", "google_api"),
+    ("xox" + "b-123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx", "slack"),
+    (_JWT, "jwt"),
 ]
 
 
@@ -114,6 +129,24 @@ def test_scrub_clean_trace_is_noop() -> None:
     scrubbed, report = scrub(t)
     assert scrubbed.events[0].text == "please optimize the parser"
     assert report.total() == 0
+
+
+def test_json_form_secret_value_redacted() -> None:
+    # A secret whose value matches no provider shape — only the JSON
+    # ``"KEY": "value"`` env_kv form catches it (structured tool output, jq, json.dumps).
+    raw = '{"DATABASE_PASSWORD": "hunter2-s3cr3t-not-a-known-shape", "note": "kept"}'
+    scrubbed, report = scrub(_trace([TraceEvent(0.0, "agent", raw)]))
+    body = scrubbed.events[0].text
+    assert "hunter2-s3cr3t-not-a-known-shape" not in body
+    assert "kept" in body  # non-secret JSON content is preserved
+    assert report.counts.get("env_kv", 0) >= 1
+
+
+def test_jwt_in_authorization_header_redacted() -> None:
+    jwt = ".".join(["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiJhYmMifQ", "s5H8Qc0d5mE6mZ7nQ0wL3aB2cD4eF6gH8iJ0kL2mN4o"])
+    scrubbed, report = scrub(_trace([TraceEvent(0.0, "agent", f"curl -H 'Authorization: Bearer {jwt}'")]))
+    assert jwt not in scrubbed.events[0].text
+    assert report.total() >= 1
 
 
 # --------------------------------------------------------------------------- #
