@@ -58,6 +58,13 @@ _GOOD = {
 }
 
 
+def _good(evidence: str) -> str:
+    """A valid canned post whose ``evidence`` is a verbatim slice of the test's
+    trace — the parser now grounds evidence against the session trace
+    (forum.parser), so a plumbing test that feeds a trace must quote it."""
+    return json.dumps({**_GOOD, "evidence": evidence})
+
+
 class FakeModel:
     def __init__(self, payload: str) -> None:
         self.payload = payload
@@ -319,7 +326,7 @@ async def test_self_distill_prompt_grounded_in_bound_transcript(
         tmp_path,
         transcript_lines=_dialogue(("user", "profile the tokenizer"), ("assistant", "cumtime 4.2s in tokenize()")),
     )
-    adapter = FakeAdapter(json.dumps(_GOOD))
+    adapter = FakeAdapter(_good("cumtime 4.2s in tokenize()"))
     _patch_adapter(monkeypatch, adapter)
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     assert rc == 0
@@ -337,7 +344,7 @@ async def test_self_distill_since_scopes_to_this_runs_transcripts(
     await _seed_session(fake_bank)
     _write_binding(tmp_path, harness_id="OLD", ts=100.0, transcript_lines=_dialogue(("user", "the OLD run")))
     _write_binding(tmp_path, harness_id="NEW", ts=200.0, transcript_lines=_dialogue(("user", "the NEW run")))
-    adapter = FakeAdapter(json.dumps(_GOOD))
+    adapter = FakeAdapter(_good("the NEW run"))
     _patch_adapter(monkeypatch, adapter)
     rc = await h.do_self_distill(adapter="claude", since=150.0, bank=fake_bank, io=Scripted("4").io())
     assert rc == 0
@@ -350,7 +357,7 @@ async def test_self_distill_falls_back_to_raw_packet(fake_bank: FakeBank, monkey
     await fake_bank.put_packet({"id": "S1/raw00001", "type": "raw", "session_id": "S1", "agent_id": "S1/a1"})
     body = json.dumps({"events": [{"ts": 0.0, "kind": "system", "text": "PTY tee: rg failed with exit 2"}]})
     await fake_bank.put_trace("S1/raw00001", body, scrub_version="v1", complete=True)
-    adapter = FakeAdapter(json.dumps(_GOOD))
+    adapter = FakeAdapter(_good("rg failed with exit 2"))
     _patch_adapter(monkeypatch, adapter)
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     assert rc == 0
@@ -401,7 +408,7 @@ async def test_trace_context_prefers_harness_rendition_with_tool_turns(
     }
     await fake_bank.put_rendition("S1/raw00001", "harness", json.dumps(mined))
     _write_binding(tmp_path, transcript_lines=_dialogue(("user", "TRANSCRIPT-ONLY LINE")))
-    adapter = FakeAdapter(json.dumps(_GOOD))
+    adapter = FakeAdapter(_good("cumtime 4.2s in tokenize()"))
     _patch_adapter(monkeypatch, adapter)
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     assert rc == 0
@@ -428,7 +435,7 @@ async def test_trace_context_drops_harness_scaffold_turns(
             ("assistant", "hoisted the compiled regex"),
         ),
     )
-    adapter = FakeAdapter(json.dumps(_GOOD))
+    adapter = FakeAdapter(_good("hoisted the compiled regex"))
     _patch_adapter(monkeypatch, adapter)
     rc = await h.do_self_distill(adapter="claude", bank=fake_bank, io=Scripted("4").io())
     assert rc == 0

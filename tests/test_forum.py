@@ -158,6 +158,52 @@ async def test_evidence_ref_to_quarantined_rejected(fake_bank: FakeBank) -> None
 
 
 # --------------------------------------------------------------------------- #
+# evidence grounding — the schema's verbatim-excerpt contract is enforced when
+# ground truth (the session trace or a cited post) is in hand (open-corpus
+# defense against invented evidence being curated into the public corpus)
+# --------------------------------------------------------------------------- #
+
+
+async def test_evidence_grounded_in_trace_context_accepted(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S")
+    trace = "user: profile the tokenizer\nagent: cumtime 4.2s in tokenize() — regex recompiled per call"
+    s = _structured(evidence="cumtime 4.2s in tokenize()")  # a verbatim slice of the trace
+    ok, out = await parse_post(_post(structured=s), bank=fake_bank, trace_context=trace)
+    assert ok is True and isinstance(out, dict)
+
+
+async def test_fabricated_evidence_rejected_when_trace_context_given(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S")
+    trace = "user: profile the tokenizer\nagent: nothing about that function here"
+    s = _structured(evidence="cumtime 9.9s in totally_made_up()")  # not in the trace
+    out = await parse_post(_post(structured=s), bank=fake_bank, trace_context=trace)
+    assert out[0] is False and "ungrounded" in out[1]
+
+
+async def test_no_trace_context_skips_own_trace_grounding(fake_bank: FakeBank) -> None:
+    # Best-effort: the in-agent MCP path passes no trace_context, so own-trace
+    # evidence is NOT grounded (citation grounding still applies via the Bank).
+    await fake_bank.put_session("S")
+    s = _structured(evidence="ungroundable but accepted without a trace to check against")
+    ok, out = await parse_post(_post(structured=s), bank=fake_bank)  # no trace_context
+    assert ok is True and isinstance(out, dict)
+
+
+async def test_citation_evidence_must_match_cited_post(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S")
+    cited = _structured(load_bearing_assumption="precompiling the regex in scanner.py cut tokenize() cumtime")
+    await fake_bank.put_packet(_post(id="S/prior", structured=cited))  # real post, gives goal history
+    # evidence in NEITHER a trace (none given) NOR the cited post → rejected
+    bad = _structured(evidence="something the cited post never said", evidence_ref="S/prior")
+    out = await parse_post(_post(id="S/p2", structured=bad), bank=fake_bank)
+    assert out[0] is False and "ungrounded" in out[1]
+    # evidence is a verbatim slice of the cited post → accepted
+    good = _structured(evidence="precompiling the regex in scanner.py", evidence_ref="S/prior")
+    ok, _out = await parse_post(_post(id="S/p3", structured=good), bank=fake_bank)
+    assert ok is True
+
+
+# --------------------------------------------------------------------------- #
 # replies + /discuss retrieval-before-post
 # --------------------------------------------------------------------------- #
 
