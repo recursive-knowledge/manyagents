@@ -789,6 +789,58 @@ async def test_session_summary_404s_unknown_session(fake_bank: FakeBank) -> None
 
 
 # --------------------------------------------------------------------------- #
+# capture completeness: trace_complete / trace_missing in session_summary
+# --------------------------------------------------------------------------- #
+
+
+async def test_session_summary_complete_trace_is_marked_complete(fake_bank: FakeBank) -> None:
+    """A raw packet whose trace row has complete=True reports trace_complete: True."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope([{"ts": 0.0, "kind": "user", "text": "hi"}]), complete=True)
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/session/S1/summary")
+    assert r.status_code == 200
+    raw_item = next(i for i in r.json()["conversation"] if i["type"] == "raw")
+    assert raw_item["trace_complete"] is True
+    assert "trace_missing" not in raw_item
+
+
+async def test_session_summary_incomplete_trace_is_marked_incomplete(fake_bank: FakeBank) -> None:
+    """A raw packet whose trace row has complete=False reports trace_complete: False."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_trace("S1/r1", _envelope([{"ts": 0.0, "kind": "user", "text": "hi"}]), complete=False)
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/session/S1/summary")
+    assert r.status_code == 200
+    raw_item = next(i for i in r.json()["conversation"] if i["type"] == "raw")
+    assert raw_item["trace_complete"] is False
+    assert "trace_missing" not in raw_item
+
+
+async def test_session_summary_orphan_raw_packet_is_distinguished_from_empty_capture(fake_bank: FakeBank) -> None:
+    """A raw packet with NO trace row (crash between put_packet/put_trace) is
+    distinguishable from a clean empty capture: trace_complete=False AND
+    trace_missing=True, not events:[] with no signal."""
+    await fake_bank.put_session("S1", goal="g")
+    # Orphan: put_packet was called but put_trace never ran.
+    await fake_bank.put_packet(_raw("S1/orphan", created_at="2026-05-19T00:00:01+00:00"))
+
+    async with _client(fake_bank) as c:
+        r = await c.get("/api/session/S1/summary")
+    assert r.status_code == 200
+    raw_item = next(i for i in r.json()["conversation"] if i["type"] == "raw")
+    assert raw_item["trace_complete"] is False
+    assert raw_item.get("trace_missing") is True
+    # events/trace_metadata are absent — not silently empty
+    assert "events" not in raw_item
+    assert "trace_metadata" not in raw_item
+
+
+# --------------------------------------------------------------------------- #
 # RLS DB-enforced pairing (gated): the read-only key cannot write at the DB,
 # even when a handler attempts it (the datasmith lesson, paired with manyagent.bank).
 # --------------------------------------------------------------------------- #
