@@ -136,6 +136,8 @@ RUN_NO_AGENT = (
 # A removed top-level verb was typed; point at where it lives now.
 RUN_VERB_MOVED = "`ma {old}` has moved — use `ma {new}`"
 
+# 00013 per-injection "did this help?" tap (capture-only — does NOT feed reuse_score).
+END_INJECT_HELPFUL_PROMPT = "Did the injected knowledge help this session?"
 END_SELF_DISTILL_OFFER = "this session has no saved insight yet — summarize what it learned into a reflection post?"
 END_INJECT_FOLLOWUP_OFFER = "bundle {packet_id} was injected into this session — reflect on whether it held up?"
 END_INJECT_FOLLOWUP_GUIDANCE = (

@@ -1361,6 +1361,12 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
             io[1](
                 ui.render(Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow")))
             )
+    # 00013 per-injection "did this help?" tap (capture-only — does NOT feed
+    # reuse_score, the deferred formal eval). Best-effort: never break `manyagent end`.
+    try:
+        await _offer_helpful_tap(sid_, bank=bank, io=io)
+    except Exception as exc:
+        io[1](ui.render(Text(f"manyagent: helpfulness tap skipped ({type(exc).__name__}: {exc})", style="yellow")))
     _clear_active(sid_)
     _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
     io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
@@ -1405,6 +1411,28 @@ async def _offer_end_distill(sid_: str, *, since: float | None = None, bank: Ban
         adapter = str(agents[-1].get("adapter") or "")
         if adapter:
             await do_self_distill(adapter=adapter, guidance=guidance, session=sid_, since=since, bank=bank, io=io)
+
+
+async def _offer_helpful_tap(sid_: str, *, bank: Bank, io: tuple[In, Out]) -> None:
+    """Per-injection "did this help?" tap (00013; capture-only).
+
+    If this session had any injections, ask the human once whether the injected
+    knowledge helped and stamp the answer onto every one of the session's
+    injection rows (MVP — a single tap applied to all; per-injection granularity
+    is satisfied because each row is updated). Capture-only: ``reuse_score`` is
+    deliberately UNCHANGED pending the deferred formal eval
+    (reviews/2026-06-22-1920/adoption-reuse.md).
+
+    Silent no-op in ``MANYAGENT_NONINTERACTIVE`` — unattended runs never block on a
+    prompt (deny-by-default, Open-Q §B5)."""
+    if _noninteractive():
+        return
+    injections = await bank.list_injections(target_session_id=sid_)
+    if not injections:
+        return
+    helpful = ask_yn(messages.END_INJECT_HELPFUL_PROMPT, input_fn=io[0], output_fn=io[1], noninteractive=False)
+    for inj in injections:
+        await bank.mark_injection_helpful(str(inj["packet_id"]), sid_, helpful)
 
 
 def _noninteractive() -> bool:
