@@ -297,3 +297,86 @@ def test_render_post_prompt_trace_context_section() -> None:
 
     q = render_post_prompt(kind="reflection", goal="g")
     assert "BEGIN TRACE" not in q
+
+
+# --------------------------------------------------------------------------- #
+# Fix 1: assert_anti_meta_rules_present with post_prompt=True passes on a
+#         render_post_prompt() output (no false-positive on curator-only phrases)
+# --------------------------------------------------------------------------- #
+
+
+def test_assert_anti_meta_rules_present_post_prompt_mode() -> None:
+    """post_prompt=True must not raise for render_post_prompt() output, which
+    intentionally omits curator-only phrases like evidence_post_ids / 5 insights."""
+    from manyagent.forum import render_post_prompt
+    from manyagent.forum.anti_meta import assert_anti_meta_rules_present
+
+    p = render_post_prompt(kind="reflection", goal="speed")
+    # Must not raise — the shared phrases are present even though curator-only
+    # phrases (evidence_post_ids, "5 pitfalls", etc.) are absent.
+    assert_anti_meta_rules_present(p, post_prompt=True)
+
+    # Default (post_prompt=False) raises because evidence_post_ids is absent.
+    with pytest.raises(AssertionError, match="evidence_post_ids"):
+        assert_anti_meta_rules_present(p)
+
+
+# --------------------------------------------------------------------------- #
+# Fix 2: "iterate" is matched whole-word; "iteration"/"max_iter" pass through
+# --------------------------------------------------------------------------- #
+
+
+def test_has_banned_meta_iterate_whole_word_only() -> None:
+    from manyagent.forum.anti_meta import has_banned_meta
+
+    # These must NOT be flagged (substrings of "iterate", not the bare word).
+    assert has_banned_meta("max_iter=1000 converges faster") is None
+    assert has_banned_meta("ast.NodeVisitor.iteration() over children") is None
+    assert has_banned_meta("reiterate the point") is None
+
+    # The bare word "iterate" IS still banned.
+    assert has_banned_meta("the key insight is to iterate over the grid") == "iterate"
+    assert has_banned_meta("Iterate until convergence") == "iterate"
+
+
+# --------------------------------------------------------------------------- #
+# Fix 3: evidence_ref string "null" is normalised to None by validate_schema
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_schema_normalises_string_null_evidence_ref() -> None:
+    from manyagent.forum.schema import validate_schema
+
+    structured = {
+        "load_bearing_assumption": "the tokenize() hot loop recompiled the regex per call",
+        "evidence": "cumtime 4.2s in tokenize()",
+        "evidence_ref": "null",  # model emitted the string, not the JSON literal
+        "proposed_next": "hoist compiled pattern to scanner.py module scope",
+        "predicted_outcome": "parse throughput ~1.8x",
+        "confidence": "medium",
+    }
+    result = validate_schema(structured)
+    assert result is None, f"expected valid, got: {result}"
+    # Must have been normalised in-place.
+    assert structured["evidence_ref"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Fix 4: reply prompt carries the outer-shape example (reply_to/stance outer)
+# --------------------------------------------------------------------------- #
+
+
+def test_render_post_prompt_reply_includes_outer_shape() -> None:
+    """The reply prompt must explicitly show reply_to and stance as outer-record
+    fields so the model does not stuff them inside structured."""
+    from manyagent.forum import render_post_prompt
+
+    prior = [{"id": "S/p1", "structured": {"load_bearing_assumption": "tokenize() hot loop"}}]
+    p = render_post_prompt(kind="reply", goal="speed", prior_posts=prior)
+
+    # Outer-shape fields must be shown at top level in the prompt.
+    assert '"reply_to"' in p
+    assert '"stance"' in p
+    assert '"structured"' in p
+    # The instruction that these are OUTER fields (not inside structured).
+    assert "OUTER" in p or "outer" in p
