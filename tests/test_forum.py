@@ -297,3 +297,18 @@ def test_render_post_prompt_trace_context_section() -> None:
 
     q = render_post_prompt(kind="reflection", goal="g")
     assert "BEGIN TRACE" not in q
+
+
+def test_render_post_prompt_has_fewshot_example() -> None:
+    """Finding #2 (reviews/2026-06-22-1920/prompts.md): the post prompt carries
+    one good + one bad worked example, using the post's own structured fields,
+    and stays domain-neutral (no benchmark labels)."""
+    from manyagent.forum import render_post_prompt
+
+    p = render_post_prompt(kind="reflection", goal="g")
+    assert "EXAMPLE" in p
+    assert "GOOD" in p and "BAD" in p
+    for field in ("load_bearing_assumption", "evidence", "proposed_next", "predicted_outcome"):
+        assert field in p
+    for label in ("ARC", "SWE-bench", "polyglot"):
+        assert label not in p

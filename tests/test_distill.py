@@ -31,7 +31,7 @@ from manyagent.distill import (
     validate_bundle,
 )
 from manyagent.distill.parse import _norm
-from manyagent.distill.prompts import assert_anti_meta_rules_present
+from manyagent.distill.prompts import _render_post, _sanitize, assert_anti_meta_rules_present
 from manyagent.distill.resolve import AutoCurator, LocalCurator
 from manyagent.distill.weighting import weigh_posts
 
@@ -140,6 +140,77 @@ def test_system_prefix_is_stable_across_post_sets_same_scope() -> None:
     assert s1 == s2  # cache-eligible: identical prefix regardless of posts/goal
     cross, _ = build_distill_prompt(posts=[], scope="cross_goal", goal=None)
     assert cross != s1  # scope changes the (still-stable) directive
+
+
+# --------------------------------------------------------------------------- #
+# prompt quality — de-biased domain labels, few-shot, render/confidence/trunc
+# (reviews/2026-06-22-1920/prompts.md)
+# --------------------------------------------------------------------------- #
+
+
+def test_curator_block_has_no_benchmark_domain_labels() -> None:
+    """Finding #1: ANTI_META_BLOCK must not bias the curator with ARC /
+    SWE-bench / polyglot domain labels; it uses a domain-neutral primitive
+    list. The anti-meta CI guard must still pass on the reworded block."""
+    system, _ = build_distill_prompt(posts=[], scope="per_goal", goal="g")
+    for label in ("ARC", "SWE-bench", "polyglot"):
+        assert label not in system
+    assert_anti_meta_rules_present(system)  # required phrases survive the rewording
+
+
+def test_curator_prompt_has_fewshot_example() -> None:
+    """Finding #2: the curator prompt carries one good + one bad worked
+    example, using the real Insight schema fields."""
+    system, _ = build_distill_prompt(posts=[], scope="per_goal", goal="g")
+    assert "EXAMPLE" in system
+    assert "GOOD" in system and "BAD" in system
+    for field in ("text", "applies_when", "does_not_apply_when", "evidence", "confidence"):
+        assert field in system
+
+
+def test_render_post_omits_field_key_prefix() -> None:
+    """Finding #3: structured values are rendered bare (no `key=` prefix), so
+    the curator's verbatim quote excludes the field label and survives the
+    parse._post_searchable check."""
+    rendered = _render_post({
+        "id": "S1/p1",
+        "agent_id": "a",
+        "kind": "reflection",
+        "structured": {"evidence": "the counter under-counts"},
+    })
+    assert "evidence=" not in rendered
+    assert "the counter under-counts" in rendered
+
+
+def test_curator_prompt_requires_cross_session_for_high_confidence() -> None:
+    """Finding #4 (prompt half): the schema block instructs high confidence
+    only with >=2 distinct sessions."""
+    system, _ = build_distill_prompt(posts=[], scope="per_goal", goal="g")
+    assert ">=2 DISTINCT sessions" in system
+
+
+def test_single_session_high_confidence_is_demoted_to_medium() -> None:
+    """Finding #4 (parser stretch): a model-emitted high-confidence Insight
+    whose evidence cites only ONE session is demoted to medium."""
+    posts = _posts_for_parse()  # single session S1
+    ins = _insight(confidence="high")  # evidence cites only S1/p1
+    kept = validate_bundle({"transferable_insights": [ins]}, posts=posts)["transferable_insights"]
+    assert kept[0]["confidence"] == "medium"
+
+
+def test_sanitize_truncates_at_word_boundary() -> None:
+    """Finding #5: a >2000-char input truncates at a word boundary, not
+    mid-word (a mid-word cut leaves an unmatched fragment)."""
+    word = "alpha "
+    long = word * 500  # 3000 chars, well over the 2000 cap
+    out = _sanitize(long)
+    assert out.endswith("...")
+    body = out[:-3]
+    assert len(body) <= 2000
+    # The body ends on a complete word: the char before the cut is not a space,
+    # and the remaining text after stripping the trailing space is whole words.
+    assert not body.endswith(" ")
+    assert set(body.split()) == {"alpha"}  # no truncated 'alph' fragment
 
 
 # --------------------------------------------------------------------------- #
