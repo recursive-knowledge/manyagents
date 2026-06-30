@@ -149,6 +149,11 @@ class Manifest:
     session_id: str | None
     entries: list[ManifestEntry] = field(default_factory=list)
     cli_entries: list[ManifestCLIEntry] = field(default_factory=list)
+    # False when a mid-apply failure stranded the install.  Uninstall still
+    # works — the partial entries are on the books — but the flag lets callers
+    # (e.g. ``ma agent list``) distinguish a clean install from a crash-stranded
+    # one.  Old manifests that predate this field load as ``True`` (back-compat).
+    complete: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -743,6 +748,9 @@ def load_manifest(adapter: str, oma_home: Path) -> Manifest | None:
     raw = json.loads(text)
     raw["entries"] = [ManifestEntry(**e) for e in raw.get("entries", [])]
     raw["cli_entries"] = [ManifestCLIEntry(**e) for e in raw.get("cli_entries", [])]
+    # Back-compat: manifests written before the ``complete`` field was added
+    # load as complete=True (they were always the result of a successful apply).
+    raw.setdefault("complete", True)
     return Manifest(**raw)
 
 
@@ -767,15 +775,21 @@ def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> M
         _apply_ops(plan, entries=entries, cli_entries=cli_entries, dry_run=dry_run)
     except Exception:
         if not dry_run and entries:
-            save_manifest(_manifest_of(plan, entries, cli_entries), oma_home)
+            save_manifest(_manifest_of(plan, entries, cli_entries, complete=False), oma_home)
         raise
-    manifest = _manifest_of(plan, entries, cli_entries)
+    manifest = _manifest_of(plan, entries, cli_entries, complete=True)
     if not dry_run:
         save_manifest(manifest, oma_home)
     return manifest
 
 
-def _manifest_of(plan: InstallPlan, entries: list[ManifestEntry], cli_entries: list[ManifestCLIEntry]) -> Manifest:
+def _manifest_of(
+    plan: InstallPlan,
+    entries: list[ManifestEntry],
+    cli_entries: list[ManifestCLIEntry],
+    *,
+    complete: bool = True,
+) -> Manifest:
     return Manifest(
         adapter=plan.adapter,
         scope=plan.scope,
@@ -783,6 +797,7 @@ def _manifest_of(plan: InstallPlan, entries: list[ManifestEntry], cli_entries: l
         session_id=plan.session_id,
         entries=entries,
         cli_entries=cli_entries,
+        complete=complete,
     )
 
 
@@ -905,6 +920,11 @@ def uninstall(  # noqa: C901 — four reversal paths (CLI actions, create files,
     if manifest is None:
         output_fn(f"manyagent: no install manifest for {adapter!r} — nothing to do")
         return 1
+    if not manifest.complete:
+        output_fn(
+            f"manyagent: warning — manifest for {adapter!r} is incomplete (install was interrupted); "
+            "reversing what was written"
+        )
 
     # Run the external CLI uninstalls FIRST so the agent can unregister cleanly
     # while our bundle is still on disk. Reversing this order (file ops first)
