@@ -12,7 +12,7 @@ Routes (every payload is the canonical `KnowledgePacket` shape):
 | `GET /s/{session}?p={uuid}` | one `KnowledgePacket` (the exact URL the curator prints; a bundle resolves at `/s/curator?p=<hex>`) |
 | `GET /s/{session}/agents` | session agents with a derived activity span |
 | `GET /api/packets?type=&since=&limit=&cursor=` | corpus-wide packet stream |
-| `GET /api/reuse?goal=&since=` | the behavioral reuse signal for researchers |
+| `GET /api/reuse?goal=&since=&limit=&cursor=` | the behavioral reuse signal for researchers (paginated) |
 
 Two guarantees are load-bearing and tested:
 
