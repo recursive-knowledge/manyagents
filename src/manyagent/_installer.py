@@ -166,10 +166,16 @@ def _read_text(path: Path) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
-def _atomic_write(path: Path, content: str) -> None:
+def _atomic_write(path: Path, content: str, *, dir_mode: int = 0o755) -> None:
     """Write ``content`` to ``path`` via tempfile + ``os.replace`` (atomic on
-    POSIX). Creates parent dirs as needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    POSIX). Creates parent dirs as needed.
+
+    ``dir_mode`` controls the permission bits passed to ``mkdir`` for any dirs
+    this function creates.  Callers that write to manyagent-owned dirs (under
+    ``$MANYAGENT_HOME``) pass ``dir_mode=0o700`` so those dirs are not
+    world-readable.  Third-party config dirs (``~/.claude``, ``~/.codex``, …)
+    use the default 0755 — we must not restrict dirs we don't own."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=dir_mode)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -645,7 +651,7 @@ def _record_decline(
         )
         return
     if marker is not None and not dry_run:
-        _atomic_write(marker, datetime.now().astimezone().isoformat() + "\n")
+        _atomic_write(marker, datetime.now().astimezone().isoformat() + "\n", dir_mode=0o700)
         output_fn(
             ui.render(
                 Text(
@@ -749,7 +755,7 @@ def load_manifest(adapter: str, oma_home: Path) -> Manifest | None:
 def save_manifest(manifest: Manifest, oma_home: Path) -> None:
     p = _manifest_path(manifest.adapter, oma_home)
     payload = asdict(manifest)
-    _atomic_write(p, json.dumps(payload, indent=2) + "\n")
+    _atomic_write(p, json.dumps(payload, indent=2) + "\n", dir_mode=0o700)
 
 
 def apply_plan(plan: InstallPlan, *, oma_home: Path, dry_run: bool = False) -> Manifest:

@@ -686,3 +686,28 @@ def test_run_cli_failure_ok_suppresses_note(capsys: pytest.CaptureFixture[str]) 
         failure_ok=True,
     )
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------------------------------- #
+# security: manyagent-owned dirs created with 0700 (fix 3)
+# --------------------------------------------------------------------------- #
+
+
+def test_save_manifest_creates_installed_dir_with_0700(tmp_path: Path) -> None:
+    """The ``installed/`` dir under MANYAGENT_HOME must not be world-readable."""
+    import os
+    import sys
+
+    if sys.platform == "win32" or os.getuid() == 0:  # type: ignore[attr-defined]
+        pytest.skip("permission bits not meaningful on Windows or when running as root (root ignores mode)")
+
+    from manyagent._installer import Manifest, save_manifest
+
+    oma_home = tmp_path / "oma"
+    manifest = Manifest(adapter="demo", scope="user", installed_at="2026-01-01T00:00:00+00:00", session_id=None)
+    save_manifest(manifest, oma_home)
+    installed_dir = oma_home / "installed"
+    assert installed_dir.is_dir()
+    mode = installed_dir.stat().st_mode & 0o777
+    # The dir must NOT be world-readable or world-executable.
+    assert not (mode & 0o007), f"installed/ dir is world-accessible: {oct(mode)}"

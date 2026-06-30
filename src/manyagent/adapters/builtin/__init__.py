@@ -71,8 +71,15 @@ class _HeadlessModel:
     shell-out (the ``manyagent.utils.provider`` seam; duck-types as ``Provider``)."""
 
     name: str
-    cmd_prefix: list[str]  # e.g. ["claude", "-p"] — prompt appended
+    cmd_prefix: list[str]  # e.g. ["claude", "-p"] — prompt via stdin (preferred) or appended
     extract: Callable[[str], str] | None = None  # CLI-envelope unwrap, per adapter
+    # When True (the default) the prompt is passed via stdin rather than as an
+    # argv element.  Passing 60 KB of session text via argv exposes it in
+    # /proc/<pid>/cmdline and ps(1), and can exceed the kernel's ARG_MAX.
+    # Set to False only for CLIs that do NOT read the prompt from stdin (e.g.
+    # ``codex exec`` whose positional argument is the task description and whose
+    # stdin is reserved for interactive I/O).
+    prompt_via_stdin: bool = True
 
     def complete(self, prompt: str, *, max_tokens: int | None = None) -> str:
         # The distiller is NOT the wrapped session: drop MANYAGENT_SESSION so the
@@ -85,13 +92,23 @@ class _HeadlessModel:
         # were session evidence — the trace in the prompt must be the
         # distiller's only knowledge of the session.
         env = {k: v for k, v in os.environ.items() if k != "MANYAGENT_SESSION"}
+        if self.prompt_via_stdin:
+            # Preferred: prompt on stdin keeps it out of /proc/<pid>/cmdline and
+            # ps(1) output, and avoids ARG_MAX limits on large session traces.
+            cmd = list(self.cmd_prefix)
+            stdin_input: str | None = prompt
+        else:
+            # Fallback for CLIs that don't read the prompt from stdin.
+            cmd = [*self.cmd_prefix, prompt]
+            stdin_input = None
         with tempfile.TemporaryDirectory(prefix="manyagent-distill-") as hermetic_cwd:
             rc, out, err, _ = run_agent_subprocess(
-                [*self.cmd_prefix, prompt],
+                cmd,
                 timeout=config.MANYAGENT_DISTILL_TIMEOUT_S,
                 agent_name=self.name,
                 cwd=hermetic_cwd,
                 env=env,
+                stdin_input=stdin_input,
             )
         if rc != 0:
             raise AdapterError(f"{self.name} headless distill failed (rc={rc}): {err[:500]}")
@@ -127,7 +144,16 @@ class _StructuredBuiltin(PromptPrefixInjector, Adapter):
     def distill_model(self) -> object | None:
         if not self.is_available():
             return None
-        return _HeadlessModel(self.name, self._distill_cmd_prefix(), extract=self._distill_extract)
+        return _HeadlessModel(
+            self.name,
+            self._distill_cmd_prefix(),
+            extract=self._distill_extract,
+            prompt_via_stdin=self._distill_via_stdin,
+        )
+
+    # Subclasses set this to False when their CLI does not read the prompt from
+    # stdin (e.g. ``codex exec`` takes the task as a positional argument).
+    _distill_via_stdin: bool = True
 
     def _distill_cmd_prefix(self) -> list[str]:  # overridden per agent
         raise NotImplementedError
