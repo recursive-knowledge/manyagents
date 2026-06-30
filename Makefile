@@ -85,11 +85,11 @@ web-up: ## Serve the read-only API + viewer (manyagent.web; anon/public identity
 
 .PHONY: web-build
 web-build: ## Build the SvelteKit viewer (web/viewer/) for production
-	@cd web/viewer && npm install --no-audit --no-fund && npm run build
+	@cd web/viewer && npm ci && npm run build
 
 .PHONY: web-dev
 web-dev: ## Run the Vite dev server (web/viewer/), proxying to a running 'make web-up'
-	@cd web/viewer && npm install --no-audit --no-fund && npm run dev
+	@cd web/viewer && npm ci && npm run dev
 
 # ---- Cloudflare named tunnels (infra/cloudflared/) -------------------------
 # Two independent tunnels expose the local stack on the formulacode.org zone
@@ -117,6 +117,8 @@ DB_TUNNEL     ?= swarms-db
 DB_HOSTNAME   ?= db-swarms.$(ZONE)
 DB_SERVICE    ?= http://127.0.0.1:$(BANK_API_PORT)
 
+# TODO: add sha256 verification for the cloudflared download below — Cloudflare does not publish a
+# checksums file alongside their release binaries, so integrity verification requires a separate step.
 .PHONY: tunnel-install
 tunnel-install: ## Install the cloudflared binary if it is missing
 	@if command -v $(CLOUDFLARED) >/dev/null 2>&1; then \
@@ -126,7 +128,7 @@ tunnel-install: ## Install the cloudflared binary if it is missing
 	else \
 	  os=$$(uname -s | tr 'A-Z' 'a-z'); arch=$$(uname -m); \
 	  case "$$arch" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; armv7l) arch=arm;; esac; \
-	  url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-$$os-$$arch"; \
+	  url="https://github.com/cloudflare/cloudflared/releases/download/2026.6.1/cloudflared-$$os-$$arch"; \
 	  mkdir -p "$$HOME/.local/bin"; \
 	  echo "▶ downloading $$url"; \
 	  curl -fsSL "$$url" -o "$$HOME/.local/bin/cloudflared" && chmod +x "$$HOME/.local/bin/cloudflared" \
