@@ -39,6 +39,12 @@ from manyagent._skills import (
     _session_id,  # noqa: F401 — re-exported (tests + back-compat import site)
     register_all,
 )
+from manyagent._skills import (
+    get_goal as _get_goal,
+)
+from manyagent._skills import (
+    list_goals as _list_goals,
+)
 
 setup_environment()  # ./manyagent.env then ~/.manyagent/env (first wins) — Bank creds for the MCP child
 
@@ -55,6 +61,12 @@ commit_post = _TOOLS["commit_post"]
 cross_distill = _TOOLS["cross_distill"]
 inject_preview = _TOOLS["inject_preview"]
 inject_commit = _TOOLS["inject_commit"]
+
+# Read-only discovery tools — the install-free entry points (browse goals, then
+# pick one to self-distill/cross-distill against). Not part of REGISTRY (the four
+# gated knowledge-loop verbs); registered directly here and re-exported for tests.
+list_goals = app.tool()(_list_goals)
+get_goal = app.tool()(_get_goal)
 
 
 def main() -> None:
