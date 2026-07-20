@@ -211,6 +211,71 @@ def test_apply_plan_failure_saves_partial_manifest_for_reversal(tmp_path: Path) 
     assert not created.exists()  # and reversible
 
 
+def test_successful_apply_plan_manifest_is_complete(tmp_path: Path) -> None:
+    """A successful apply_plan sets complete=True on the saved manifest."""
+    plan = _two_file_plan(tmp_path)
+    oma_home = tmp_path / "oma_home"
+    m = apply_plan(plan, oma_home=oma_home)
+    assert m.complete is True
+    loaded = load_manifest("demo", oma_home)
+    assert loaded is not None
+    assert loaded.complete is True
+
+
+def test_mid_apply_failure_saves_manifest_with_complete_false(tmp_path: Path) -> None:
+    """A crash after ≥1 entry is written saves complete=False so uninstall can
+    distinguish a partial install from a clean one."""
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"hooks": []}, indent=2))  # array → TypeError in merge
+    plan = InstallPlan(
+        adapter="demo-incomplete",
+        scope="user",
+        session_id="S1",
+        ops=[
+            FileOp(kind="create", path=tmp_path / "skills" / "y" / "SKILL.md", payload="# y", description="y"),
+            FileOp(
+                kind="merge",
+                path=settings,
+                payload={"__top_key__": "hooks", "__our_key__": "SessionStart", "__list_item__": _OUR_HOOK},
+                description="hook",
+                merge_keys=("list:hooks.SessionStart",),
+            ),
+        ],
+    )
+    oma_home = tmp_path / ".manyagent"
+    with pytest.raises(TypeError):
+        apply_plan(plan, oma_home=oma_home)
+    manifest = load_manifest("demo-incomplete", oma_home)
+    assert manifest is not None
+    assert manifest.complete is False
+    # The written entry (the create) is in the partial manifest
+    assert len(manifest.entries) == 1
+    assert manifest.entries[0].kind == "create"
+    # And uninstall warns about the incomplete manifest but still reverses it
+    out: list[str] = []
+    rc = uninstall("demo-incomplete", oma_home, output_fn=out.append)
+    assert rc == 0
+    assert any("incomplete" in line for line in out)
+    assert not (tmp_path / "skills" / "y" / "SKILL.md").exists()
+
+
+def test_load_manifest_old_style_without_complete_defaults_true(tmp_path: Path) -> None:
+    """A manifest JSON written before the ``complete`` field was introduced
+    (i.e. lacking the key) loads with complete=True for back-compat."""
+
+    plan = _two_file_plan(tmp_path)
+    oma_home = tmp_path / "oma_home"
+    apply_plan(plan, oma_home=oma_home)
+    # Strip the 'complete' key from the on-disk JSON to simulate an old manifest
+    manifest_path = oma_home / "installed" / "demo.json"
+    raw = json.loads(manifest_path.read_text())
+    raw.pop("complete", None)
+    manifest_path.write_text(json.dumps(raw, indent=2) + "\n")
+    loaded = load_manifest("demo", oma_home)
+    assert loaded is not None
+    assert loaded.complete is True  # back-compat default
+
+
 def test_list_merge_round_trip_through_apply_and_uninstall(tmp_path: Path) -> None:
     """install → uninstall over a settings.json the user already owns must be
     byte-identical: our hook entry comes and goes, theirs never moves."""
