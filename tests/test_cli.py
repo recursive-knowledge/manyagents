@@ -646,6 +646,73 @@ async def test_end_star_rates_last_unrated_reflection(fake_bank: FakeBank) -> No
 
 
 # --------------------------------------------------------------------------- #
+# manyagent end — per-injection "did this help?" tap (00012; capture-only)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_injected_session(fake_bank: FakeBank) -> None:
+    """A session that already has a rated reflection (so the end-distill offer is a
+    no-op) AND an injection from another packet (so the helpful tap fires)."""
+    await fake_bank.put_session("SRC", goal="g")
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet({"id": "SRC/p", "session_id": "SRC", "type": "post"})
+    await fake_bank.put_packet({
+        "id": "S1/r1",
+        "session_id": "S1",
+        "type": "post",
+        "kind": "reflection",
+        "goal": "g",
+        "structured": dict(_GOOD),
+        "rating": 4,  # already rated → ★ prompt is a no-op too
+    })
+    await fake_bank.record_injection("SRC/p", "S1")
+
+
+async def test_end_records_helpful_tap_when_injections_exist(fake_bank: FakeBank) -> None:
+    await _seed_injected_session(fake_bank)
+    s = Scripted("y")  # the only interactive prompt left is the helpful tap
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is True for r in rows)
+
+
+async def test_end_records_not_helpful_on_no(fake_bank: FakeBank) -> None:
+    await _seed_injected_session(fake_bank)
+    s = Scripted("n")
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is False for r in rows)
+
+
+async def test_end_skips_helpful_tap_when_noninteractive(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _seed_injected_session(fake_bank)
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=Scripted().io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is None for r in rows)  # tap skipped, row untouched
+
+
+async def test_end_no_tap_without_injections(fake_bank: FakeBank) -> None:
+    """No injections in the session → no helpful prompt is consumed."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet({
+        "id": "S1/r1",
+        "session_id": "S1",
+        "type": "post",
+        "kind": "reflection",
+        "goal": "g",
+        "structured": dict(_GOOD),
+        "rating": 4,
+    })
+    s = Scripted()  # empty: any prompt would IndexError
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+
+
+# --------------------------------------------------------------------------- #
 # manyagent <name> — PTY spawn (stdlib call monkeypatched) + skill install + capture
 # --------------------------------------------------------------------------- #
 
