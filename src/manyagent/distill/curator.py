@@ -41,6 +41,7 @@ from manyagent.distill.prompts import build_distill_prompt
 from manyagent.distill.resolve import Curator, resolve
 from manyagent.distill.weighting import weigh_posts
 from manyagent.utils import config
+from manyagent.utils.slug import normalize_goal
 
 _SCOPES = {"per_goal", "cross_goal"}
 
@@ -121,6 +122,10 @@ async def curate(
     if scope not in _SCOPES:
         raise ValueError(f"bad scope {scope!r}; expected one of {sorted(_SCOPES)}")
     win = window_days if window_days is not None else config.MANYAGENT_CROSSDISTILL_WINDOW_DAYS
+    # Compare/aggregate on the canonical slug — a raw goal here must match the
+    # normalized form stored on write (decision #1) so case/spacing variants
+    # cluster into one bucket instead of fragmenting.
+    goal = normalize_goal(goal)
     stored_goal = goal if scope == "per_goal" else None
 
     posts = await _cluster(scope=scope, goal=goal, bank=bank, window_days=win)

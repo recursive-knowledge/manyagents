@@ -569,7 +569,12 @@ async def _session_start_offers(
     must not prompt "continue last goal?"). All offers are best-effort: a Bank
     hiccup here never blocks the session opening."""
     goal = explicit_goal
-    default_goal = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
+    # The default bucket is itself stored/compared as a canonical slug so it
+    # aggregates like every other goal (decision #1). It is a non-empty config
+    # value, so normalize_goal never yields None — fall back defensively to keep
+    # the type a plain str.
+    raw_default = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
+    default_goal: str = slug.normalize_goal(raw_default) or raw_default
     try:
         if not goal and allow_continuity:
             goal = await _offer_goal_continuity(session_id, bank=bank, io=io)
@@ -595,13 +600,23 @@ async def _session_start_offers(
 
 async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
     session_id = args.id or sid.new()
-    await bank.put_session(session_id, goal=args.goal)
+    # Slug-normalize on write so the Bank stores the canonical aggregation key
+    # (decision #1): "CFD Solver" / "cfd-solver" / "cfd_solver" → one bucket.
+    # The existing-goals picker then helps reuse a bucket before fragmenting.
+    explicit_goal = slug.normalize_goal(args.goal)
+    if explicit_goal is not None:
+        # Picker fires only when a goal was typed: confirm/fold a case-spacing
+        # variant into an existing bucket, or let the user switch to one. The
+        # no-goal path is served by the existing single-bucket continuity offer
+        # below (running both would double-prompt) — see Deliverable 2 note.
+        explicit_goal = await _offer_goal_picker(session_id, explicit_goal, bank=bank, io=io)
+    await bank.put_session(session_id, goal=explicit_goal)
     _write_active(session_id)  # the sticky-session marker (only `ma session start` writes it)
     line = Text.assemble(("session ", "dim"), (session_id, "bold"))
-    if args.goal:
-        line.append(f"  goal={args.goal!r}", style="dim")
+    if explicit_goal:
+        line.append(f"  goal={explicit_goal!r}", style="dim")
     io[1](ui.render(line))
-    goal = await _session_start_offers(session_id, args.goal, bank=bank, io=io, allow_continuity=True)
+    goal = await _session_start_offers(session_id, explicit_goal, bank=bank, io=io, allow_continuity=True)
     # The viewer URL is the actionable artifact — point it at the goal board (the
     # durable, shareable surface) once the goal is resolved; ungoaled → /s/{id}.
     io[1](ui.render(Text.assemble(("open: ", "dim"), (_open_url(session_id, goal), "underline cyan"))))
@@ -614,16 +629,17 @@ async def _offer_goal_continuity(session_id: str, *, bank: Bank, io: tuple[In, O
     allowance gate). Returns the adopted goal, or None."""
     if _noninteractive():
         return None
-    default_goal = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
+    default_goal = slug.normalize_goal(config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL))
     sessions = [
         s
         for s in await bank.list_sessions()
-        if s.get("id") != session_id and s.get("goal") and s.get("goal") != default_goal
+        if s.get("id") != session_id and s.get("goal") and slug.normalize_goal(s.get("goal")) != default_goal
     ]
     if not sessions:
         return None
     sessions.sort(key=lambda s: str(s.get("created_at") or ""))
-    last_goal = str(sessions[-1]["goal"])
+    # Re-normalize defensively in case a legacy/un-normalized goal is stored.
+    last_goal = slug.normalize_goal(str(sessions[-1]["goal"])) or str(sessions[-1]["goal"])
     if not ask_allow(
         messages.START_CONTINUE_GOAL_OFFER.format(goal=last_goal),
         input_fn=io[0],
@@ -634,6 +650,70 @@ async def _offer_goal_continuity(session_id: str, *, bank: Bank, io: tuple[In, O
     await bank.put_session(session_id, goal=last_goal)
     io[1](ui.render(Text.assemble(("goal ", "dim"), (f"/{last_goal}", "bold"), (" adopted", "dim"))))
     return last_goal
+
+
+async def _existing_goals(session_id: str, *, bank: Bank) -> list[str]:
+    """Distinct existing goal slugs across the corpus, most-recent first.
+
+    Drawn from prior sessions (re-normalized defensively so legacy rows fold
+    into their canonical bucket); the current session and the catch-all default
+    bucket are excluded — the picker is for reusing *curated* goals."""
+    default_goal = slug.normalize_goal(config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL))
+    sessions = [s for s in await bank.list_sessions() if s.get("id") != session_id]
+    sessions.sort(key=lambda s: str(s.get("created_at") or ""), reverse=True)
+    seen: list[str] = []
+    for s in sessions:
+        g = slug.normalize_goal(s.get("goal"))
+        if g and g != default_goal and g not in seen:
+            seen.append(g)
+    return seen
+
+
+async def _offer_goal_picker(
+    session_id: str, explicit_goal: str | None, *, bank: Bank, io: tuple[In, Out]
+) -> str | None:
+    """Existing-goals picker (decision #1): before a new session fragments the
+    corpus, show the distinct existing goal buckets and let the user reuse one.
+
+    - ``MANYAGENT_NONINTERACTIVE`` ⇒ no prompt; the normalized ``explicit_goal`` is
+      returned unchanged.
+    - If the user's typed goal already normalizes to an existing bucket, confirm
+      and reuse it (so a case/spacing variant doesn't open a parallel bucket).
+    - Otherwise list the buckets; an integer selects one, any other text is
+      normalized as a brand-new goal, Enter keeps ``explicit_goal``.
+
+    Best-effort: a Bank failure fetching goals must never block session start —
+    on any error we fall back to the passed (already-normalized) goal."""
+    if _noninteractive():
+        return explicit_goal
+    try:
+        existing = await _existing_goals(session_id, bank=bank)
+    except Exception as exc:  # best-effort — never block start on a Bank hiccup
+        io[1](ui.render(Text(f"manyagent: goal picker skipped ({type(exc).__name__}: {exc})", style="yellow")))
+        return explicit_goal
+    if not existing:
+        return explicit_goal
+    # An explicit goal that already lands in a known bucket: confirm reuse, no list.
+    if explicit_goal and explicit_goal in existing:
+        return explicit_goal
+    io[1](ui.render(Text(messages.START_GOAL_PICKER_HEADER, style="dim")))
+    for n, g in enumerate(existing, start=1):
+        io[1](ui.render(Text(messages.START_GOAL_PICKER_ROW.format(n=n, goal=g), style="cyan")))
+    prompt = ui.render(Text(messages.START_GOAL_PICKER_PROMPT, style="bold")) + " "
+    raw = io[0](prompt).strip()
+    if raw == "":
+        return explicit_goal
+    if raw.isdigit():
+        idx = int(raw)
+        if 1 <= idx <= len(existing):
+            chosen = existing[idx - 1]
+            io[1](ui.render(Text.assemble(("goal ", "dim"), (f"/{chosen}", "bold"), (" reused", "dim"))))
+            return chosen
+        return explicit_goal  # out-of-range number: keep the original goal
+    typed = slug.normalize_goal(raw)
+    if typed and typed in existing:
+        io[1](ui.render(Text(messages.START_GOAL_PICKER_MATCH_NOTE.format(goal=typed), style="dim")))
+    return typed
 
 
 async def _note_quarantine(goal: str, *, bank: Bank, io: tuple[In, Out]) -> None:
@@ -775,6 +855,10 @@ async def _resolve_run_session(goal: str | None, *, bank: Bank, io: tuple[In, Ou
 
     Ephemeral sessions never write the marker. Fresh sessions fire the
     session-start offers (inject/context), minus the goal-continuity prompt."""
+    # Slug-normalize on write (decision #1): the ``ma "<goal>" <agent>`` path
+    # files the ephemeral session under the same canonical bucket as
+    # ``ma session start``.
+    goal = slug.normalize_goal(goal)
     if not goal:
         active = _read_active()
         if active:
