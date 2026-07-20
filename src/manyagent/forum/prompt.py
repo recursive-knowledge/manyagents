@@ -44,6 +44,39 @@ _SCHEMA = (
     "grounded or not at all."
 )
 
+# One worked example pair (models follow examples far better than prose),
+# using THIS post's own structured fields. The GOOD post names a concrete
+# primitive with a verbatim trace excerpt and a falsifiable prediction; the BAD
+# post is the vague/meta anti-pattern the parser drops (no concrete primitive,
+# paraphrased "evidence", an unfalsifiable next step). Domain-neutral on
+# purpose — a generic web server, not any benchmark.
+_FEWSHOT = (
+    "EXAMPLE (one good post, one bad — for shape only; do NOT copy this text):\n"
+    "GOOD:\n"
+    "{\n"
+    '  "load_bearing_assumption": "uvicorn workers share no state, so the '
+    'in-process rate-limit dict under-counts across workers",\n'
+    '  "evidence": "429s only fired at ~4x the configured limit once we ran '
+    '--workers 4",\n'
+    '  "evidence_ref": null,\n'
+    '  "proposed_next": "move the counter into Redis with INCR+EXPIRE so the '
+    'limit is shared across uvicorn workers",\n'
+    '  "predicted_outcome": "429s start firing at the configured limit '
+    'regardless of --workers count",\n'
+    '  "confidence": "medium"\n'
+    "}\n"
+    "BAD (would be DROPPED — vague, no concrete primitive, paraphrased "
+    "evidence, unfalsifiable next step):\n"
+    "{\n"
+    '  "load_bearing_assumption": "be careful with concurrency",\n'
+    '  "evidence": "the test seemed flaky sometimes",\n'
+    '  "evidence_ref": null,\n'
+    '  "proposed_next": "improve the rate limiting logic",\n'
+    '  "predicted_outcome": "things will be more reliable",\n'
+    '  "confidence": "high"\n'
+    "}\n"
+)
+
 
 def render_post_prompt(
     *,
@@ -68,7 +101,7 @@ def render_post_prompt(
         "post-mortem a future agent will be seeded with."
     )
     scope = f"Goal scope: {goal}." if goal else "No goal scope (ungoaled)."
-    parts = [head, scope, "", POST_ANTI_META_BLOCK, "", _SCHEMA]
+    parts = [head, scope, "", POST_ANTI_META_BLOCK, "", _SCHEMA, "", _FEWSHOT]
 
     if kind == "reply":
         prior = prior_posts or []
