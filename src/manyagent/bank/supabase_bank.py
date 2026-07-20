@@ -169,7 +169,10 @@ class SupabaseBank:
         if since is not None:
             q = q.gte("created_at", since)
         if cursor is not None:
-            q = q.gt("created_at", cursor.partition("|")[0])
+            cur_ts, _, cur_id = cursor.partition("|")
+            # Compound keyset: (created_at, id) > (cur_ts, cur_id)
+            # Expressed as: created_at > cur_ts OR (created_at = cur_ts AND id > cur_id)
+            q = q.or_(f"created_at.gt.{cur_ts},and(created_at.eq.{cur_ts},id.gt.{cur_id})")
         q = q.order("created_at").order("id")
         if limit is not None:
             q = q.limit(limit)
