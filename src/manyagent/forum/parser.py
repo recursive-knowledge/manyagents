@@ -37,15 +37,31 @@ def _sanitize(text: str) -> str:
     return _FORGE_RE.sub(r"\1[\2]\3", text)
 
 
+def _norm(s: str) -> str:
+    """Whitespace-collapsed (matches ``distill.parse._norm``) — the comparison
+    basis for evidence grounding, so a model copying a quote through the
+    rendered prompt still matches the stored ground truth."""
+    return " ".join(s.split())
+
+
 def _reject(reason: str) -> tuple[bool, str]:
     return (False, reason)
 
 
-async def parse_post(record: dict[str, Any], *, bank: Bank) -> tuple[bool, dict[str, Any] | str]:  # noqa: C901 — sequential mechanical validation; the branches ARE the parser
+async def parse_post(  # noqa: C901 — sequential mechanical validation; the branches ARE the parser
+    record: dict[str, Any], *, bank: Bank, trace_context: str | None = None
+) -> tuple[bool, dict[str, Any] | str]:
     """Validate a candidate ``post`` record mechanically.
 
     Returns ``(True, sanitized_record)`` for the caller to persist, or
     ``(False, reason)`` — **not persisted** (C1). Never sets ``preference``.
+
+    ``trace_context`` is the session excerpt the agent was shown (the headless
+    ``manyagent._handlers`` path threads it; the in-agent MCP path passes None).
+    When ground truth is in hand — the trace and/or a resolved cited post — the
+    schema's *verbatim excerpt* contract for ``evidence`` is enforced: invented
+    evidence cannot be curated into the public corpus. Best-effort: with neither
+    source available the grounding check is skipped (open-corpus decision).
     """
     if record.get("type") != "post":
         return _reject("not a post packet")
@@ -91,12 +107,16 @@ async def parse_post(record: dict[str, Any], *, bank: Bank) -> tuple[bool, dict[
         return _reject("no prior posts exist under this goal — citations forbidden (no-history hardening)")
 
     # --- forge: a cited evidence_ref MUST resolve to a real, non-quarantined packet ---
+    cited_text: str | None = None
     if evidence_ref:
         cited = await bank.get_packet(str(evidence_ref))
         if cited is None:
             return _reject(f"evidence_ref {evidence_ref!r} cites a non-existent packet (forge/hallucination)")
         if cited.get("quarantined"):
             return _reject(f"evidence_ref {evidence_ref!r} cites a quarantined packet")
+        cited_structured = cited.get("structured")
+        if isinstance(cited_structured, dict):
+            cited_text = " ".join(str(v) for v in cited_structured.values() if isinstance(v, str))
 
     # --- reply discipline ---
     if kind == "reply":
@@ -110,6 +130,19 @@ async def parse_post(record: dict[str, Any], *, bank: Bank) -> tuple[bool, dict[
             return _reject(f"cannot reply to a quarantined packet {reply_to!r}")
     elif reply_to or record.get("stance"):
         return _reject("a reflection must not carry reply_to/stance")
+
+    # --- evidence grounding: the schema demands a VERBATIM excerpt of the
+    # session trace (evidence_ref null) or of the cited post (evidence_ref set).
+    # Reject only when ground truth is in hand and the evidence appears in NONE
+    # of it — that catches invented evidence while tolerating an agent that
+    # quotes its own trace while also citing a post. ``structured`` is the
+    # agent's own words (pre-forge-sanitize), matched against the text it saw;
+    # verbatim semantics mirror the curator's quote check (distill.parse).
+    grounds = [_norm(g) for g in (trace_context, cited_text) if g]
+    if grounds:
+        evidence_text = _norm(str(structured["evidence"]))
+        if not any(evidence_text in g for g in grounds):
+            return _reject("evidence is not a verbatim excerpt of the session trace or cited post (ungrounded)")
 
     out = dict(record)
     out["structured"] = clean_structured
