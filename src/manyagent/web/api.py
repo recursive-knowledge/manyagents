@@ -533,10 +533,21 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
                 "quarantined": row.get("quarantined", False),
             }
 
-            if row["type"] == "raw" and may_read_raw:
-                # For raw traces, extract trace body, metadata, events, and mined conversation
+            if row["type"] == "raw":
+                # For raw traces, fetch the trace row to surface completeness (always,
+                # regardless of may_read_raw — complete/trace_missing are metadata, not
+                # the trace body).  A crash between put_packet and put_trace leaves an
+                # orphan raw packet with no trace row; expose that explicitly so callers
+                # can distinguish a truncated/orphaned capture from a clean empty one.
                 trace = await b.get_trace(row["id"])
-                if trace and trace.get("body"):
+                if trace is None:
+                    # Orphan: put_packet succeeded but put_trace never ran (crash mid-persist).
+                    item["trace_complete"] = False
+                    item["trace_missing"] = True
+                else:
+                    item["trace_complete"] = bool(trace.get("complete", True))
+
+                if may_read_raw and trace and trace.get("body"):
                     try:
                         events, term = _parse_envelope(trace["body"])
                         # Parse the body as JSON to extract adapter and source_fidelity metadata
