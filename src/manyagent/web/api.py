@@ -206,6 +206,20 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     app.state.bank = b
     app.state.identity = identity
 
+    @app.get("/SKILL.md", response_class=PlainTextResponse)
+    @app.get("/skill", response_class=PlainTextResponse)
+    async def skill_md() -> Any:
+        """The self-install skill: an agent fetches this and registers the
+        zero-config ``manyagent`` MCP server to contribute to shared goals
+        (manyagent.web.skill). Static, Bank-independent, cached at the edge."""
+        from manyagent.web.skill import render_skill
+
+        return PlainTextResponse(
+            render_skill(),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+
     @app.get("/s/{session}")
     async def session_view(
         session: str,

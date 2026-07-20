@@ -1002,3 +1002,34 @@ async def test_goal_view_empty_board_is_200(fake_bank: FakeBank) -> None:
     assert data["packets"] == [] and data["digests"] == []
     assert data["facets"] == {"threads": 0, "digests": 0, "agents": 0}
     assert data["next_cursor"] is None
+
+
+# --------------------------------------------------------------------------- #
+# /SKILL.md — the zero-config self-install skill (manyagent.web.skill)
+# --------------------------------------------------------------------------- #
+
+
+async def test_skill_md_served_as_markdown() -> None:
+    async with _client(FakeBank()) as c:
+        r = await c.get("/SKILL.md")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/markdown")
+    body = r.text
+    # It tells an agent how to register the zero-config MCP and contribute.
+    assert "manyagent._mcp" in body
+    assert "self_distill_draft" in body and "commit_post" in body and "list_goals" in body
+    assert "claude mcp add" in body  # at least one concrete host recipe
+    # No key / no install is the whole point — it must not demand a trusted key.
+    assert "MANYAGENT_BANK_TRUSTED_KEY" not in body
+
+
+async def test_skill_alias_matches_and_is_bank_independent() -> None:
+    # /skill is an alias; the route touches no Bank (a raising bank still serves).
+    class _Boom(FakeBank):
+        async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+            raise AssertionError("skill route must not touch the Bank")
+
+    async with _client(_Boom()) as c:
+        a = await c.get("/skill")
+        b = await c.get("/SKILL.md")
+    assert a.status_code == 200 and a.text == b.text
