@@ -107,6 +107,7 @@ def run_agent_subprocess(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     agent_name: str = "agent",
+    stdin_input: str | None = None,
 ) -> tuple[int, str, str, float]:
     """Run a CLI command with process-group cleanup on interrupt/timeout.
 
@@ -114,6 +115,9 @@ def run_agent_subprocess(
     is killed and partial output returned with ``returncode=-1``. Re-raises
     ``KeyboardInterrupt`` after cleanup. Used by the builtins' headless
     ``distill_model()`` shell-out.
+
+    ``stdin_input`` is written to the child's stdin (PIPE); ``None`` means no
+    stdin (the child sees EOF on stdin immediately).
     """
     start = time.time()
     proc: subprocess.Popen[str] | None = None
@@ -122,13 +126,14 @@ def run_agent_subprocess(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if stdin_input is not None else subprocess.DEVNULL,
             text=True,
             cwd=cwd,
             env=env,
             start_new_session=True,
         )
         _register_proc(proc)
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = proc.communicate(input=stdin_input, timeout=timeout)
         return proc.returncode, stdout, stderr, time.time() - start
     except subprocess.TimeoutExpired as exc:
         logger.warning("%s timed out after %ds — capturing partial output", agent_name, timeout)
