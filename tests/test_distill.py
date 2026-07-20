@@ -350,6 +350,31 @@ async def test_unparseable_curator_output_raises_and_persists_nothing(fake_bank:
     assert await fake_bank.list_packets(type="distill") == []  # nothing partial written
 
 
+async def test_openai_compat_non_json_response_raises_curation_error(fake_bank: FakeBank) -> None:
+    """A non-JSON HTTP body from the OpenAI-compat fallback must surface as
+    CurationError (not a raw JSONDecodeError traceback)."""
+    from unittest.mock import MagicMock, patch
+
+    await fake_bank.put_packet(_post("S1/p1", session="S1", goal="g"))
+
+    # Simulate resp.json() raising JSONDecodeError (e.g. a proxy error page).
+    import json as _json
+
+    bad_resp = MagicMock()
+    bad_resp.status_code = 200
+    bad_resp.raise_for_status = MagicMock()
+    bad_resp.json.side_effect = _json.JSONDecodeError("Expecting value", "", 0)
+
+    with patch("httpx.post", return_value=bad_resp):
+        from manyagent.distill.resolve import _OpenAICompatModel
+
+        model = _OpenAICompatModel(base_url="http://fake", api_key="k", model="m")
+        with pytest.raises(CurationError, match="unparseable"):
+            await curate(scope="per_goal", goal="g", bank=fake_bank, model=model, mode="local")
+
+    assert await fake_bank.list_packets(type="distill") == []  # nothing written
+
+
 async def test_per_goal_requires_a_goal(fake_bank: FakeBank) -> None:
     await fake_bank.put_packet(_post("S1/p1", session="S1", goal="g"))
     with pytest.raises(ValueError, match="per_goal distill requires a goal"):
