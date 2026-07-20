@@ -317,13 +317,13 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
 
     @app.get("/api/packets")
     async def corpus_packets(
-        type: str | None = Query(default=None),
+        packet_type: str | None = Query(default=None, alias="type"),
         since: str | None = Query(default=None),
         limit: int = Query(default=config.MANYAGENT_WEB_PAGE_LIMIT),
         cursor: str | None = Query(default=None),
     ) -> Any:
         lim = _clamp_limit(limit)
-        rows = await b.list_packets(type=type, since=since, limit=lim, cursor=cursor, include_quarantined=True)
+        rows = await b.list_packets(type=packet_type, since=since, limit=lim, cursor=cursor, include_quarantined=True)
         return _page(rows, lim)
 
     @app.get("/api/goals")
@@ -479,11 +479,16 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     async def reuse_signal(
         goal: str | None = Query(default=None),
         since: str | None = Query(default=None),
+        limit: int = Query(default=config.MANYAGENT_WEB_PAGE_LIMIT),
+        cursor: str | None = Query(default=None),
     ) -> Any:
         # Behavioral corpus signal for researchers: packets matching goal/since
         # joined to their injection reuse score. Quarantined packets are
         # excluded — this is the "use as context" affordance (manyagent.web.md).
-        rows = await b.list_packets(goal=goal, since=since, include_quarantined=False)
+        # Paginated like every other listing route (was unbounded — a no-goal
+        # query returned the whole corpus).
+        lim = _clamp_limit(limit)
+        rows = await b.list_packets(goal=goal, since=since, limit=lim, cursor=cursor, include_quarantined=False)
         scored = {s["packet_id"]: s for s in await b.reuse_score()}
         reuse = []
         for r in rows:
@@ -496,7 +501,8 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
                 "inject_count": s.get("inject_count", 0),
                 "reuse_score": s.get("reuse_score", 0.0),
             })
-        return {"reuse": reuse}
+        nxt = make_cursor(rows[-1]) if len(rows) == lim and rows else None
+        return {"reuse": reuse, "next_cursor": nxt}
 
     @app.get("/api/session/{session}/summary")
     async def session_summary(session: str) -> Any:  # noqa: C901 — one aggregation pass with a branch per packet type; splitting would scatter the timeline build
@@ -516,9 +522,10 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         # Get all packets for the session
         rows = await b.list_packets(session_id=session, include_quarantined=True)
 
-        # Get all agents for the session
+        # Get all agents for the session — normalized to the same canonical
+        # shape as /s/{session}/agents (derived activity span), not raw rows.
         agent_rows = await b.list_agents(session)
-        agents = {r["id"]: r for r in agent_rows}
+        agents = [Agent.from_activity(r, packets=rows).model_dump(mode="json") for r in agent_rows]
 
         # Build the conversation timeline
         conversation_items = []
@@ -533,8 +540,13 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
                 "quarantined": row.get("quarantined", False),
             }
 
-            if row["type"] == "raw" and may_read_raw:
-                # For raw traces, extract trace body, metadata, events, and mined conversation
+            if row["type"] == "raw" and may_read_raw and (may_audit_quarantined or not row.get("quarantined")):
+                # For raw traces, extract trace body, metadata, events, and mined
+                # conversation — but NOT for a retro-quarantined packet on the public
+                # surface: it stays visible+flagged (quarantined: true) with no body,
+                # matching every other raw path (?include=raw, /api/cast, /s/{s}?p=).
+                # Quarantine is the moderation lever on the open-write corpus, so a
+                # leak recovered by quarantine must not still surface here.
                 trace = await b.get_trace(row["id"])
                 if trace and trace.get("body"):
                     try:
@@ -619,7 +631,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
                 "status": meta.get("status"),
                 "created_at": meta.get("created_at"),
             },
-            "agents": list(agents.values()),
+            "agents": agents,
             "conversation": conversation_items,
             "summary": {
                 "total_items": len(conversation_items),

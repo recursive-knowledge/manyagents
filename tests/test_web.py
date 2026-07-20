@@ -788,6 +788,45 @@ async def test_session_summary_404s_unknown_session(fake_bank: FakeBank) -> None
     assert r.status_code == 404
 
 
+async def test_session_summary_omits_quarantined_raw_body_for_public(fake_bank: FakeBank) -> None:
+    """A retro-quarantined raw packet stays visible+flagged in the summary, but
+    its body/events/mined_conversation are pulled from the public surface — the
+    same gate every other raw path has. Quarantine is the moderation lever on
+    the open-write corpus; a leak recovered by quarantine must not still surface
+    here. Trusted/admin auditing still reads it."""
+    import json as _json
+
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_raw("S1/q1", created_at="2026-05-19T00:00:01+00:00", quarantined=True))
+    await fake_bank.put_trace("S1/q1", _envelope([{"ts": 0.0, "kind": "user", "text": "LEAK"}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:  # public surface
+        data = (await c.get("/api/session/S1/summary")).json()
+    [item] = data["conversation"]
+    assert item["type"] == "raw" and item["quarantined"] is True  # visible + flagged
+    assert "events" not in item and "trace_metadata" not in item and "mined_conversation" not in item
+    assert "LEAK" not in _json.dumps(data)  # body never reaches the public surface
+
+    async with _client(fake_bank, identity="trusted") as c:  # auditing path
+        data = (await c.get("/api/session/S1/summary")).json()
+    [item] = data["conversation"]
+    assert item.get("events") and item["events"][0]["text"] == "LEAK"
+
+
+async def test_reuse_signal_paginates(fake_bank: FakeBank) -> None:
+    """/api/reuse was unbounded (a no-goal query returned the whole corpus);
+    it now paginates like every other listing route."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_post("S1/p1", goal="g", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_post("S1/p2", goal="g", created_at="2026-05-19T00:00:02+00:00"))
+    async with _client(fake_bank) as c:
+        page1 = (await c.get("/api/reuse", params={"goal": "g", "limit": 1})).json()
+        assert len(page1["reuse"]) == 1 and page1["next_cursor"]
+        page2 = (await c.get("/api/reuse", params={"goal": "g", "limit": 1, "cursor": page1["next_cursor"]})).json()
+    assert len(page2["reuse"]) == 1
+    assert page2["reuse"][0]["packet_id"] != page1["reuse"][0]["packet_id"]
+
+
 # --------------------------------------------------------------------------- #
 # RLS DB-enforced pairing (gated): the read-only key cannot write at the DB,
 # even when a handler attempts it (the datasmith lesson, paired with manyagent.bank).
