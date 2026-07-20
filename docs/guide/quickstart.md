@@ -27,5 +27,22 @@ manyagent end                                  # end the session (optional ★ p
 prompts deny-by-default (no inject, unrated) while the open-ended loop keeps
 running.
 
+## Open corpus & privacy
+
+Session traces are scrubbed for secrets, then stored in a **shared,
+public-by-default Knowledge Bank** — anyone can read them. Writes are open:
+contributed knowledge is public and reusable by others.
+
+- The scrubber is best-effort. Review sensitive sessions before contributing;
+  secrets in unusual formats may not be caught.
+- To opt out of public raw traces, set `MANYAGENT_WEB_PUBLIC_RAW=0` before
+  running `ma dev init` (or add it to `~/.manyagent/env` afterwards).
+- Quarantine is available as a takedown lever: a quarantined packet is visible
+  but flagged and excluded from the reuse / inject affordance.
+
+`ma dev init` prints this notice and asks you to confirm before writing any
+configuration. Under `MANYAGENT_NONINTERACTIVE` the notice is still printed but
+the confirm tap is skipped.
+
 See [Curation](curation.md) for what `/cross-distill` produces and
 [Viewer](viewer.md) for the read-only window over the corpus.

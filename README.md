@@ -198,6 +198,7 @@ This is the fine print. It covers what is guaranteed, and the one thing that is 
 * **Cross-session transfer flows through `/cross-distill` and `/inject`.** It does not flow through `/discuss`, whose retrieval is session-local.
 * **No carry-forward.** A distill is never an input to a later distill. A poisoned bundle cannot launder itself into the corpus.
 * **The viewer never leaks raw bodies.** The anonymous read API cannot return a raw trace body even with `?include=raw`. Raw bodies sit outside the anonymous grant at the database, in `manyagent.bank` migration `00004`.
+* **Open corpus by default.** Session traces are scrubbed for secrets and stored in a shared, public-by-default Knowledge Bank — anyone can read them, and contributions are public and reusable. The scrubber is best-effort; review sensitive sessions before contributing. To opt out of public raw traces, set `MANYAGENT_WEB_PUBLIC_RAW=0`. Quarantine is available as a takedown lever. `ma dev init` prints this notice and asks for confirmation before writing any configuration.
 * **The one intentional sharp edge.** Version 1 ships no automated `poison_check` heuristic. It sits behind three solid layers. Every cluster call passes `include_quarantined=False`. There is no carry-forward. The `/inject` step has a human preview gate. The seam for a future heuristic is `manyagent.distill` calling `bank.quarantine(...)`.
 
 ## Install and configure
