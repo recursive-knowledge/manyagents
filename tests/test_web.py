@@ -448,6 +448,29 @@ async def test_cast_404s_for_missing_nonraw_or_bodyless(fake_bank: FakeBank) -> 
         assert (await c.get("/api/cast/S1/r2")).status_code == 404  # no stored body
 
 
+async def test_gated_trace_body_rejects_non_str_body(fake_bank: FakeBank) -> None:
+    """_gated_trace_body must return 422 when the stored body is not a str
+    (e.g. Supabase JSONB deserialization returned a dict) so that the
+    tuple[str, str] return type is actually upheld and json.loads never
+    receives a dict (which would raise TypeError eaten as a 422 anyway,
+    but now with a clear error message instead of a Pydantic internal).
+    """
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    # Inject a non-str body directly into the FakeBank traces store.
+    fake_bank._traces["S1/r1"] = {
+        "packet_id": "S1/r1",
+        "body": {"malformed": "dict, not a str"},  # type: ignore[dict-item]
+        "scrub_version": "v1",
+        "complete": True,
+    }
+
+    async with _client(fake_bank, identity="trusted") as c:
+        r = await c.get("/api/cast/S1/r1")
+    assert r.status_code == 422
+    assert "not a string" in r.json()["detail"]
+
+
 async def test_cast_422_on_non_envelope_body(fake_bank: FakeBank) -> None:
     """Every malformed-body shape maps to 422, never a 500: bad JSON, a
     non-object document, events as a non-list, events holding non-dicts."""

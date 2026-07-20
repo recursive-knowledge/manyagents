@@ -36,8 +36,10 @@ def test_type_validator_accepts_taxonomy(t: str) -> None:
 
 
 def test_type_validator_rejects_other() -> None:
-    with pytest.raises(ValueError, match="bad packet type"):
-        Packet(id="S/x", type="self-distill", agent_id=None)
+    # Pydantic now enforces the Literal at field-parse time (literal_error);
+    # the message no longer includes "bad packet type" from the old @field_validator.
+    with pytest.raises(ValueError, match="'raw', 'post' or 'distill'"):
+        Packet(id="S/x", type="self-distill", agent_id=None)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("r", [None, 1, 3, 5])
@@ -59,10 +61,11 @@ def test_reply_requires_reply_to_and_stance() -> None:
 
 
 def test_bad_stance_and_kind_rejected() -> None:
-    with pytest.raises(ValueError, match="bad stance"):
-        Packet(id="S/r", type="post", agent_id=None, kind="reply", reply_to="S/p", stance="meh")
-    with pytest.raises(ValueError, match="bad kind"):
-        Packet(id="S/r", type="post", agent_id=None, kind="ramble")
+    # Pydantic enforces Literal fields at parse time; messages come from literal_error.
+    with pytest.raises(ValueError, match="'agree', 'disagree' or 'synthesize'"):
+        Packet(id="S/r", type="post", agent_id=None, kind="reply", reply_to="S/p", stance="meh")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="'reflection' or 'reply'"):
+        Packet(id="S/r", type="post", agent_id=None, kind="ramble")  # type: ignore[arg-type]
 
 
 def test_distill_requires_scope_and_bundle() -> None:

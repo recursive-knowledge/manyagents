@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -141,21 +141,21 @@ class _PacketFields(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     id: str  # "{session_id}/{uuid}"
-    type: str  # raw | post | distill
+    type: Literal["raw", "post", "distill"]
     agent_id: str | None  # canonical id | "online" | "curator" | None
     goal: str | None = None  # soft scope (None = ungoaled)
     created_at: datetime | None = None
     quarantined: bool = False
 
     # --- post (manyagent.forum) ---
-    kind: str | None = None  # reflection | reply
+    kind: Literal["reflection", "reply"] | None = None
     reply_to: str | None = None
-    stance: str | None = None  # agree | disagree | synthesize
+    stance: Literal["agree", "disagree", "synthesize"] | None = None
     structured: dict[str, Any] | None = None
     rating: int | None = None  # 1..5 | None (unrated valid)
 
     # --- distill (manyagent.distill curator) ---
-    scope: str | None = None  # per_goal | cross_goal
+    scope: Literal["per_goal", "cross_goal"] | None = None
     bundle: dict[str, Any] | None = None
     parents: list[str] = []
     curator: str | None = None  # local | server
