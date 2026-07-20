@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from manyagent.forum.anti_meta import POST_ANTI_META_BLOCK
+from manyagent.forum.parser import _sanitize as _sanitize_guidance
 
 _SCHEMA = (
     "Emit ONE JSON object, nothing else, with exactly these keys:\n"
@@ -103,5 +104,5 @@ def render_post_prompt(
         ]
 
     if guidance:
-        parts += ["", f"Operator guidance: {guidance}"]
+        parts += ["", f"Operator guidance: {_sanitize_guidance(guidance)}"]
     return "\n".join(parts)

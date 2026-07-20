@@ -142,3 +142,59 @@ def test_corrupt_stash_swallowed(
     (d / "S-1.json").write_text("{not json", encoding="utf-8")
     assert _hook.main(io.StringIO(_payload())) == 0  # never disturbs the host
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------------------------------- #
+# Bundle shape validation — security hardening (2026-06-22)
+# --------------------------------------------------------------------------- #
+
+
+def _write_stash(home: Path, sid: str, bundle: object) -> None:
+    d = home / "inject"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.json").write_text(
+        json.dumps({"packet_id": "curator/x", "goal": "g", "bundle": bundle}),
+        encoding="utf-8",
+    )
+
+
+def test_valid_6bucket_bundle_injects(
+    manyagent_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A well-formed bundle (subset of BUCKETS, all values are lists) is injected."""
+    monkeypatch.setenv("MANYAGENT_SESSION", "S-2")
+    _write_stash(manyagent_home, "S-2", {"confirmed_constraints": ["use rtol=1e-10"]})
+    assert _hook.main(io.StringIO(_payload())) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert "confirmed_constraints" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_bundle_with_unknown_key_is_rejected(
+    manyagent_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bundle with a key outside the 6-bucket schema must not be injected."""
+    monkeypatch.setenv("MANYAGENT_SESSION", "S-3")
+    _write_stash(manyagent_home, "S-3", {"confirmed_constraints": ["ok"], "HOSTILE": "payload"})
+    assert _hook.main(io.StringIO(_payload())) == 0
+    assert capsys.readouterr().out == ""  # no injection
+
+
+def test_bundle_with_non_list_value_is_rejected(
+    manyagent_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bundle whose bucket value is not a list must not be injected."""
+    monkeypatch.setenv("MANYAGENT_SESSION", "S-4")
+    _write_stash(manyagent_home, "S-4", {"confirmed_constraints": "not a list"})
+    assert _hook.main(io.StringIO(_payload())) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_non_dict_bundle_is_rejected(
+    manyagent_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bundle that is not a dict at all must not be injected."""
+    monkeypatch.setenv("MANYAGENT_SESSION", "S-5")
+    _write_stash(manyagent_home, "S-5", ["transferable_insights", "confirmed_constraints"])
+    assert _hook.main(io.StringIO(_payload())) == 0
+    assert capsys.readouterr().out == ""
