@@ -183,7 +183,7 @@ def test_unmerge_json_list_items_purges_edited_marked_entries(tmp_path: Path) ->
 def test_apply_plan_failure_saves_partial_manifest_for_reversal(tmp_path: Path) -> None:
     """A mid-apply failure (a user-shaped settings.json the merge can't
     parse) must not strand already-written creates with no manifest: a
-    partial manifest is saved so `manyagent uninstall` can reverse them."""
+    partial manifest is saved so `ma agent unregister` can reverse them."""
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"hooks": []}, indent=2))  # hooks is an ARRAY → TypeError
     plan = InstallPlan(
@@ -516,7 +516,7 @@ def test_consent_advisory_panel_leads_details_behind_d(tmp_path: Path, monkeypat
     assert ok is True
     first_screen = seen_at_prompt[0]
     assert "/demo" in first_screen and "do one demo thing" in first_screen
-    assert "manyagent uninstall demo" in first_screen  # the undo is advisory, up front
+    assert "ma agent unregister demo" in first_screen  # the undo is advisory, up front
     assert "SKILL.md" not in first_screen  # plumbing stays behind [d]
     assert "mcp add" not in first_screen
     assert "keys we own" not in first_screen
@@ -564,7 +564,7 @@ def test_consent_prompt_mode_re_asks_and_yes_clears_marker(tmp_path: Path, monke
 
 def test_consent_auto_yes_and_uninstall_both_clear_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Any affirmative consent supersedes an old decline — including the
-    MANYAGENT_INSTALL_SKILLS=auto fast path — and `manyagent uninstall` resets consent
+    MANYAGENT_INSTALL_SKILLS=auto fast path — and `ma agent unregister` resets consent
     state fully, so the next run is a genuine first run again."""
     oma_home = tmp_path / "oma_home"
     marker = oma_home / "installed" / "demo.declined"
@@ -651,7 +651,7 @@ def test_consent_decline_while_installed_writes_no_marker(tmp_path: Path, monkey
     )
     assert ok is False
     assert not (oma_home / "installed" / "demo.declined").exists()
-    assert any("manyagent uninstall demo" in line for line in out)
+    assert any("ma agent unregister demo" in line for line in out)
 
 
 # --------------------------------------------------------------------------- #

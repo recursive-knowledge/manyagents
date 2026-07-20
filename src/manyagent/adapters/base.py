@@ -220,7 +220,7 @@ class Adapter(ABC):
         ``manyagent.adapters.skills.<name>.install`` and return a
         :class:`manyagent._installer.Manifest` (or None if the user declined consent).
         Every filesystem write flows through ``manyagent._installer`` for transparency
-        + ``manyagent uninstall <adapter>`` reversal."""
+        + ``ma agent unregister <adapter>`` reversal."""
         return None
 
     def mine(self, ctx: MineContext) -> dict[str, Any] | None:

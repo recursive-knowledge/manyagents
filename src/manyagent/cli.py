@@ -473,7 +473,7 @@ def _init_key_value(
 
 
 async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent init`` — write the user-level env file. Defaults come from the
+    """``ma dev init`` — write the user-level env file. Defaults come from the
     deployment's published well-known document when reachable (so a re-run
     picks up rotated keys), else the currently-resolved config; flags win over
     both, and a re-run never silently drops a stored anon key / CF Access
@@ -548,7 +548,7 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
 
 
 async def _do_preflight(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent preflight`` — the env/Bank/keys validator, reachable from the
+    """``ma dev preflight`` — the env/Bank/keys validator, reachable from the
     installed binary. ``python -m manyagent.preflight`` still works in a checkout,
     but a `uv tool install` user has no usable ``python`` for the module form —
     the hints must name a command that copy-pastes for everyone."""
@@ -609,7 +609,7 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
 
 
 async def _offer_goal_continuity(session_id: str, *, bank: Bank, io: tuple[In, Out]) -> str | None:
-    """`manyagent start` without a goal argument: when the most recent other session
+    """`ma session start` without a goal argument: when the most recent other session
     carried a real goal (not the default bucket), offer to continue it (one
     allowance gate). Returns the adopted goal, or None."""
     if _noninteractive():
@@ -804,7 +804,7 @@ async def _do_run_agent(name: str, agent_args: list[str], goal: str | None, *, b
         io[1](
             ui.render(
                 Text(
-                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `manyagent status`",
+                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `ma agent list`",
                     style="yellow",
                 )
             )
@@ -1340,13 +1340,13 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
     sid_ = _resolve_sid(args.session)
     # Sensible default (2026-06-10): before the session closes, offer the
     # distillation moments instead of relying on the human remembering the
-    # verbs mid-session. One allowance gate each; never blocks `manyagent end`.
+    # verbs mid-session. One allowance gate each; never blocks `ma session end`.
     try:
         await _offer_end_distill(sid_, since=getattr(args, "since", None), bank=bank, io=io)
     except Exception as exc:
         io[1](ui.render(Text(f"manyagent: distill offer skipped ({type(exc).__name__}: {exc})", style="yellow")))
     await bank.put_session(sid_, status="ended")
-    # ★ moment: manyagent.core has no sessions.rating column, so manyagent end's ★ lands on
+    # ★ moment: manyagent.core has no sessions.rating column, so `ma session end`'s ★ lands on
     # the most recent UNRATED reflection post in the session (no-op if none) —
     # avoids an unneeded manyagent.bank migration (M8 Decision-log).
     posts = await bank.list_packets(session_id=sid_, type="post")
@@ -1378,7 +1378,7 @@ async def _offer_end_distill(sid_: str, *, since: float | None = None, bank: Ban
     cross-session ``disagree`` reply needs goal-scoped retrieve(), recorded
     there as the upgrade path).
 
-    The cross-distill moment moved to ``manyagent start`` (`_offer_cross_nudge`) —
+    The cross-distill moment moved to ``ma session start`` (`_offer_cross_nudge`) —
     a fresh bundle is useful at the START of the next session, and the
     newer-than-bundle counting there avoids immediate back-to-back re-runs.
 

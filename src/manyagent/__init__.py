@@ -24,7 +24,7 @@ def setup_environment() -> None:
     precedence:
 
     1. ``./manyagent.env`` — the project-scoped overrides (M0).
-    2. ``~/.manyagent/env`` — the user-level fallback, written by ``manyagent init``.
+    2. ``~/.manyagent/env`` — the user-level fallback, written by ``ma dev init``.
        Loaded so an MCP server launched by Claude Code / Codex / Gemini
        *outside* a project directory still finds the Bank credentials.
 
@@ -34,7 +34,7 @@ def setup_environment() -> None:
         dotenv.load_dotenv("manyagent.env")
     # expanduser on the override too (every other MANYAGENT_HOME consumer does):
     # a literal-tilde value — dotenv files and MCP-config env blocks don't
-    # shell-expand — must resolve to the same file `manyagent init` writes.
+    # shell-expand — must resolve to the same file `ma dev init` writes.
     user_home = os.path.expanduser(os.environ.get("MANYAGENT_HOME") or "~/.manyagent")
     user_env = os.path.join(user_home, "env")
     if os.path.exists(user_env):

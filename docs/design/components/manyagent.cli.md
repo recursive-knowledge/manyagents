@@ -19,10 +19,10 @@ tags:
 
 | Command | Orchestrates |
 |---|---|
-| `manyagent start [id] [--goal "..."]` | `Session.start`; `--goal` sets a soft scope (optional; agent can infer later) |
-| `manyagent register <name>` | resolve adapter (trusted key) → `Agent` row |
-| `manyagent <name> [args]` | `adapter.invoke` under the owned PTY; raw stream → `manyagent.capture` |
-| `manyagent end [--session id]` | confirm; mark `ended`; this is one natural ★-prompt moment |
+| `ma session start [--goal "..."] [--id XXXX-XXXX]` | `Session.start`; `--goal` sets a soft scope (optional; agent can infer later) |
+| `ma agent register <name>` | resolve adapter (trusted key) → `Agent` row |
+| `ma <name> [args]` | `adapter.invoke` under the owned PTY; raw stream → `manyagent.capture` |
+| `ma session end [--session id]` | confirm; mark `ended`; this is one natural ★-prompt moment |
 
 ### Slash commands
 
@@ -45,7 +45,7 @@ tags:
 
 ### ★ prompt placement — **Settled**
 
-Asked only at `/self-distill` accept-time and `manyagent end` (moments the human is already evaluating). Agent proposes; unrated is valid and common; never blocks the loop. Non-interactive mode (`MANYAGENT_NONINTERACTIVE`) → unrated + no inject (deny-by-default, Open-Q §B5).
+Asked only at `/self-distill` accept-time and `ma session end` (moments the human is already evaluating). Agent proposes; unrated is valid and common; never blocks the loop. Non-interactive mode (`MANYAGENT_NONINTERACTIVE`) → unrated + no inject (deny-by-default, Open-Q §B5).
 
 ### Curator selection — **Settled (hybrid)**
 
@@ -57,8 +57,8 @@ Asked only at `/self-distill` accept-time and `manyagent end` (moments the human
 
 ## Verification
 
-- **Unit:** parsing for all commands incl. `--goal`, `--server`, `--stance`; ★ prompt fires only at accept-time/`manyagent end` and accepts "skip" (unrated); slash sniffer unchanged; SIGINT two-stage unchanged.
-- **Integration (mock Bank, fake adapter):** Overview transcript replay — `start --goal` → `register` → `<agent>` → `/self-distill` (agent proposes a post + ★; human accepts; a reject path re-prompts and stores `preference=reject`) → `/discuss @p --stance disagree` (retrieval-before-post enforced) → `/cross-distill` (zero posts → exact `"Run /self-distill first!"`; with posts → a `distill` packet; `--server` vs default selects curator) → `/inject` (preview shown; yes writes an `injections` row; quarantined `@packet` refused) → `manyagent end` (★ prompt, skippable).
+- **Unit:** parsing for all commands incl. `--goal`, `--server`, `--stance`; ★ prompt fires only at accept-time/`ma session end` and accepts "skip" (unrated); slash sniffer unchanged; SIGINT two-stage unchanged.
+- **Integration (mock Bank, fake adapter):** Overview transcript replay — `session start --goal` → `agent register` → `<agent>` → `/self-distill` (agent proposes a post + ★; human accepts; a reject path re-prompts and stores `preference=reject`) → `/discuss @p --stance disagree` (retrieval-before-post enforced) → `/cross-distill` (zero posts → exact `"Run /self-distill first!"`; with posts → a `distill` packet; `--server` vs default selects curator) → `/inject` (preview shown; yes writes an `injections` row; quarantined `@packet` refused) → `ma session end` (★ prompt, skippable).
 
 ## Decision log
 

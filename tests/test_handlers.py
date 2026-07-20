@@ -448,7 +448,7 @@ async def test_self_distill_no_trace_no_section(fake_bank: FakeBank, monkeypatch
 
 # --------------------------------------------------------------------------- #
 # register gate: minting an agent row requires a real, runnable adapter
-# (decision 2026-06-10 — `manyagent register agent` used to persist a Bank row +
+# (decision 2026-06-10 — `ma agent register` used to persist a Bank row +
 # viewer URL for a name that resolves to nothing and isn't on PATH)
 # --------------------------------------------------------------------------- #
 

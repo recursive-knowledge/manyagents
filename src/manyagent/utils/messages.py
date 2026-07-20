@@ -68,14 +68,14 @@ POST_REJECTED_BY_DISCIPLINE = "post rejected by the discipline (not stored): {re
 POST_STORED = "stored post {post_id}"
 
 # --------------------------------------------------------------------------- #
-# ★ rating (legacy standalone prompt — `manyagent end` on an unrated reflection)
+# ★ rating (legacy standalone prompt — `ma session end` on an unrated reflection)
 # --------------------------------------------------------------------------- #
 
 RATING_HINT = "(Enter=accept, 'skip'=unrated):"
 RATING_UNRECOGNIZED = "  (unrecognized — leaving unrated)"
 
 # --------------------------------------------------------------------------- #
-# `manyagent init` — first-run setup (writes the user-level env file) + the
+# `ma dev init` — first-run setup (writes the user-level env file) + the
 # CLI-boundary failure hint (`cli._guard`)
 # --------------------------------------------------------------------------- #
 
@@ -100,7 +100,7 @@ INIT_OFFLINE_NOTE = (
 INIT_CUSTOM_BANK_NOTE = "custom Bank configured — keeping it (the published public connection was not applied)"
 
 # --------------------------------------------------------------------------- #
-# `manyagent start` — session-start offers and notes
+# `ma session start` — session-start offers and notes
 # --------------------------------------------------------------------------- #
 
 START_CONTINUE_GOAL_OFFER = "your last session worked on /{goal} — continue that goal here?"
@@ -114,7 +114,7 @@ START_QUARANTINE_NOTE = "{n} quarantined packet{n_s} under /{goal} awaiting revi
 START_CROSS_NUDGE_OFFER = "/{goal} has {n} insight{n_s} newer than its last bundle — cross-distill them now?"
 
 # --------------------------------------------------------------------------- #
-# agent exit / `manyagent end` — session-end offers
+# agent exit / `ma session end` — session-end offers
 # --------------------------------------------------------------------------- #
 
 AGENT_TRACE_READY = "view trace at {url}"
