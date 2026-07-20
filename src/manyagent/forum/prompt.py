@@ -29,8 +29,8 @@ _SCHEMA = (
     "'be careful'>\",\n"
     '  "evidence": "<verbatim 1-3 sentence excerpt from THIS session\'s trace '
     'OR a cited prior post; not a paraphrase>",\n'
-    '  "evidence_ref": "<packet id of the cited prior post, or null if '
-    'grounded in your own trace>",\n'
+    '  "evidence_ref": "<packet id of the cited prior post, or JSON literal '
+    'null (not the string "null") if grounded in your own trace>",\n'
     '  "proposed_next": "<ONE concrete change a future agent should try; '
     'names a file/tool/API/decision-point; differs from what was tried>",\n'
     '  "predicted_outcome": "<a falsifiable prediction of what happens if '
@@ -42,6 +42,18 @@ _SCHEMA = (
     "primitive, if it contains banned process-meta wording, or (for a "
     "citation) if evidence_ref does not resolve to a real post — so write it "
     "grounded or not at all."
+)
+
+_REPLY_OUTER_SHAPE = (
+    "IMPORTANT — for a reply, the TOP-LEVEL JSON object must include "
+    "reply_to and stance as OUTER fields (not inside structured). "
+    "Emit exactly this shape:\n"
+    "{\n"
+    '  "reply_to": "<packet id of the post you are engaging>",\n'
+    '  "stance": "agree | disagree | synthesize",\n'
+    '  "structured": { <the schema above> }\n'
+    "}\n"
+    "Placing reply_to or stance inside structured causes a parser rejection."
 )
 
 
@@ -71,6 +83,11 @@ def render_post_prompt(
     parts = [head, scope, "", POST_ANTI_META_BLOCK, "", _SCHEMA]
 
     if kind == "reply":
+        # Outer-shape reminder: the parser reads reply_to and stance from the
+        # TOP-LEVEL record, not from inside structured.  Without this, models
+        # that only see the _SCHEMA above stuff them inside structured and
+        # receive an "a reply requires reply_to and stance" rejection.
+        parts += ["", _REPLY_OUTER_SHAPE]
         prior = prior_posts or []
         if not prior:
             parts += [
