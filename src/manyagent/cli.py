@@ -1335,7 +1335,10 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
                     break
                 if not data:
                     break
-                os.write(sys.stdout.fileno(), data)
+                try:
+                    os.write(sys.stdout.fileno(), data)
+                except OSError:
+                    break  # downstream closed the pipe (e.g. `ma claude | head`)
                 if tee_fd is not None:
                     with contextlib.suppress(OSError):
                         os.write(tee_fd, data)
@@ -1349,7 +1352,8 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
                     break
                 if not data:
                     break
-                os.write(master_fd, data)
+                with contextlib.suppress(OSError):
+                    os.write(master_fd, data)
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSANOW, old_attrs)
         signal.signal(signal.SIGWINCH, signal.SIG_DFL)
