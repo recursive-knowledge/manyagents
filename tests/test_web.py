@@ -448,6 +448,29 @@ async def test_cast_404s_for_missing_nonraw_or_bodyless(fake_bank: FakeBank) -> 
         assert (await c.get("/api/cast/S1/r2")).status_code == 404  # no stored body
 
 
+async def test_gated_trace_body_rejects_non_str_body(fake_bank: FakeBank) -> None:
+    """_gated_trace_body must return 422 when the stored body is not a str
+    (e.g. Supabase JSONB deserialization returned a dict) so that the
+    tuple[str, str] return type is actually upheld and json.loads never
+    receives a dict (which would raise TypeError eaten as a 422 anyway,
+    but now with a clear error message instead of a Pydantic internal).
+    """
+    await fake_bank.put_session("S1")
+    await fake_bank.put_packet(_raw("S1/r1", created_at="2026-05-19T00:00:01+00:00"))
+    # Inject a non-str body directly into the FakeBank traces store.
+    fake_bank._traces["S1/r1"] = {
+        "packet_id": "S1/r1",
+        "body": {"malformed": "dict, not a str"},  # type: ignore[dict-item]
+        "scrub_version": "v1",
+        "complete": True,
+    }
+
+    async with _client(fake_bank, identity="trusted") as c:
+        r = await c.get("/api/cast/S1/r1")
+    assert r.status_code == 422
+    assert "not a string" in r.json()["detail"]
+
+
 async def test_cast_422_on_non_envelope_body(fake_bank: FakeBank) -> None:
     """Every malformed-body shape maps to 422, never a 500: bad JSON, a
     non-object document, events as a non-list, events holding non-dicts."""
@@ -788,6 +811,45 @@ async def test_session_summary_404s_unknown_session(fake_bank: FakeBank) -> None
     assert r.status_code == 404
 
 
+async def test_session_summary_omits_quarantined_raw_body_for_public(fake_bank: FakeBank) -> None:
+    """A retro-quarantined raw packet stays visible+flagged in the summary, but
+    its body/events/mined_conversation are pulled from the public surface — the
+    same gate every other raw path has. Quarantine is the moderation lever on
+    the open-write corpus; a leak recovered by quarantine must not still surface
+    here. Trusted/admin auditing still reads it."""
+    import json as _json
+
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_raw("S1/q1", created_at="2026-05-19T00:00:01+00:00", quarantined=True))
+    await fake_bank.put_trace("S1/q1", _envelope([{"ts": 0.0, "kind": "user", "text": "LEAK"}]), scrub_version="v1")
+
+    async with _client(fake_bank) as c:  # public surface
+        data = (await c.get("/api/session/S1/summary")).json()
+    [item] = data["conversation"]
+    assert item["type"] == "raw" and item["quarantined"] is True  # visible + flagged
+    assert "events" not in item and "trace_metadata" not in item and "mined_conversation" not in item
+    assert "LEAK" not in _json.dumps(data)  # body never reaches the public surface
+
+    async with _client(fake_bank, identity="trusted") as c:  # auditing path
+        data = (await c.get("/api/session/S1/summary")).json()
+    [item] = data["conversation"]
+    assert item.get("events") and item["events"][0]["text"] == "LEAK"
+
+
+async def test_reuse_signal_paginates(fake_bank: FakeBank) -> None:
+    """/api/reuse was unbounded (a no-goal query returned the whole corpus);
+    it now paginates like every other listing route."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_post("S1/p1", goal="g", created_at="2026-05-19T00:00:01+00:00"))
+    await fake_bank.put_packet(_post("S1/p2", goal="g", created_at="2026-05-19T00:00:02+00:00"))
+    async with _client(fake_bank) as c:
+        page1 = (await c.get("/api/reuse", params={"goal": "g", "limit": 1})).json()
+        assert len(page1["reuse"]) == 1 and page1["next_cursor"]
+        page2 = (await c.get("/api/reuse", params={"goal": "g", "limit": 1, "cursor": page1["next_cursor"]})).json()
+    assert len(page2["reuse"]) == 1
+    assert page2["reuse"][0]["packet_id"] != page1["reuse"][0]["packet_id"]
+
+
 # --------------------------------------------------------------------------- #
 # RLS DB-enforced pairing (gated): the read-only key cannot write at the DB,
 # even when a handler attempts it (the datasmith lesson, paired with manyagent.bank).
@@ -1002,3 +1064,34 @@ async def test_goal_view_empty_board_is_200(fake_bank: FakeBank) -> None:
     assert data["packets"] == [] and data["digests"] == []
     assert data["facets"] == {"threads": 0, "digests": 0, "agents": 0}
     assert data["next_cursor"] is None
+
+
+# --------------------------------------------------------------------------- #
+# /SKILL.md — the zero-config self-install skill (manyagent.web.skill)
+# --------------------------------------------------------------------------- #
+
+
+async def test_skill_md_served_as_markdown() -> None:
+    async with _client(FakeBank()) as c:
+        r = await c.get("/SKILL.md")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/markdown")
+    body = r.text
+    # It tells an agent how to register the zero-config MCP and contribute.
+    assert "manyagent._mcp" in body
+    assert "self_distill_draft" in body and "commit_post" in body and "list_goals" in body
+    assert "claude mcp add" in body  # at least one concrete host recipe
+    # No key / no install is the whole point — it must not demand a trusted key.
+    assert "MANYAGENT_BANK_TRUSTED_KEY" not in body
+
+
+async def test_skill_alias_matches_and_is_bank_independent() -> None:
+    # /skill is an alias; the route touches no Bank (a raising bank still serves).
+    class _Boom(FakeBank):
+        async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+            raise AssertionError("skill route must not touch the Bank")
+
+    async with _client(_Boom()) as c:
+        a = await c.get("/skill")
+        b = await c.get("/SKILL.md")
+    assert a.status_code == 200 and a.text == b.text

@@ -479,8 +479,11 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     both, and a re-run never silently drops a stored anon key / CF Access
     pair. The URL and trusted key additionally prompt interactively. Only
     non-empty values are written; the rendered file is parse-back-verified
-    through dotenv before it lands. Overwriting an existing file sits behind
-    one allowance gate (``d`` shows the file it would replace, credentials
+    through dotenv before it lands. An open-corpus disclosure is always
+    printed; the interactive confirm tap is skipped under
+    ``MANYAGENT_NONINTERACTIVE`` (automation must not be blocked, but the
+    disclosure is still shown). Overwriting an existing file sits behind one
+    allowance gate (``d`` shows the file it would replace, credentials
     masked; deny-by-default under ``MANYAGENT_NONINTERACTIVE``, Open-Q §B5)."""
     noninteractive = _noninteractive()
     resolved_url = config.resolve("MANYAGENT_BANK_URL", config.MANYAGENT_BANK_URL)
@@ -521,6 +524,18 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     for name, value in pairs:
         if value and parsed.get(name) != value:
             raise SystemExit(f"{name} value does not survive the env-file format — remove special characters")
+    # Open-corpus disclosure (decision #3): the user must be told, at setup time,
+    # that traces are stored in a shared public-by-default Bank. Always printed.
+    # Under MANYAGENT_NONINTERACTIVE: print the disclosure but skip the confirm tap
+    # (don't block automation).
+    io[1](ui.render(Text(messages.INIT_DISCLOSURE, style="dim")))
+    if not noninteractive and not ask_allow(
+        messages.INIT_DISCLOSURE_CONFIRM,
+        input_fn=io[0],
+        output_fn=io[1],
+        noninteractive=False,
+    ):
+        return 1
     path = _user_env_path()
     shown = ui.tilde(path)
     if path.is_file() and not ask_allow(
@@ -544,6 +559,24 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
     io[1](ui.render(Text(messages.INIT_WRITTEN_NOTE.format(path=shown), style="green")))
     if not key:
         io[1](ui.render(Text(messages.INIT_NO_KEY_NOTE.format(path=shown), style="yellow")))
+    return 0
+
+
+async def _do_quarantine(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma dev quarantine <packet_id> --reason R`` — flag a packet as quarantined.
+
+    The Bank already exposes ``quarantine()`` (base.py, fake.py); this verb is
+    the operator-facing write surface. Identity: ``trusted`` (authenticated) —
+    migration 00004 grants UPDATE on packets to authenticated, which is what
+    quarantine writes (sets ``quarantined=True`` + metadata). The ``admin``
+    (service_role) identity bypasses RLS and is reserved for DB-level ops;
+    moderation by an operator is an authenticated write, not a service-role op.
+    """
+    try:
+        await bank.quarantine(args.packet_id, args.reason, auditor_version=args.auditor_version)
+    except Exception as exc:
+        raise SystemExit(f"quarantine failed for {args.packet_id!r}: {exc}") from exc
+    io[1](f"quarantined {args.packet_id!r}  reason={args.reason!r}")
     return 0
 
 
@@ -1302,7 +1335,10 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
                     break
                 if not data:
                     break
-                os.write(sys.stdout.fileno(), data)
+                try:
+                    os.write(sys.stdout.fileno(), data)
+                except OSError:
+                    break  # downstream closed the pipe (e.g. `ma claude | head`)
                 if tee_fd is not None:
                     with contextlib.suppress(OSError):
                         os.write(tee_fd, data)
@@ -1316,7 +1352,8 @@ def _pty_spawn(argv: list[str], *, tee: Path | None = None) -> int:  # noqa: C90
                     break
                 if not data:
                     break
-                os.write(master_fd, data)
+                with contextlib.suppress(OSError):
+                    os.write(master_fd, data)
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSANOW, old_attrs)
         signal.signal(signal.SIGWINCH, signal.SIG_DFL)
@@ -1361,6 +1398,12 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
             io[1](
                 ui.render(Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow")))
             )
+    # 00013 per-injection "did this help?" tap (capture-only — does NOT feed
+    # reuse_score, the deferred formal eval). Best-effort: never break `manyagent end`.
+    try:
+        await _offer_helpful_tap(sid_, bank=bank, io=io)
+    except Exception as exc:
+        io[1](ui.render(Text(f"manyagent: helpfulness tap skipped ({type(exc).__name__}: {exc})", style="yellow")))
     _clear_active(sid_)
     _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
     io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
@@ -1405,6 +1448,28 @@ async def _offer_end_distill(sid_: str, *, since: float | None = None, bank: Ban
         adapter = str(agents[-1].get("adapter") or "")
         if adapter:
             await do_self_distill(adapter=adapter, guidance=guidance, session=sid_, since=since, bank=bank, io=io)
+
+
+async def _offer_helpful_tap(sid_: str, *, bank: Bank, io: tuple[In, Out]) -> None:
+    """Per-injection "did this help?" tap (00013; capture-only).
+
+    If this session had any injections, ask the human once whether the injected
+    knowledge helped and stamp the answer onto every one of the session's
+    injection rows (MVP — a single tap applied to all; per-injection granularity
+    is satisfied because each row is updated). Capture-only: ``reuse_score`` is
+    deliberately UNCHANGED pending the deferred formal eval
+    (reviews/2026-06-22-1920/adoption-reuse.md).
+
+    Silent no-op in ``MANYAGENT_NONINTERACTIVE`` — unattended runs never block on a
+    prompt (deny-by-default, Open-Q §B5)."""
+    if _noninteractive():
+        return
+    injections = await bank.list_injections(target_session_id=sid_)
+    if not injections:
+        return
+    helpful = ask_yn(messages.END_INJECT_HELPFUL_PROMPT, input_fn=io[0], output_fn=io[1], noninteractive=False)
+    for inj in injections:
+        await bank.mark_injection_helpful(str(inj["packet_id"]), sid_, helpful)
 
 
 def _noninteractive() -> bool:
@@ -1604,6 +1669,10 @@ def _build_parser() -> argparse.ArgumentParser:
     i.add_argument("--cf-access-client-id")
     i.add_argument("--cf-access-client-secret")
     dev_sub.add_parser("preflight", help="validate env / Bank reachability / keys")
+    q = dev_sub.add_parser("quarantine", help="flag a packet as quarantined (moderation)")
+    q.add_argument("packet_id", help="packet id to quarantine (e.g. <session>/<uuid>)")
+    q.add_argument("--reason", required=True, help="human-readable moderation reason")
+    q.add_argument("--auditor-version", help="optional auditor/classifier version tag")
 
     return p
 
@@ -1613,7 +1682,7 @@ def _build_parser() -> argparse.ArgumentParser:
 _DISPATCH: dict[str, dict[str, Callable[..., Coroutine[Any, Any, int]]]] = {
     "agent": {"register": _do_agent_register, "unregister": _do_agent_unregister, "list": _do_agent_list},
     "session": {"start": _do_start, "end": _do_end, "list": _do_session_list},
-    "dev": {"init": _do_init, "preflight": _do_preflight},
+    "dev": {"init": _do_init, "preflight": _do_preflight, "quarantine": _do_quarantine},
 }
 
 
