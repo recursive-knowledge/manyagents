@@ -32,10 +32,12 @@ _log = logging.getLogger(__name__)
 # them lazily inside handlers to avoid circular import at module load.
 
 
-async def parse_post_safely(record: dict[str, Any], *, bank: Bank) -> tuple[bool, dict[str, Any] | str]:
+async def parse_post_safely(
+    record: dict[str, Any], *, bank: Bank, trace_context: str | None = None
+) -> tuple[bool, dict[str, Any] | str]:
     from manyagent.forum import parse_post
 
-    return await parse_post(record, bank=bank)
+    return await parse_post(record, bank=bank, trace_context=trace_context)
 
 
 async def _agent_json(adapter: Any, prompt: str) -> Any:
@@ -271,6 +273,7 @@ async def _emit_post(
     bank: Bank,
     io: tuple[Any, Any],
     ask_star: bool,
+    trace_context: str | None = None,
 ) -> int:
     """Shared single-gate commit flow for a ``reflection``/``reply`` post:
     one allowance prompt carries both the commit decision and the ★ (user
@@ -292,7 +295,7 @@ async def _emit_post(
         record["reply_to"] = reply_to
         record["stance"] = stance
 
-    ok, res = await parse_post_safely(record, bank=bank)
+    ok, res = await parse_post_safely(record, bank=bank, trace_context=trace_context)
     if not ok or not isinstance(res, dict):  # narrows res → dict for the rest
         io[1](messages.POST_REJECTED_BY_DISCIPLINE.format(reason=res))
         return 1  # caller re-prompts (C1: nothing persisted)
@@ -370,6 +373,7 @@ async def do_self_distill(
         bank=bank,
         io=io,
         ask_star=True,
+        trace_context=trace_ctx,
     )
 
 
@@ -417,6 +421,7 @@ async def do_discuss(
         bank=bank,
         io=io,
         ask_star=False,
+        trace_context=trace_ctx,
     )
 
 

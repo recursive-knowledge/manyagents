@@ -291,9 +291,9 @@ def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
     """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
-    exactly the non-empty values, 0600, no prompts (Scripted is empty)."""
+    exactly the non-empty values, 0600. One Enter accepts the disclosure confirm."""
     _clear_bank_env(monkeypatch)
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "JWT"), bank=fake_bank, io=s.io()
     )
@@ -316,7 +316,7 @@ async def test_init_carries_forward_resolved_anon_and_cf(fake_bank: FakeBank, mo
     monkeypatch.setenv("MANYAGENT_BANK_ANON_KEY", "ANON-1")
     monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_ID", "CF-ID")
     monkeypatch.setenv("MANYAGENT_BANK_CF_ACCESS_CLIENT_SECRET", "CF-SECRET")
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K2"), bank=fake_bank, io=s.io()
     )
@@ -336,14 +336,15 @@ async def test_init_values_round_trip_through_dotenv(fake_bank: FakeBank, monkey
 
     _clear_bank_env(monkeypatch)
     tricky = 'pa ss"word # not-a-comment'
-    s = Scripted()
+    s = Scripted("")  # disclosure confirm tap
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", tricky), bank=fake_bank, io=s.io()
     )
     assert rc == 0
     parsed = dotenv.dotenv_values(cli._user_env_path())
     assert parsed["MANYAGENT_BANK_TRUSTED_KEY"] == tricky
-    # A newline cannot be represented losslessly — refused, nothing written.
+    # A newline cannot be represented losslessly — refused, nothing written
+    # (the newline check fires before the disclosure prompt, so no extra tap).
     cli._user_env_path().unlink()
     with pytest.raises(SystemExit, match="newline"):
         await cli._do_init(
@@ -357,7 +358,7 @@ async def test_init_key_prompt_strips_pasted_assignment(fake_bank: FakeBank, mon
     must store the key, not a `NAME=`-prefixed wrong value."""
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
-    s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT")  # URL prompt, key prompt
+    s = Scripted("", "MANYAGENT_BANK_TRUSTED_KEY=eyJWT", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert "MANYAGENT_BANK_TRUSTED_KEY=eyJWT\n" in cli._user_env_path().read_text(encoding="utf-8")
@@ -371,7 +372,7 @@ async def test_init_overwrite_detail_masks_credentials(fake_bank: FakeBank, monk
     p = cli._user_env_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("MANYAGENT_BANK_URL=http://old.example\nMANYAGENT_BANK_TRUSTED_KEY=SUPERSECRETJWT\n", encoding="utf-8")
-    s = Scripted("d", "n")  # inspect, then decline
+    s = Scripted("", "d", "n")  # disclosure confirm, then inspect overwrite, then decline
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
@@ -388,7 +389,7 @@ async def test_init_prompts_default_to_resolved_config(fake_bank: FakeBank, monk
     the branch is deterministic in CI and a configured dev shell alike."""
     _clear_bank_env(monkeypatch)
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
-    s = Scripted("", "")  # URL prompt, key prompt
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -407,7 +408,7 @@ async def test_init_applies_published_connection(fake_bank: FakeBank, monkeypatc
     monkeypatch.delenv("MANYAGENT_BANK_TRUSTED_KEY", raising=False)
     doc = {"bank_url": "https://db-rotated.example", "anon_key": "NEW-ANON", "trusted_key": "NEW-WRITE"}
     monkeypatch.setattr(cli, "_fetch_published_config", lambda: doc)
-    s = Scripted("", "")  # Enter at both prompts accepts the published values
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -427,7 +428,7 @@ async def test_init_never_fetches_for_custom_bank(fake_bank: FakeBank, monkeypat
         raise AssertionError("must not fetch the published config for a custom Bank")
 
     monkeypatch.setattr(cli, "_fetch_published_config", _boom)
-    s = Scripted("", "")
+    s = Scripted("", "", "")  # URL prompt, key prompt, disclosure confirm
     rc = await cli._do_init(_args("dev", "init"), bank=fake_bank, io=s.io())
     assert rc == 0
     text = cli._user_env_path().read_text(encoding="utf-8")
@@ -439,7 +440,7 @@ async def test_init_overwrite_gate_declined_keeps_file(fake_bank: FakeBank) -> N
     p = cli._user_env_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("MANYAGENT_BANK_URL=http://keep.me\n", encoding="utf-8")
-    s = Scripted("n")  # the single overwrite allowance gate
+    s = Scripted("", "n")  # disclosure confirm, then decline the overwrite gate
     rc = await cli._do_init(
         _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
     )
@@ -459,6 +460,53 @@ async def test_init_noninteractive_never_overwrites(fake_bank: FakeBank, monkeyp
     rc = await cli._do_init(_args("dev", "init", "--bank-url", "https://other.example"), bank=fake_bank, io=s.io())
     assert rc == 1  # overwrite denied
     assert "db.example" in cli._user_env_path().read_text(encoding="utf-8")
+
+
+async def test_init_disclosure_printed_and_confirmed_interactively(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The open-corpus disclosure is always printed before writing the env file.
+    Interactive path: the user must accept the confirm tap to proceed."""
+    _clear_bank_env(monkeypatch)
+    s = Scripted("")  # Enter at the disclosure confirm tap
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0
+    # The disclosure text appeared in the output.
+    shown = "\n".join(s.out)
+    assert "public" in shown and "scrubbed" in shown
+    assert "MANYAGENT_WEB_PUBLIC_RAW" in shown
+
+
+async def test_init_disclosure_declined_aborts_write(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declining the disclosure confirm tap (n) returns rc=1 without writing the
+    env file."""
+    _clear_bank_env(monkeypatch)
+    s = Scripted("n")  # decline the disclosure confirm
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 1
+    assert not cli._user_env_path().exists()
+    # The disclosure itself was still printed.
+    assert any("public" in line for line in s.out)
+
+
+async def test_init_disclosure_shown_but_no_confirm_under_noninteractive(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under MANYAGENT_NONINTERACTIVE the disclosure is printed but no confirm
+    tap is issued — automation must not be blocked."""
+    _clear_bank_env(monkeypatch)
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    s = Scripted()  # zero prompts: any pop would raise
+    rc = await cli._do_init(
+        _args("dev", "init", "--bank-url", "https://db.example", "--trusted-key", "K"), bank=fake_bank, io=s.io()
+    )
+    assert rc == 0 and cli._user_env_path().is_file()
+    # Disclosure was still emitted.
+    assert any("public" in line for line in s.out)
 
 
 # --------------------------------------------------------------------------- #
@@ -604,6 +652,73 @@ async def test_end_star_rates_last_unrated_reflection(fake_bank: FakeBank) -> No
 
 
 # --------------------------------------------------------------------------- #
+# manyagent end — per-injection "did this help?" tap (00012; capture-only)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_injected_session(fake_bank: FakeBank) -> None:
+    """A session that already has a rated reflection (so the end-distill offer is a
+    no-op) AND an injection from another packet (so the helpful tap fires)."""
+    await fake_bank.put_session("SRC", goal="g")
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet({"id": "SRC/p", "session_id": "SRC", "type": "post"})
+    await fake_bank.put_packet({
+        "id": "S1/r1",
+        "session_id": "S1",
+        "type": "post",
+        "kind": "reflection",
+        "goal": "g",
+        "structured": dict(_GOOD),
+        "rating": 4,  # already rated → ★ prompt is a no-op too
+    })
+    await fake_bank.record_injection("SRC/p", "S1")
+
+
+async def test_end_records_helpful_tap_when_injections_exist(fake_bank: FakeBank) -> None:
+    await _seed_injected_session(fake_bank)
+    s = Scripted("y")  # the only interactive prompt left is the helpful tap
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is True for r in rows)
+
+
+async def test_end_records_not_helpful_on_no(fake_bank: FakeBank) -> None:
+    await _seed_injected_session(fake_bank)
+    s = Scripted("n")
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is False for r in rows)
+
+
+async def test_end_skips_helpful_tap_when_noninteractive(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _seed_injected_session(fake_bank)
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=Scripted().io())
+    assert rc == 0
+    rows = await fake_bank.list_injections(target_session_id="S1")
+    assert rows and all(r["helpful"] is None for r in rows)  # tap skipped, row untouched
+
+
+async def test_end_no_tap_without_injections(fake_bank: FakeBank) -> None:
+    """No injections in the session → no helpful prompt is consumed."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet({
+        "id": "S1/r1",
+        "session_id": "S1",
+        "type": "post",
+        "kind": "reflection",
+        "goal": "g",
+        "structured": dict(_GOOD),
+        "rating": 4,
+    })
+    s = Scripted()  # empty: any prompt would IndexError
+    rc = await cli._do_end(_args("session", "end", "--session", "S1"), bank=fake_bank, io=s.io())
+    assert rc == 0
+
+
+# --------------------------------------------------------------------------- #
 # manyagent <name> — PTY spawn (stdlib call monkeypatched) + skill install + capture
 # --------------------------------------------------------------------------- #
 
@@ -666,6 +781,47 @@ def test_pty_spawn_non_tty_tees_instead_of_exec_replacing(tmp_path: Any, monkeyp
     assert sum(int(n) for _t, n in reads) == len(data)
     offsets = [float(t) for t, _n in reads]
     assert offsets == sorted(offsets)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="_pipe_spawn uses select() which is POSIX-only",
+)
+def test_pty_spawn_broken_pipe_does_not_escape(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: `os.write(sys.stdout.fileno(), data)` in the PTY bridge pump
+    was unguarded — a downstream pipe close (e.g. `ma claude | head`) raised
+    BrokenPipeError out of the loop and crashed the bridge.  The fix wraps the
+    stdout write in try/except OSError: break (PTY path) and keeps the existing
+    contextlib.suppress(OSError) on the _pipe_spawn path.
+
+    We drive the non-TTY code path (stdin not a tty → _pipe_spawn is called),
+    monkeypatch os.write at the stdout fd to immediately raise BrokenPipeError,
+    and assert _pty_spawn returns without raising.  The tee file proves the pump
+    ran at least one iteration before breaking (capture survives the broken pipe).
+    """
+    import os as _os
+    import sys as _sys
+    import types
+
+    monkeypatch.setattr(cli.sys, "stdin", types.SimpleNamespace(isatty=lambda: False))
+
+    stdout_fd = _sys.stdout.fileno()
+    original_write = _os.write
+
+    def _failing_write(fd: int, data: bytes) -> int:
+        if fd == stdout_fd:
+            raise BrokenPipeError(32, "Broken pipe")
+        return original_write(fd, data)
+
+    monkeypatch.setattr(cli.os, "write", _failing_write)
+
+    tee = tmp_path / "tee.log"
+    code = "import sys; sys.stdout.write('x' * 4096); sys.stdout.flush(); sys.exit(0)"
+    # Must not raise — the broken-pipe OSError must be absorbed by the loop.
+    rc = cli._pty_spawn([_sys.executable, "-c", code], tee=tee)
+    assert rc == 0
+    # The tee write uses a different fd so it succeeds: capture is intact.
+    assert tee.read_bytes()  # at least one read was tee'd before the loop broke
 
 
 # --------------------------------------------------------------------------- #
@@ -1371,3 +1527,98 @@ async def test_session_start_offers_best_effort_niceties_dont_block_on_bank_erro
     goal = await cli._session_start_offers("S-NICE", "mything", bank=fake_bank, io=s.io(), allow_continuity=False)
     assert goal == "mything"  # returned correctly despite the hiccup
     assert any("skipped" in line for line in s.out)  # narrated in yellow
+
+
+# --------------------------------------------------------------------------- #
+# ma dev quarantine — operator moderation verb
+# --------------------------------------------------------------------------- #
+
+
+def test_quarantine_parser_accepts_required_flags() -> None:
+    a = _args("dev", "quarantine", "sess-1/pkt-abc", "--reason", "spam")
+    assert a.group == "dev"
+    assert a.verb == "quarantine"
+    assert a.packet_id == "sess-1/pkt-abc"
+    assert a.reason == "spam"
+    assert a.auditor_version is None
+
+
+def test_quarantine_parser_accepts_optional_auditor_version() -> None:
+    a = _args("dev", "quarantine", "sess-1/pkt-abc", "--reason", "spam", "--auditor-version", "v1.2")
+    assert a.auditor_version == "v1.2"
+
+
+@pytest.mark.asyncio
+async def test_quarantine_flags_packet_and_prints_confirmation(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S-QR1", goal="test")
+    await fake_bank.put_packet({
+        "id": "S-QR1/pkt-001",
+        "session_id": "S-QR1",
+        "type": "post",
+        "agent_id": "S-QR1/agent-001-claude",
+        "kind": "reflection",
+        "structured": dict(_GOOD),
+    })
+    s = Scripted()
+    rc = await cli._do_quarantine(
+        _args("dev", "quarantine", "S-QR1/pkt-001", "--reason", "off-topic"),
+        bank=fake_bank,
+        io=s.io(),
+    )
+    assert rc == 0
+    pkt = await fake_bank.get_packet("S-QR1/pkt-001")
+    assert pkt is not None
+    assert pkt["quarantined"] is True
+    assert pkt["quarantine_reason"] == "off-topic"
+    assert any("S-QR1/pkt-001" in line for line in s.out)
+    assert any("off-topic" in line for line in s.out)
+
+
+@pytest.mark.asyncio
+async def test_quarantine_with_auditor_version(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S-QR2", goal="test")
+    await fake_bank.put_packet({
+        "id": "S-QR2/pkt-002",
+        "session_id": "S-QR2",
+        "type": "post",
+        "agent_id": "S-QR2/agent-001-claude",
+        "kind": "reflection",
+        "structured": dict(_GOOD),
+    })
+    s = Scripted()
+    rc = await cli._do_quarantine(
+        _args("dev", "quarantine", "S-QR2/pkt-002", "--reason", "spam", "--auditor-version", "v2.0"),
+        bank=fake_bank,
+        io=s.io(),
+    )
+    assert rc == 0
+    pkt = await fake_bank.get_packet("S-QR2/pkt-002")
+    assert pkt is not None
+    assert pkt["quarantined"] is True
+    assert pkt["auditor_version"] == "v2.0"
+
+
+@pytest.mark.asyncio
+async def test_quarantine_unknown_packet_raises_system_exit(fake_bank: FakeBank) -> None:
+    """The FakeBank silently no-ops on an unknown packet_id (no error); a real
+    Bank raises on a not-found update — we surface that as a clean SystemExit."""
+
+    class FailBank(FakeBank):
+        async def quarantine(self, packet_id: str, reason: str, *, auditor_version: str | None = None) -> None:
+            raise RuntimeError(f"packet {packet_id!r} not found")
+
+    fail_bank = FailBank()
+    with pytest.raises(SystemExit) as exc_info:
+        await cli._do_quarantine(
+            _args("dev", "quarantine", "no-such/pkt", "--reason", "test"),
+            bank=fail_bank,
+            io=Scripted().io(),
+        )
+    assert "quarantine failed" in str(exc_info.value)
+    assert "no-such/pkt" in str(exc_info.value)
+
+
+def test_quarantine_in_dispatch() -> None:
+    """Quarantine is registered in _DISPATCH['dev'] and callable."""
+    assert "quarantine" in cli._DISPATCH["dev"]
+    assert cli._DISPATCH["dev"]["quarantine"] is cli._do_quarantine
