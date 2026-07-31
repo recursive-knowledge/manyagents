@@ -19,21 +19,37 @@ from dataclasses import replace
 from manyagent.capture.models import CanonicalTrace, ScrubReport, TraceEvent
 
 # Bump when a pattern is added/changed; drives the re-scrub backfill seam.
-SCRUB_VERSION = "v1"
+# v2 (2026-06-22): added github / google_api / slack / jwt provider shapes and a
+# JSON ``"KEY": "value"`` env_kv form — the corpus is now public-by-default
+# (open-corpus decision), so this pass is the primary guard, not a backstop.
+SCRUB_VERSION = "v2"
 
-# (kind, pattern, replacement). Order matters: the specific ``sk-ant-`` shape
-# is redacted before the generic ``sk-`` one so its kind label is accurate and
-# the generic pattern can never re-match the inserted ``[REDACTED:...]`` token
-# (which contains no secret-shaped prefix).
+# (kind, pattern, replacement). Order matters on two counts:
+#  - the specific ``sk-ant-`` shape is redacted before the generic ``sk-`` one,
+#    so its kind label is accurate and ``openai`` never re-labels an Anthropic key;
+#  - every replacement is a ``[REDACTED:...]`` token carrying no secret-shaped
+#    prefix, so no later pattern can re-match an already-redacted span.
+# Conservative by design: we do NOT add a bare high-entropy / 40-char-base64
+# catch-all (e.g. for an unlabelled AWS *secret* key) — it mangles legitimate
+# trace content (hashes, base64 payloads). Labelled secrets are caught via env_kv.
 _PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("anthropic", re.compile(r"sk-ant-(?:api\d\d-)?[A-Za-z0-9_-]{16,}"), "[REDACTED:anthropic]"),
     ("openai", re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"), "[REDACTED:openai]"),
+    # GitHub: classic PATs/tokens (gh[poursa]_ + 36) and fine-grained (github_pat_…).
+    ("github", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{59,})\b"), "[REDACTED:github]"),
+    # Google API keys: literal ``AIza`` + 35 url-safe chars.
+    ("google_api", re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), "[REDACTED:google_api]"),
+    # Slack tokens: xoxb / xoxa / xoxp / xoxr / xoxs.
+    ("slack", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), "[REDACTED:slack]"),
+    # Raw JWTs (``eyJ`` = base64 of ``{"``): three url-safe base64 segments.
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}"), "[REDACTED:jwt]"),
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[REDACTED:aws_access_key]"),
     (
         "bearer",
         re.compile(r"(authorization\s*:\s*bearer\s+)(\S+)", re.IGNORECASE),
         r"\g<1>[REDACTED:bearer]",
     ),
+    # env_kv, shell form: ``FOO_API_KEY=value``.
     (
         "env_kv",
         re.compile(
@@ -41,6 +57,15 @@ _PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
             re.IGNORECASE,
         ),
         r"\g<1>[REDACTED:env_kv]",
+    ),
+    # env_kv, JSON form: ``"FOO_API_KEY": "value"`` (structured tool output, jq, json.dumps).
+    (
+        "env_kv",
+        re.compile(
+            r'"([A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API)[A-Za-z0-9_]*)"[ \t]*:[ \t]*"([^"]+)"',
+            re.IGNORECASE,
+        ),
+        r'"\g<1>": "[REDACTED:env_kv]"',
     ),
 ]
 
