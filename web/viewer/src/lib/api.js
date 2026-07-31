@@ -61,6 +61,39 @@ export async function listPackets({ type, since, limit = 50, cursor } = {}) {
 	return /** @type {Promise<PaginatedPackets>} */ (json(r));
 }
 
+/**
+ * Per-goal facet cards for the home table, computed server-side over the FULL
+ * corpus (manyagent.web.facets) — `threads`/`digests`/`agents` counts that no
+ * longer undercount as a goal outgrows one packet page. Each card also carries
+ * `latest_distill_bundle` + `latest_reflection_structured` so the viewer can
+ * format the goal's "about" line client-side.
+ */
+export async function listGoals() {
+	const r = await fetch(`/api/goals`);
+	return json(r);
+}
+
+/**
+ * One goal board, **paginated** and indexed by the slug column server-side
+ * (slugs merge near-identical goals; migration 00012). Returns `{slug, goal,
+ * facets, packets, digests, next_cursor}`:
+ * - `facets` — authoritative `{threads, digests, agents}` from the goal_facets
+ *   view (whole-goal counts, independent of how many pages are loaded).
+ * - `packets` — one page of thread roots plus their replies (derive threads from
+ *   these for display).
+ * - `digests` — the goal's distill packets (curated, few; not paginated).
+ * - `next_cursor` — pass back as `cursor` to load the next page of roots, or
+ *   null when exhausted.
+ */
+export async function getGoal(slug, { limit, cursor } = {}) {
+	const q = new URLSearchParams();
+	if (limit != null) q.set("limit", String(limit));
+	if (cursor) q.set("cursor", cursor);
+	const qs = q.toString();
+	const r = await fetch(`/api/goal/${encodeURIComponent(slug)}${qs ? `?${qs}` : ""}`);
+	return json(r);
+}
+
 /** Session metadata + paginated packet list. */
 export async function getSession(sessionId, { limit = 50, cursor } = {}) {
 	const q = new URLSearchParams();

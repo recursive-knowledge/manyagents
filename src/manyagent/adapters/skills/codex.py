@@ -2,9 +2,9 @@
 
 Targets per scope:
 
-- ``user``: ``~/.codex/skills/manyagent-<verb>/SKILL.md`` (four files, invokable as
-  ``$manyagent-self-distill`` etc. — Codex reserves the ``/`` namespace for built-ins,
-  so the seamless surface is ``$prefix`` invocation, plus natural-language
+- ``user``: ``~/.codex/skills/<verb>/SKILL.md`` (four files, invokable as
+  ``$self-distill`` etc. — Codex reserves the ``/`` namespace for built-ins,
+  so the seamless surface is ``$`` invocation, plus natural-language
   auto-trigger via the skill's ``description`` field) + idempotent MERGE of
   the ``[mcp_servers.manyagent]`` block (with per-tool ``approval_mode = "prompt"``
   on ``commit_post`` and ``inject_commit``) into ``~/.codex/config.toml``.
@@ -35,13 +35,13 @@ from manyagent._installer import (
 from manyagent._skills import REGISTRY, Dialect, Skill
 from manyagent.adapters.skills import USAGE
 
-# Codex reserves the `/` namespace, so the seamless surface is `$manyagent-<verb>`
+# Codex reserves the `/` namespace, so the seamless surface is `$<verb>`
 # (plus natural-language auto-trigger via the `description` field). Tools are
 # referenced as `manyagent.<tool>`; the per-call `approval_mode='prompt'` on the
 # commit tool is the human gate. The per-verb prose lives once in manyagent._skills.
 _DIALECT = Dialect(
     tool_ref=lambda name: f"manyagent.{name}",
-    invocation=lambda slug: f"$manyagent-{slug}",
+    invocation=lambda slug: f"${slug}",
     args="the user's request",
     gate="Codex's per-tool approval prompt",
 )
@@ -49,12 +49,12 @@ _DIALECT = Dialect(
 
 def _skill_body(skill: Skill) -> str:
     """SKILL.md for Codex: frontmatter (the natural-language `description`
-    trigger + the `$manyagent-<verb>` invocation hint) + the shared
+    trigger + the `$<verb>` invocation hint) + the shared
     dialect-substituted procedure body."""
     return (
-        f"---\nname: manyagent-{skill.slug}\n"
+        f"---\nname: {skill.slug}\n"
         f"description: manyagent — {skill.description} "
-        f"Invoke as $manyagent-{skill.slug} or by natural language describing the intent.\n---\n\n"
+        f"Invoke as ${skill.slug} or by natural language describing the intent.\n---\n\n"
         f"# {_DIALECT.invocation(skill.slug)}{skill.arg_hint} — {skill.title}\n\n"
         f"{skill.body(_DIALECT)}\n"
     )
@@ -95,9 +95,9 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
         ops.append(
             FileOp(
                 kind="create",
-                path=root / "skills" / f"manyagent-{skill.slug}" / "SKILL.md",
+                path=root / "skills" / skill.slug / "SKILL.md",
                 payload=_skill_body(skill),
-                description=f"`$manyagent-{skill.slug}` skill — {skill.description}",
+                description=f"`${skill.slug}` skill — {skill.description}",
             )
         )
 
@@ -129,7 +129,7 @@ def build_plan(*, session_id: str | None, oma_home: Path | None = None, scope: s
         scope=cast("Scope", scope),
         ops=ops,
         session_id=session_id,
-        commands=[(f"$manyagent-{verb}", blurb) for verb, blurb in USAGE],
+        commands=[(f"${verb}", blurb) for verb, blurb in USAGE],
     )
 
 

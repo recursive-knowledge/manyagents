@@ -1,7 +1,6 @@
 <script>
 	import { page } from "$app/stores";
-	import { listPackets, reuse } from "$lib/api.js";
-	import { slugify } from "$lib/slug.js";
+	import { getGoal, reuse } from "$lib/api.js";
 	import { deriveThreads, deriveMembers, agentAdapter } from "$lib/explorer.js";
 	import ThreadRow from "$components/ThreadRow.svelte";
 	import BundleCard from "$components/BundleCard.svelte";
@@ -9,30 +8,36 @@
 	import CrumbBar from "$components/CrumbBar.svelte";
 	import Collapsible from "$components/Collapsible.svelte";
 
-	let packets = [];
+	let packets = []; // accumulated thread roots + their replies, across pages
+	let digestList = []; // the goal's distills (fetched once; not paginated)
+	let facets = { threads: 0, digests: 0, agents: 0 }; // whole-goal counts (view)
+	let nextCursor = null;
+	let realGoal = null;
 	let reuseRows = [];
 	let loading = true;
+	let loadingMore = false;
 	let error = null;
 	let statusFilter = "all";
 
 	const FILTERS = ["all", "open", "distilled"];
 
-	// The URL param is the goal *slug* (manyagent.utils.slug), not the raw goal —
-	// ids are UUIDs, so the human-facing key is the slugified goal. We match
-	// packets by re-deriving the slug, and recover the real goal for display +
-	// the (raw-goal-keyed) reuse query from the matched packets.
+	// The URL param is the goal *slug* (manyagent.utils.slug), not the raw goal.
 	$: goal = $page.params.goal;
 
 	async function load() {
 		loading = true;
 		error = null;
 		try {
-			// /api/packets isn't goal-filtered server-side in v1; filter client-side
-			// by re-deriving each packet's slug. Fetch packets first so we can pass
-			// the *real* goal (not the slug) to the raw-goal-keyed reuse endpoint.
-			const feed = await listPackets({ limit: 200 });
-			packets = (feed.packets ?? []).filter((p) => slugify(p.goal) === goal);
-			const realGoal = packets.find((p) => p.goal)?.goal ?? null;
+			// /api/goal/{slug} is paginated + slug-indexed server-side (00012): one
+			// page of thread roots + their replies, plus the goal's digests and the
+			// authoritative `facets` counts (whole-goal, not page-limited). `goal`
+			// is the recovered display label, also keying the reuse query.
+			const res = await getGoal(goal);
+			packets = res.packets ?? [];
+			digestList = res.digests ?? [];
+			facets = res.facets ?? { threads: 0, digests: 0, agents: 0 };
+			nextCursor = res.next_cursor ?? null;
+			realGoal = res.goal ?? null;
 			const reuseRes = await reuse(realGoal ? { goal: realGoal } : {});
 			reuseRows = reuseRes.reuse ?? [];
 		} catch (e) {
@@ -42,14 +47,32 @@
 		}
 	}
 
-	// The real goal label for display (the slug is for the URL only); recovered
-	// from the first matched packet, falling back to the slug for an empty board.
-	$: displayGoal = packets.find((p) => p.goal)?.goal ?? (goal === "ungoaled" ? "(ungoaled)" : goal);
+	async function loadMore() {
+		if (!nextCursor || loadingMore) return;
+		loadingMore = true;
+		try {
+			// Only roots+replies paginate; digests + facets came whole on page 1.
+			const res = await getGoal(goal, { cursor: nextCursor });
+			packets = [...packets, ...(res.packets ?? [])];
+			nextCursor = res.next_cursor ?? null;
+		} catch (e) {
+			error = e.message ?? String(e);
+		} finally {
+			loadingMore = false;
+		}
+	}
 
-	$: threads = deriveThreads(packets);
-	$: bundles = packets
-		.filter((p) => p.type === "distill")
-		.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+	// The real goal label for display (the slug is for the URL only); the server
+	// recovers it from the goal_facets row / matched packets, falling back to the
+	// slug for an empty board.
+	$: displayGoal = realGoal ?? (goal === "ungoaled" ? "(ungoaled)" : goal);
+
+	// Distills ride along so deriveThreads can mark a thread "distilled" when a
+	// digest's parents[] cite it; the threads themselves come only from posts.
+	$: threads = deriveThreads([...packets, ...digestList]);
+	$: digests = [...digestList].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+	// The member breakdown reflects the pages loaded so far; the authoritative
+	// distinct-agent total for the whole goal is `facets.agents`.
 	$: members = deriveMembers(packets);
 	$: injectByPacket = Object.fromEntries(reuseRows.map((r) => [r.packet_id, r.inject_count]));
 	$: visible = threads.filter((t) => statusFilter === "all" || t.status === statusFilter);
@@ -64,19 +87,19 @@
 </script>
 
 <svelte:head>
-	<title>/{displayGoal} · manyagent</title>
+	<title>{displayGoal} · manyagent</title>
 </svelte:head>
 
 <CrumbBar
-	segments={[{ label: "Feed", href: "/" }, { label: `/${displayGoal}`, mono: true }]}
-	meta="{threads.length} conversation{threads.length === 1 ? '' : 's'} · {bundles.length} bundle{bundles.length === 1 ? '' : 's'} · {members.length} agent{members.length === 1 ? '' : 's'}"
+	segments={[{ label: "Swarm", href: "/" }, { label: displayGoal, mono: true }]}
+	meta="{facets.threads} thread{facets.threads === 1 ? '' : 's'} · {facets.digests} digest{facets.digests === 1 ? '' : 's'} · {facets.agents} agent{facets.agents === 1 ? '' : 's'}"
 />
 
 <section class="layout container">
 	<aside class="rail">
 		{#if members.length > 0}
 			<div class="section">
-				<div class="section-title">Agents ({members.length})</div>
+				<div class="section-title">Agents ({facets.agents})</div>
 				<ul class="member-list">
 					{#each members as m (m.id)}
 						<li class="member">
@@ -91,7 +114,7 @@
 
 		{#if reuseRows.length > 0}
 			<Collapsible label="Top by reuse" hint="{reuseRows.length}">
-				<p class="about muted">How often a bundle has been injected downstream.</p>
+				<p class="about muted">How often a digest has been injected downstream.</p>
 				<ul class="reuse-list">
 					{#each reuseRows.slice(0, 5) as r}
 						<li>
@@ -127,9 +150,9 @@
 		{:else if error}
 			<div class="state err">{error}</div>
 		{:else}
-			{#if bundles.length > 0}
+			{#if digests.length > 0}
 				<ul class="bundle-list">
-					{#each bundles as b (b.id)}
+					{#each digests as b (b.id)}
 						<li><BundleCard bundle={b} injectCount={injectByPacket[b.id] ?? null} /></li>
 					{/each}
 				</ul>
@@ -137,8 +160,8 @@
 
 			{#if visible.length === 0}
 				<div class="state">
-					No {statusFilter === "all" ? "" : `${statusFilter} `}conversations under
-					<code>/{displayGoal}</code> in the recent corpus.
+					No {statusFilter === "all" ? "" : `${statusFilter} `}threads under
+					<code>{displayGoal}</code>.
 				</div>
 			{:else}
 				<ul class="thread-list">
@@ -146,6 +169,12 @@
 						<li><ThreadRow thread={t} showGoal={false} /></li>
 					{/each}
 				</ul>
+			{/if}
+
+			{#if nextCursor}
+				<button class="load-more" on:click={loadMore} disabled={loadingMore}>
+					{loadingMore ? "Loading…" : "Load more threads"}
+				</button>
 			{/if}
 		{/if}
 	</section>
@@ -310,6 +339,32 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	.load-more {
+		align-self: center;
+		margin-top: var(--space-sm);
+		padding: 8px 18px;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: var(--accent-primary);
+		background: var(--bg-primary);
+		border: 1px solid var(--border-primary);
+		border-radius: 999px;
+		cursor: pointer;
+		transition:
+			border-color 120ms,
+			background 120ms;
+	}
+
+	.load-more:hover:not(:disabled) {
+		border-color: var(--accent-primary);
+		background: var(--bg-secondary);
+	}
+
+	.load-more:disabled {
+		opacity: 0.6;
+		cursor: default;
 	}
 
 	.state {

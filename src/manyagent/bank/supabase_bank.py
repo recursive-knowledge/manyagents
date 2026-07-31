@@ -145,6 +145,8 @@ class SupabaseBank:
         session_id: str | None = None,
         type: str | None = None,
         goal: str | None = None,
+        goal_slug: str | None = None,
+        roots_only: bool = False,
         since: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -158,15 +160,47 @@ class SupabaseBank:
             q = q.eq("type", type)
         if goal is not None:
             q = q.eq("goal", goal)
+        if goal_slug is not None:
+            q = q.eq("goal_slug", goal_slug)
+        if roots_only:
+            q = q.is_("reply_to", "null")
         if not include_quarantined:
             q = q.eq("quarantined", False)
         if since is not None:
             q = q.gte("created_at", since)
         if cursor is not None:
-            q = q.gt("created_at", cursor.partition("|")[0])
+            cur_ts, _, cur_id = cursor.partition("|")
+            # Compound keyset: (created_at, id) > (cur_ts, cur_id)
+            # Expressed as: created_at > cur_ts OR (created_at = cur_ts AND id > cur_id)
+            q = q.or_(f"created_at.gt.{cur_ts},and(created_at.eq.{cur_ts},id.gt.{cur_id})")
         q = q.order("created_at").order("id")
         if limit is not None:
             q = q.limit(limit)
+        resp = await q.execute()
+        return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def list_replies(self, parent_ids: list[str]) -> list[dict[str, Any]]:
+        if not parent_ids:
+            return []
+        cli = await self._client()
+        resp = await (
+            cli.table("packets")
+            .select("*")
+            .eq("type", "post")
+            .in_("reply_to", parent_ids)
+            .order("created_at")
+            .order("id")
+            .execute()
+        )
+        return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+        cli = await self._client()
+        q = cli.table("goal_facets").select("*")
+        if slug is not None:
+            q = q.eq("slug", slug)
         resp = await q.execute()
         return [dict(r) for r in (resp.data or [])]
 
@@ -242,6 +276,21 @@ class SupabaseBank:
             q = q.eq("target_session_id", target_session_id)
         resp = await q.execute()
         return [dict(r) for r in (resp.data or [])]
+
+    @with_backoff()
+    async def mark_injection_helpful(
+        self, packet_id: str, target_session_id: str, helpful: bool, *, note: str | None = None
+    ) -> None:
+        # 00013 tap (capture-only): UPDATE the existing injection row on its
+        # composite PK. reuse_score is intentionally untouched (deferred eval).
+        cli = await self._client()
+        await (
+            cli.table("injections")
+            .update({"helpful": helpful, "helpful_note": note})
+            .eq("packet_id", packet_id)
+            .eq("target_session_id", target_session_id)
+            .execute()
+        )
 
     @with_backoff()
     async def reuse_score(self, packet_id: str | None = None) -> list[dict[str, Any]]:

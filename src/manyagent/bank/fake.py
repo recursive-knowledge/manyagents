@@ -16,6 +16,10 @@ import datetime
 import uuid
 from typing import Any
 
+from manyagent.bank.base import Bank
+from manyagent.utils.facets import aggregate_goals
+from manyagent.utils.slug import slugify
+
 _last_now = ""
 
 
@@ -109,6 +113,10 @@ class FakeBank:
         row.setdefault("created_at", prev.get("created_at", _now()))
         row.setdefault("quarantined", prev.get("quarantined", False))
         row.setdefault("parents", prev.get("parents", []))
+        # Auto-derive session_id from the composite id ("{sid}/{uuid}") so that
+        # list_packets(session_id=...) filters correctly even when callers omit it.
+        if "session_id" not in row:
+            row["session_id"] = str(pid).split("/")[0]
         self._packets[pid] = {**prev, **row}
         return str(pid)
 
@@ -122,6 +130,8 @@ class FakeBank:
         session_id: str | None = None,
         type: str | None = None,
         goal: str | None = None,
+        goal_slug: str | None = None,
+        roots_only: bool = False,
         since: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -134,6 +144,10 @@ class FakeBank:
             rows = [r for r in rows if r.get("type") == type]
         if goal is not None:
             rows = [r for r in rows if r.get("goal") == goal]
+        if goal_slug is not None:
+            rows = [r for r in rows if slugify(r.get("goal")) == goal_slug]
+        if roots_only:
+            rows = [r for r in rows if r.get("reply_to") is None]
         if not include_quarantined:
             rows = [r for r in rows if not r.get("quarantined", False)]
         if since is not None:
@@ -144,6 +158,19 @@ class FakeBank:
         if limit is not None:
             rows = rows[:limit]
         return rows
+
+    async def list_replies(self, parent_ids: list[str]) -> list[dict[str, Any]]:
+        parents = set(parent_ids)
+        rows = [dict(p) for p in self._packets.values() if p.get("type") == "post" and p.get("reply_to") in parents]
+        rows.sort(key=lambda r: (str(r.get("created_at", "")), r["id"]))
+        return rows
+
+    async def list_goal_facets(self, slug: str | None = None) -> list[dict[str, Any]]:
+        # Mirror the SQL goal_facets view via the shared reference aggregation.
+        cards = aggregate_goals([dict(p) for p in self._packets.values()])
+        if slug is not None:
+            cards = [c for c in cards if c["slug"] == slug]
+        return cards
 
     # --- traces ---
     async def put_trace(
@@ -188,7 +215,20 @@ class FakeBank:
                 "packet_id": packet_id,
                 "target_session_id": target_session_id,
                 "injected_at": _now(),
+                "helpful": None,  # 00013 tap; capture-only (no reuse_score effect)
+                "helpful_note": None,
             }
+
+    async def mark_injection_helpful(
+        self, packet_id: str, target_session_id: str, helpful: bool, *, note: str | None = None
+    ) -> None:
+        """Set the 00013 "did this help?" tap on one injection row. Capture-only:
+        ``reuse_score`` is deliberately UNCHANGED (the deferred formal eval). No-op
+        if the (packet_id, target_session_id) injection was never recorded."""
+        row = self._injections.get((packet_id, target_session_id))
+        if row is not None:
+            row["helpful"] = helpful
+            row["helpful_note"] = note
 
     async def list_injections(
         self, *, packet_id: str | None = None, target_session_id: str | None = None
@@ -250,3 +290,9 @@ def _split_cursor(cursor: str) -> tuple[str, str]:
 def make_cursor(row: dict[str, Any]) -> str:
     """Opaque pagination cursor: ``created_at|id`` (manyagent.web M9 reuses this)."""
     return f"{row.get('created_at', '')}|{row['id']}"
+
+
+# Module-level conformance check: FakeBank must satisfy the Bank Protocol.
+# This is checked by mypy at import time and surfaced as a type error if the
+# two drift apart (e.g. a new Bank method is added without a FakeBank impl).
+_: Bank = FakeBank()

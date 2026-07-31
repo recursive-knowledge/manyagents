@@ -93,11 +93,11 @@
 	);
 	$: status = citedBy.length > 0 ? "distilled" : "open";
 	$: isBundle = root?.type === "distill";
-	$: kindLabel = isBundle ? (root.scope ?? "bundle") : (root?.kind ?? "post");
+	$: kindLabel = isBundle ? (root.scope ?? "digest") : (root?.kind ?? "post");
 	$: crumbs = [
-		{ label: "Feed", href: "/" },
+		{ label: "Swarm", href: "/" },
 		...(root?.goal
-			? [{ label: `/${root.goal}`, href: `/g/${slugify(root.goal)}`, mono: true }]
+			? [{ label: root.goal, href: `/g/${slugify(root.goal)}`, mono: true }]
 			: []),
 		{ label: title.slice(0, 60) + (title.length > 60 ? "…" : "") }
 	];
@@ -124,10 +124,10 @@
 			{/if}
 			<div class="badges">
 				{#if root.goal}
-					<a class="goal-badge mono" href="/g/{slugify(root.goal)}">/{root.goal}</a>
+					<a class="goal-badge mono" href="/g/{slugify(root.goal)}">{root.goal}</a>
 				{/if}
 				<span class="pill {isBundle ? 'pill-distill' : isRaw ? 'pill-raw' : 'pill-post'}">
-					{isBundle ? "curator bundle" : isRaw ? "raw trace" : kindLabel}
+					{isBundle ? "curator digest" : isRaw ? "raw trace" : kindLabel}
 				</span>
 				{#if !isBundle && !isRaw}
 					<span class="status status-{status}">{status}</span>
@@ -208,7 +208,7 @@
 								d.id.split('/')[1] ?? ''
 							)}"
 						>
-							full bundle ({d.scope ?? "bundle"}) →
+							full digest ({d.scope ?? "digest"}) →
 						</a>
 					</div>
 				{/each}

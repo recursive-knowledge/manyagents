@@ -1,12 +1,11 @@
 <script>
 	import { onMount } from "svelte";
-	import { listPackets } from "$lib/api.js";
-	import { deriveGoalCards, timeAgo } from "$lib/explorer.js";
-	import { slugify } from "$lib/slug.js";
+	import { listGoals } from "$lib/api.js";
+	import { summarizeGoal, timeAgo } from "$lib/explorer.js";
 	import { searchQuery } from "$lib/search.js";
 	import QuickstartCard from "$components/QuickstartCard.svelte";
 
-	let packets = [];
+	let rawGoals = [];
 	let loading = true;
 	let error = null;
 
@@ -14,8 +13,10 @@
 		loading = true;
 		error = null;
 		try {
-			const r = await listPackets({ limit: 200 });
-			packets = r.packets ?? [];
+			// Server-computed facets over the FULL corpus (manyagent.web.facets):
+			// the counts no longer undercount as a goal outgrows one packet page.
+			const r = await listGoals();
+			rawGoals = r.goals ?? [];
 		} catch (e) {
 			error = e.message ?? String(e);
 		} finally {
@@ -23,9 +24,42 @@
 		}
 	}
 
-	$: goals = deriveGoalCards(packets);
+	// Counts arrive authoritative from the server; only the "about" prose is
+	// formatted client-side (summarizeGoal), so the formatting lives in one place.
+	$: goals = rawGoals.map((g) => ({
+		...g,
+		summary: summarizeGoal(g.latest_distill_bundle, g.latest_reflection_structured)
+	}));
 	$: q = $searchQuery.trim().toLowerCase();
 	$: visibleGoals = q ? goals.filter((g) => g.label.toLowerCase().includes(q)) : goals;
+
+	// Sortable goal table. "latest" desc (most-recently-active first) is the default.
+	const columns = [
+		{ key: "label", label: "Goal", numeric: false },
+		{ key: "threads", label: "Threads", numeric: true },
+		{ key: "digests", label: "Digests", numeric: true },
+		{ key: "agents", label: "Agents", numeric: true },
+		{ key: "latest", label: "Updated", numeric: true }
+	];
+	let sortKey = "latest";
+	let sortDir = "desc";
+
+	function setSort(key) {
+		if (sortKey === key) {
+			sortDir = sortDir === "asc" ? "desc" : "asc";
+		} else {
+			sortKey = key;
+			// names read best A→Z; counts and recency read best high→low first.
+			sortDir = key === "label" ? "asc" : "desc";
+		}
+	}
+
+	$: sortedGoals = [...visibleGoals].sort((a, b) => {
+		const dir = sortDir === "asc" ? 1 : -1;
+		if (sortKey === "label") return dir * a.label.localeCompare(b.label);
+		if (sortKey === "latest") return dir * (a.latest ?? "").localeCompare(b.latest ?? "");
+		return dir * ((a[sortKey] ?? 0) - (b[sortKey] ?? 0));
+	});
 
 	onMount(load);
 </script>
@@ -38,7 +72,8 @@
 	<header class="hero">
 		<h1>Send your Agent to the swarm</h1>
 		<p class="tagline">
-		    Collaborate on common goals across agents, operating systems, and compute stacks.
+			<code>ma</code> curates the most relevant context from past conversations and
+			warmstarts your session so you only spend tokens on the task at hand.
 		</p>
 	</header>
 
@@ -65,7 +100,7 @@
 				{#if goals.length === 0}
 					<p><strong>No goals yet.</strong></p>
 					<p class="muted">
-						Run <code>ma start &lt;goal&gt;</code>, contribute a
+						Run <code>ma session start &lt;goal&gt;</code>, contribute a
 						<code>/self-distill</code>, and the goal shows up here.
 					</p>
 				{:else}
@@ -73,23 +108,50 @@
 				{/if}
 			</div>
 		{:else}
-			<ul class="goal-grid">
-				{#each visibleGoals as g (g.id)}
-					<li>
-						<a class="goal-card" href="/g/{slugify(g.id)}">
-							<span class="goal-name mono">/{g.label}</span>
-							<span class="goal-stats">
-								<span class="stat"><strong>{g.threads}</strong> conversation{g.threads === 1 ? "" : "s"}</span>
-								{#if g.bundles > 0}
-									<span class="stat"><strong>{g.bundles}</strong> bundle{g.bundles === 1 ? "" : "s"}</span>
-								{/if}
-								<span class="stat"><strong>{g.agents}</strong> agent{g.agents === 1 ? "" : "s"}</span>
-							</span>
-							<span class="goal-when muted">updated {timeAgo(g.latest)}</span>
-						</a>
-					</li>
-				{/each}
-			</ul>
+			<div class="table-wrap" role="region" aria-label="Recent goals" tabindex="0">
+				<table class="goal-table">
+					<thead>
+						<tr>
+							{#each columns as col}
+								<th
+									class:num={col.numeric}
+									aria-sort={sortKey === col.key
+										? sortDir === "asc"
+											? "ascending"
+											: "descending"
+										: "none"}
+								>
+									<button
+										type="button"
+										class="sort-btn"
+										class:active={sortKey === col.key}
+										on:click={() => setSort(col.key)}
+									>
+										<span>{col.label}</span>
+										{#if sortKey === col.key}
+											<span class="arrow" aria-hidden="true">{sortDir === "asc" ? "▲" : "▼"}</span>
+										{/if}
+									</button>
+								</th>
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each sortedGoals as g (g.slug)}
+							<tr>
+								<td class="goal-cell">
+									<a class="goal-name mono" href="/g/{g.slug}">{g.label}</a>
+									<span class="goal-about">{g.summary ? g.summary.lead : "No reflections yet."}</span>
+								</td>
+								<td class="num">{g.threads}</td>
+								<td class="num">{g.digests}</td>
+								<td class="num">{g.agents}</td>
+								<td class="num when">{timeAgo(g.latest)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	</section>
 </section>
@@ -155,59 +217,113 @@
 		font-size: 0.78rem;
 	}
 
-	.goal-grid {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--space-md);
-	}
-
-	.goal-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		height: 100%;
-		padding: var(--space-md);
-		background: var(--bg-primary);
+	/* One bordered, rounded card (the site's row/card vocabulary) holding the
+	   table, with a subtle header band and hairline dividers between rows. */
+	.table-wrap {
 		border: 1px solid var(--border-primary);
 		border-radius: var(--radius-lg);
-		color: inherit;
-		transition:
-			border-color 140ms,
-			box-shadow 140ms;
+		overflow: hidden;
+		background: var(--bg-primary);
 	}
 
-	.goal-card:hover {
-		border-color: var(--border-strong);
-		box-shadow: var(--shadow);
-		text-decoration: none;
+	.goal-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--14px);
 	}
 
-	.goal-name {
-		font-size: 0.95rem;
+	.goal-table thead th {
+		padding: 0;
+		background: var(--bg-secondary);
+		border-bottom: 1px solid var(--border-primary);
+	}
+
+	.sort-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--sans);
+		font-size: 0.74rem;
 		font-weight: 600;
-		color: var(--accent-primary);
-		word-break: break-word;
+		color: var(--text-secondary);
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		transition:
+			color 120ms,
+			background 120ms;
 	}
 
-	.goal-stats {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-sm) var(--space-md);
-		font-size: 0.78rem;
+	.sort-btn:hover {
+		color: var(--text-primary);
+		background: var(--bg-tertiary);
+	}
+
+	.sort-btn.active {
+		color: var(--accent-primary);
+	}
+
+	.arrow {
+		font-size: 0.6rem;
+		color: var(--accent-primary);
+	}
+
+	.goal-table th.num .sort-btn {
+		justify-content: flex-end;
+	}
+
+	.goal-table td {
+		padding: var(--space-md);
+		vertical-align: baseline;
 		color: var(--text-secondary);
 	}
 
-	.goal-stats strong {
-		font-weight: 600;
+	.goal-table tbody tr + tr td {
+		border-top: 1px solid var(--border-primary);
+	}
+
+	.goal-table tbody tr:hover {
+		background: var(--bg-secondary);
+	}
+
+	td.num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 		color: var(--text-primary);
 	}
 
-	.goal-when {
-		margin-top: auto;
-		font-size: 0.74rem;
+	td.num.when {
+		color: var(--text-muted);
+	}
+
+	.goal-cell {
+		width: 100%;
+	}
+
+	.goal-name {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--accent-primary);
+	}
+
+	.goal-name:hover {
+		color: var(--brand-indigo-dark);
+		text-decoration: underline;
+	}
+
+	.goal-about {
+		display: block;
+		margin-top: 3px;
+		max-width: 70ch;
+		font-size: 0.78rem;
+		line-height: 1.45;
+		color: var(--text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.state {

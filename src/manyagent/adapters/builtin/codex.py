@@ -21,6 +21,11 @@ class CodexAdapter(_StructuredBuiltin):
     binary = "codex"
     version = "1"
 
+    # ``codex exec <task>`` takes the task description as a positional argument;
+    # it does not read the prompt from stdin (stdin is reserved for interactive
+    # I/O with the running agent).  Keep argv for this adapter.
+    _distill_via_stdin: bool = False
+
     def _distill_cmd_prefix(self) -> list[str]:
         return ["codex", "exec"]
 
@@ -32,9 +37,9 @@ class CodexAdapter(_StructuredBuiltin):
         scope: str = "user",
         dry_run: bool = False,
     ) -> object | None:
-        """Install ``$manyagent-<verb>`` skills + merge ``[mcp_servers.manyagent]`` into
+        """Install ``$<verb>`` skills + merge ``[mcp_servers.manyagent]`` into
         ``~/.codex/config.toml`` (tomlkit-preserving). Codex reserves the
-        ``/`` namespace; bare verbs surface as ``$manyagent-<verb>`` instead."""
+        ``/`` namespace; bare verbs surface as ``$<verb>`` instead."""
         from pathlib import Path
 
         from manyagent.adapters.skills.codex import install

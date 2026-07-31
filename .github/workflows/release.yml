@@ -3,8 +3,9 @@ name: Release
 # Publish to PyPI via Trusted Publishing (OIDC — no API tokens stored).
 # Fires when a GitHub Release is published. To cut a release:
 #   gh release create v0.1.0 --generate-notes
-# One-time PyPI setup (https://pypi.org/manage/account/publishing/):
-#   add a pending publisher → owner: manyagent · repo: manyagent ·
+# One-time PyPI setup (https://pypi.org/manage/account/publishing/) — on the
+# existing `manyagent` project, add a Trusted Publisher →
+#   owner: recursive-knowledge · repo: manyagents ·
 #   workflow: release.yml · environment: pypi
 # The bundled build is checked with `twine check` before the upload step.
 
@@ -16,7 +17,7 @@ jobs:
   pypi-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
-    if: github.repository == 'manyagent/manyagent'
+    if: github.repository == 'recursive-knowledge/manyagents'
     environment: pypi
     permissions:
       id-token: write # OIDC token for Trusted Publishing
@@ -25,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
 
       - name: Build sdist + wheel
         run: uv build
@@ -40,4 +41,4 @@ jobs:
         run: uv run --no-project --with twine twine check dist/*
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

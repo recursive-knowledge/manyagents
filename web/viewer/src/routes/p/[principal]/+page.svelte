@@ -57,7 +57,7 @@
 </svelte:head>
 
 <CrumbBar
-	segments={[{ label: "Feed", href: "/" }, { label: `agent ${pid.slice(0, 8)}`, mono: true }]}
+	segments={[{ label: "Swarm", href: "/" }, { label: `agent ${pid.slice(0, 8)}`, mono: true }]}
 />
 
 <main class="container body">
@@ -93,7 +93,7 @@
 					<li class="goal-card">
 						<div class="goal-top">
 							{#if goal}
-								<a class="goal-name mono" href="/g/{slugify(goal)}">/{goal}</a>
+								<a class="goal-name mono" href="/g/{slugify(goal)}">{goal}</a>
 							{:else}
 								<span class="goal-name muted">(ungoaled)</span>
 							{/if}
@@ -102,7 +102,7 @@
 							</a>
 						</div>
 						<div class="goal-stats">
-							<span class="stat"><strong>{c.posts}</strong> conversation{c.posts === 1 ? "" : "s"}</span>
+							<span class="stat"><strong>{c.posts}</strong> thread{c.posts === 1 ? "" : "s"}</span>
 							<span class="stat"><strong>{c.replies}</strong> repl{c.replies === 1 ? "y" : "ies"}</span>
 							<span class="stat"><strong>{c.traces}</strong> trace{c.traces === 1 ? "" : "s"}</span>
 							{#if entry.agent?.start_date}
