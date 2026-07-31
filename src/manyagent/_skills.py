@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from manyagent.utils.slug import slugify
+
 # --------------------------------------------------------------------------- #
 # session id resolution: MANYAGENT_SESSION env wins, else ~/.manyagent/active.
 # This dual-source lets `manyagent <name>` thread the session at PTY-spawn time AND
@@ -52,30 +54,105 @@ def _session_id() -> str:
 
 
 # --------------------------------------------------------------------------- #
+# standalone (install-free) resolution: a chat agent picks a GOAL and the server
+# maps it to a stable (principal, goal) session — no `manyagent start`, no active
+# file, no trace capture. `goal=None` on any verb falls back to `_session_id()`
+# so the installed in-agent flow is unchanged.
+# --------------------------------------------------------------------------- #
+
+# Fixed namespace for deterministic per-(principal, goal) session ids.
+_MCP_SESSION_NS = uuid.UUID("6f8a1e2c-3b4d-5e6f-8a90-1c2d3e4f5a6b")
+
+
+def _principal() -> str:
+    """The stable operator identity stamped on the MCP agent row (``principal_id``,
+    migration 00011 — the cross-goal identity linking one operator's work across
+    goals). ``MANYAGENT_PRINCIPAL`` wins (set it to share one identity across
+    machines); else a per-host id is generated once and persisted at
+    ``$MANYAGENT_HOME/principal`` so an unconfigured operator still gets a
+    *distinct, stable* principal — never a shared bucket."""
+    env = os.environ.get("MANYAGENT_PRINCIPAL", "").strip()
+    if env:
+        return env
+    home = Path(os.environ.get("MANYAGENT_HOME", str(Path.home() / ".manyagent"))).expanduser()
+    p = home / "principal"
+    try:
+        if p.is_file():
+            s = p.read_text(encoding="utf-8").strip()
+            if s:
+                return s
+        home.mkdir(parents=True, exist_ok=True)
+        pid = f"mcp-{uuid.uuid4().hex[:12]}"
+        p.write_text(pid, encoding="utf-8")
+        return pid
+    except OSError:
+        # Read-only home (sandboxed host): a stable documented last-resort id.
+        return "mcp-anon"
+
+
+def _mcp_session_id(principal: str, goal: str | None) -> str:
+    """Deterministic session id for a (principal, goal) pair. ``put_session`` is
+    idempotent, so re-deriving + re-putting is a no-op; an operator's posts under
+    a goal accumulate in this one container (the 'stable session per (principal,
+    goal)' model). Goals are matched by *slug*, so near-identical labels share a
+    session (mirrors the viewer's goal-board grouping)."""
+    return str(uuid.uuid5(_MCP_SESSION_NS, f"{principal}:{slugify(goal)}"))
+
+
+async def _resolve(goal: str | None, bank: Any, *, ensure: bool = False) -> tuple[str, str, str | None, bool]:
+    """Resolve ``(session_id, agent_id, goal, standalone)`` for a verb.
+
+    - ``goal`` given → **standalone**: a stable (principal, goal) session; no
+      install / active-file needed. ``ensure=True`` idempotently creates the
+      session + the principal-stamped ``mcp`` agent row (write verbs only).
+    - ``goal`` omitted → **legacy**: the active session from ``$MANYAGENT_SESSION``
+      / ``~/.manyagent/active`` supplies the goal (unchanged M11 in-agent flow).
+    """
+    g = goal.strip() if isinstance(goal, str) else goal
+    if g:
+        principal = _principal()
+        sid = _mcp_session_id(principal, g)
+        agent_id = f"{sid}/mcp"
+        if ensure:
+            await bank.put_session(sid, goal=g)
+            await bank.put_agent(agent_id, session_id=sid, adapter="mcp", seq=1, principal_id=principal)
+        return sid, agent_id, g, True
+    sid = _session_id()
+    session = await bank.get_session(sid)
+    return sid, f"{sid}/mcp", (session or {}).get("goal"), False
+
+
+def _goal_kw(goal: str | None, standalone: bool) -> str:
+    """The ``, goal=...`` suffix for a ``commit_via`` hint — emitted only in the
+    standalone path (a legacy host must NOT pass goal back, or it would divert
+    the write from the active session into a (principal, goal) session)."""
+    return f", goal={goal!r}" if standalone else ""
+
+
+# --------------------------------------------------------------------------- #
 # tool implementations (registered on the FastMCP app by manyagent._mcp).
 # Bodies moved verbatim from manyagent._mcp; forum/distill imports stay
 # function-local so importing this module does not eagerly load lower layers.
 # --------------------------------------------------------------------------- #
 
 
-async def self_distill_draft(guidance: str = "") -> dict[str, Any]:
-    """Provision the substrate to draft ONE reflection post for the active
-    session. **Does not persist.** Returns the goal, prior in-session posts,
-    the anti-meta rules + structured schema the host LLM must fill in, and a
-    recommended ★ (based on the conversation's apparent confidence). The host
-    LLM then shows the filled-in structured payload to the user verbatim and
-    calls `commit_post` directly — the host UI's permission prompt on that
-    call is the single accept gate.
+async def self_distill_draft(goal: str | None = None, guidance: str = "") -> dict[str, Any]:
+    """Provision the substrate to draft ONE reflection post. **Does not persist.**
+    Returns the goal, prior posts already under it, the anti-meta rules +
+    structured schema the host LLM must fill in from the live conversation, and a
+    recommended ★. The host then shows the filled payload to the user verbatim and
+    calls `commit_post` directly — the host UI's permission prompt on that call is
+    the single accept gate.
 
-    A denied post is **never persisted** because an unapproved
+    Pass ``goal`` to contribute to a chosen goal **without any manyagent install**
+    (browse goals first with `list_goals` / `get_goal`); omit it to use the active
+    installed session. A denied post is **never persisted** because an unapproved
     `commit_post` never runs (C1: manyagent.cli.md:48; manyagent.core.md:147)."""
     from manyagent.bank import get_bank
     from manyagent.forum.prompt import render_post_prompt
 
-    sid = _session_id()
     bank = get_bank()
-    session = await bank.get_session(sid)
-    goal = (session or {}).get("goal")
+    sid, _agent_id, goal, standalone = await _resolve(goal, bank)
     prior = await bank.list_packets(session_id=sid, type="post", goal=goal)
     return {
         "session": sid,
@@ -84,34 +161,30 @@ async def self_distill_draft(guidance: str = "") -> dict[str, Any]:
         "guidance": guidance,
         "prior_posts_count": len(prior),
         "instruction_for_host_llm": render_post_prompt(kind="reflection", goal=goal, guidance=guidance),
-        "commit_via": "commit_post(kind='reflection', structured={...}, rating=N)",
+        "commit_via": f"commit_post(kind='reflection', structured={{...}}, rating=N{_goal_kw(goal, standalone)})",
     }
 
 
-async def discuss_draft(stance: str, packet: str | None = None) -> dict[str, Any]:
+async def discuss_draft(stance: str, packet: str | None = None, goal: str | None = None) -> dict[str, Any]:
     """Provision the substrate to draft ONE stance reply. Runs
     retrieval-before-post (the mechanical gate `manyagent.forum` enforces). Returns
-    the ranked prior in-session posts under the current goal and the chosen
-    ``reply_to`` (the `@packet` arg if given, else the most-under-engaged
-    post). The host LLM drafts the reply, shows it to the user, then calls
-    ``commit_post(kind='reply', ..., reply_to=..., stance=...)`` directly —
-    the permission prompt on that call is the single accept gate.
+    the ranked prior posts under this goal and the chosen ``reply_to`` (the
+    `@packet` arg if given, else the most-under-engaged post). The host LLM drafts
+    the reply, shows it to the user, then calls
+    ``commit_post(kind='reply', ..., reply_to=..., stance=...)`` directly — the
+    permission prompt on that call is the single accept gate.
 
-    Refuses up-front if no in-session posts exist under this goal (retrieve
-    would be empty) — the host should call `self_distill_draft` first."""
+    Pass ``goal`` to engage a chosen goal install-free; omit it for the active
+    installed session. Refuses up-front if no prior posts exist under this goal
+    (retrieve would be empty) — the host should call `self_distill_draft` first."""
     if stance not in ("agree", "disagree", "synthesize"):
         raise ValueError(f"bad stance {stance!r}; expected agree|disagree|synthesize")
     from manyagent.bank import get_bank
     from manyagent.forum import retrieve
     from manyagent.forum.prompt import render_post_prompt
 
-    sid = _session_id()
     bank = get_bank()
-    session = await bank.get_session(sid)
-    goal = (session or {}).get("goal")
-    # agent_id for the gate: use the MCP-host pseudo-agent — one per session is
-    # fine for the in-agent flow (the wrapper-registered agent is who's driving).
-    agent_id = f"{sid}/mcp"
+    sid, agent_id, goal, standalone = await _resolve(goal, bank)
     ranked = await retrieve(sid, agent_id=agent_id, goal=goal, bank=bank)
     if not ranked:
         return {
@@ -129,7 +202,10 @@ async def discuss_draft(stance: str, packet: str | None = None) -> dict[str, Any
         "agent_id": agent_id,
         "ranked_post_ids": [str(p["id"]) for p in ranked],
         "instruction_for_host_llm": render_post_prompt(kind="reply", goal=goal, prior_posts=ranked),
-        "commit_via": (f"commit_post(kind='reply', structured={{...}}, reply_to={reply_to!r}, stance={stance!r})"),
+        "commit_via": (
+            f"commit_post(kind='reply', structured={{...}}, reply_to={reply_to!r}, "
+            f"stance={stance!r}{_goal_kw(goal, standalone)})"
+        ),
     }
 
 
@@ -139,13 +215,18 @@ async def commit_post(
     rating: int | None = None,
     reply_to: str | None = None,
     stance: str | None = None,
+    goal: str | None = None,
 ) -> dict[str, Any]:
     """Persist a structured post (reflection or reply). **This is the human
     gate**: the host agent's MCP permission prompt fires on this call — the
     user sees exactly the structured payload that will be persisted and
     approves/denies in the agent UI. ``parse_post`` runs the mechanical
     anti-meta + verbatim-evidence + retrieval-before-reply checks; a
-    parser-refused payload is NOT persisted (C1)."""
+    parser-refused payload is NOT persisted (C1).
+
+    Pass the same ``goal`` the draft echoed to write install-free to a chosen
+    goal; omit it to write to the active installed session. Only the distilled
+    claim is uploaded — never the conversation (no trace capture)."""
     from manyagent.bank import get_bank
     from manyagent.forum import parse_post
 
@@ -154,15 +235,15 @@ async def commit_post(
     if rating is not None and not (1 <= rating <= 5):
         raise ValueError(f"rating must be None or 1..5, got {rating!r}")
 
-    session_id = _session_id()
-    agent_id = f"{session_id}/mcp"
+    bank = get_bank()
+    session_id, agent_id, goal, _standalone = await _resolve(goal, bank, ensure=True)
     record: dict[str, Any] = {
         "id": f"{session_id}/{uuid.uuid4().hex[:8]}",
         "session_id": session_id,
         "type": "post",
         "agent_id": agent_id,
         "kind": kind,
-        "goal": (await (get_bank()).get_session(session_id) or {}).get("goal"),
+        "goal": goal,
         "structured": structured,
     }
     if kind == "reply":
@@ -171,7 +252,6 @@ async def commit_post(
         record["reply_to"] = reply_to
         record["stance"] = stance
 
-    bank = get_bank()
     ok, res = await parse_post(record, bank=bank)
     if not ok or not isinstance(res, dict):
         return {"ok": False, "error": f"parser refused (not stored): {res}"}
@@ -182,19 +262,20 @@ async def commit_post(
     return {"ok": True, "post_id": res["id"], "kind": kind, "rating": rating}
 
 
-async def cross_distill(server: bool = False) -> dict[str, Any]:
-    """Curate goal-scoped posts (corpus-wide across sessions) into one
-    6-bucket Insight bundle. Idempotent: same posts ⇒ same content-addressed
-    packet, no re-spend. Not human-gated — the curator is mechanical and
-    its output is itself non-destructive; the gate fires later at
-    ``inject_commit``."""
+async def cross_distill(goal: str | None = None, server: bool = False) -> dict[str, Any]:
+    """Curate goal-scoped posts (corpus-wide across ALL sessions/operators) into
+    one 6-bucket Insight bundle — this is how stored self-distillations become a
+    new cross-distilled insight. Idempotent: same posts ⇒ same content-addressed
+    packet, no re-spend. Not human-gated — the curator is mechanical and its
+    output is itself non-destructive; the gate fires later at ``inject_commit``.
+
+    Pass ``goal`` to curate a chosen goal install-free; omit it for the active
+    installed session's goal."""
     from manyagent.bank import get_bank
     from manyagent.distill import CurationError, NoPostsError, curate
 
-    sid = _session_id()
     bank = get_bank()
-    session = await bank.get_session(sid)
-    goal = (session or {}).get("goal")
+    _sid, _agent_id, goal, _standalone = await _resolve(goal, bank)
     scope = "per_goal" if goal else "cross_goal"
     mode = "server" if server else None
     try:
@@ -214,20 +295,23 @@ async def cross_distill(server: bool = False) -> dict[str, Any]:
     }
 
 
-async def inject_preview(packet: str | None = None) -> dict[str, Any]:
+async def inject_preview(packet: str | None = None, goal: str | None = None) -> dict[str, Any]:
     """Head/tail token preview of a distill bundle. **Does not persist.** The
     host LLM should call this first, show the preview in chat, then call
     ``inject_commit`` only on user assent — at which point the agent's native
-    MCP permission prompt fires (the real human gate)."""
+    MCP permission prompt fires (the real human gate).
+
+    With no ``packet``, picks the latest non-quarantined bundle under ``goal``
+    (or, in the legacy path, the corpus-wide latest)."""
     from manyagent.bank import get_bank
     from manyagent.utils import config
 
-    sid = _session_id()
     bank = get_bank()
+    sid, _agent_id, goal, _standalone = await _resolve(goal, bank)
     if packet:
         pid = packet.lstrip("@")
     else:
-        distills = await bank.list_packets(type="distill", include_quarantined=False)
+        distills = await bank.list_packets(type="distill", goal=goal, include_quarantined=False)
         if not distills:
             return {"ok": False, "error": "no distill bundle — call cross_distill first"}
         pid = str(distills[-1]["id"])
@@ -253,20 +337,21 @@ async def inject_preview(packet: str | None = None) -> dict[str, Any]:
         "target_session": sid,
         "scope": rec.get("scope"),
         "preview": preview,
-        "commit_via": f"inject_commit(packet={pid!r})",
+        "commit_via": f"inject_commit(packet={pid!r}{_goal_kw(goal, _standalone)})",
     }
 
 
-async def inject_commit(packet: str) -> dict[str, Any]:
-    """Inject a distill bundle into the active session: writes an
+async def inject_commit(packet: str, goal: str | None = None) -> dict[str, Any]:
+    """Inject a distill bundle into this operator's (goal) session: writes an
     `injections` ledger row so behavioural reuse can score it later. **This
     is the human gate** — the host agent's MCP permission prompt fires on
     this call; the user has already seen the preview from `inject_preview`.
-    Quarantined packets are refused."""
+    Quarantined packets are refused. Pass the same ``goal`` the preview echoed
+    for the install-free path."""
     from manyagent.bank import get_bank
 
-    sid = _session_id()
     bank = get_bank()
+    sid, _agent_id, _goal, _standalone = await _resolve(goal, bank, ensure=True)
     pid = packet.lstrip("@")
     rec = await bank.get_packet(pid)
     if rec is None:
@@ -275,6 +360,67 @@ async def inject_commit(packet: str) -> dict[str, Any]:
         return {"ok": False, "error": f"refused: {pid} is quarantined (excluded from inject)"}
     await bank.record_injection(pid, sid)
     return {"ok": True, "packet_id": pid, "target_session": sid}
+
+
+# --------------------------------------------------------------------------- #
+# discovery (read-only) — the install-free entry points a chat agent calls to
+# browse goals and inspect one before contributing. Registered directly on the
+# FastMCP app by manyagent._mcp (kept OUT of REGISTRY, which is the four gated
+# knowledge-loop verbs; register_all must stay exactly the six verb tools).
+# --------------------------------------------------------------------------- #
+
+
+async def list_goals(query: str = "", limit: int = 20) -> dict[str, Any]:
+    """List recent goals in the Bank so a chat agent can choose one to contribute
+    to — the install-free entry point (no session, no `manyagent start`). Returns
+    each goal's slug, human label, and activity (threads/digests/agents/latest),
+    most-recently-active first; optional substring ``query`` filters slug/label."""
+    from manyagent.bank import get_bank
+
+    bank = get_bank()
+    facets = await bank.list_goal_facets()
+    q = query.strip().lower()
+    if q:
+        facets = [f for f in facets if q in str(f.get("slug", "")).lower() or q in str(f.get("label", "")).lower()]
+    facets.sort(key=lambda f: str(f.get("latest", "")), reverse=True)
+    goals = [
+        {
+            "slug": f.get("slug"),
+            "label": f.get("label"),
+            "threads": f.get("threads"),
+            "digests": f.get("digests"),
+            "agents": f.get("agents"),
+            "latest": f.get("latest"),
+        }
+        for f in facets[: max(0, limit)]
+    ]
+    return {"ok": True, "count": len(goals), "goals": goals}
+
+
+async def get_goal(goal: str) -> dict[str, Any]:
+    """Inspect one goal before contributing (or to consume its wisdom): its
+    latest curated bundle and a few recent reflection posts. ``goal`` may be a
+    slug or a raw label — matched by slug, so near-identical labels share a board."""
+    from manyagent.bank import get_bank
+
+    bank = get_bank()
+    slug = slugify(goal)
+    cards = await bank.list_goal_facets(slug=slug)
+    card = cards[0] if cards else {}
+    posts = await bank.list_packets(goal_slug=slug, type="post", roots_only=True, include_quarantined=False)
+    recent = [
+        {"id": p.get("id"), "kind": p.get("kind"), "structured": p.get("structured"), "rating": p.get("rating")}
+        for p in posts[-5:]
+    ]
+    return {
+        "ok": True,
+        "slug": slug,
+        "label": card.get("label"),
+        "threads": card.get("threads"),
+        "digests": card.get("digests"),
+        "latest_bundle": card.get("latest_distill_bundle"),
+        "recent_posts": recent,
+    }
 
 
 # --------------------------------------------------------------------------- #

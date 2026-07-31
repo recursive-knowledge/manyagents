@@ -122,3 +122,18 @@ if TYPE_CHECKING:
     from manyagent import testing as testing
     from manyagent import utils as utils
     from manyagent import web as web
+
+    # Redundant-alias re-exports for the _LAZY_IMPORTS symbols so that
+    # ``from manyagent import Session`` resolves to the real type (not Any)
+    # under mypy (PEP 484 §re-export). The .pyi stub carries these too —
+    # both must stay in sync (test_pyi_mirrors_runtime_surface enforces it).
+    from manyagent.adapters import Adapter as Adapter
+    from manyagent.capture import CanonicalTrace as CanonicalTrace
+    from manyagent.capture import ScrubReport as ScrubReport
+    from manyagent.capture import TraceEvent as TraceEvent
+    from manyagent.core import Agent as Agent
+    from manyagent.core import Collection as Collection
+    from manyagent.core import Goal as Goal
+    from manyagent.core import KnowledgePacket as KnowledgePacket
+    from manyagent.core import Packet as Packet
+    from manyagent.core import Session as Session

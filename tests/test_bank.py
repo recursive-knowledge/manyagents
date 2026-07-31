@@ -179,6 +179,33 @@ async def test_reuse_score_accept_bonus(fake_bank: FakeBank) -> None:
     assert (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"] == 4.0
 
 
+async def test_mark_injection_helpful_roundtrips_capture_only(fake_bank: FakeBank) -> None:
+    """00013 tap: mark_injection_helpful stamps helpful/helpful_note onto the
+    injection row (surfaced by list_injections), and reuse_score is UNCHANGED
+    (capture-only — the formal eval is deferred)."""
+    await fake_bank.put_session("SRC")
+    await fake_bank.put_session("TGT")
+    await fake_bank.put_packet({"id": "SRC/p", "session_id": "SRC", "type": "post"})
+    await fake_bank.record_injection("SRC/p", "TGT")
+
+    # fresh row: tap unset
+    rows = await fake_bank.list_injections(target_session_id="TGT")
+    assert rows[0]["helpful"] is None and rows[0]["helpful_note"] is None
+    before = (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"]
+
+    await fake_bank.mark_injection_helpful("SRC/p", "TGT", True, note="unblocked the retry loop")
+    rows = await fake_bank.list_injections(packet_id="SRC/p")
+    assert rows[0]["helpful"] is True and rows[0]["helpful_note"] == "unblocked the retry loop"
+
+    # capture-only: the signal does not move reuse_score
+    assert (await fake_bank.reuse_score("SRC/p"))[0]["reuse_score"] == before
+
+    # not-helpful round-trips too; no-op on an unknown injection
+    await fake_bank.mark_injection_helpful("SRC/p", "TGT", False)
+    assert (await fake_bank.list_injections(packet_id="SRC/p"))[0]["helpful"] is False
+    await fake_bank.mark_injection_helpful("SRC/p", "NOPE", True)  # no such row → no error
+
+
 # --------------------------------------------------------------------------- #
 # quarantine + pagination
 # --------------------------------------------------------------------------- #
@@ -214,15 +241,105 @@ async def test_list_packets_cursor_pagination_stable(fake_bank: FakeBank) -> Non
     assert [p["id"] for p in page2] == ["S/p2", "S/p3"]
 
 
+async def test_list_packets_cursor_pagination_tied_timestamps(fake_bank: FakeBank) -> None:
+    """Regression: two packets sharing the same created_at must not be skipped
+    or duplicated across pages — the compound keyset (created_at, id) must be
+    used, not timestamp alone.
+
+    FakeBank.list_packets sorts by (created_at, id) and evaluates the cursor
+    as (created_at, id) > _split_cursor(cursor), so both rows are reachable
+    exactly once even when they share a timestamp.
+    """
+    shared_ts = "2026-06-22T10:00:00"
+    await fake_bank.put_session("S")
+    # Two packets with the SAME created_at, distinct ids (id ordering: p-a < p-b)
+    await fake_bank.put_packet({"id": "S/p-a", "session_id": "S", "type": "post", "created_at": shared_ts})
+    await fake_bank.put_packet({"id": "S/p-b", "session_id": "S", "type": "post", "created_at": shared_ts})
+
+    page1 = await fake_bank.list_packets(session_id="S", limit=1)
+    assert len(page1) == 1
+    page2 = await fake_bank.list_packets(session_id="S", limit=1, cursor=make_cursor(page1[-1]))
+    assert len(page2) == 1
+    # Must retrieve two DISTINCT packets; no skip, no dup
+    assert page1[0]["id"] != page2[0]["id"]
+    assert {page1[0]["id"], page2[0]["id"]} == {"S/p-a", "S/p-b"}
+
+
+async def test_supabase_bank_list_packets_cursor_compound_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SupabaseBank.list_packets must emit a compound keyset boundary for cursor
+    pagination — not a timestamp-only filter — so rows sharing the same
+    created_at are never skipped or duplicated.
+
+    We double _client() to return a recording stub and inspect the query
+    parameters that were built by the time .execute() is called.  The stub
+    captures every .or_() call; we assert that the compound expression
+    (created_at.gt.<ts> OR (created_at.eq.<ts> AND id.gt.<id>)) is present.
+
+    Limitation: the stub verifies the *parameters carried by the query builder*,
+    not the actual PostgREST wire format; integration tests against a live
+    Supabase instance are needed to confirm the SQL is also correct.
+    """
+    from manyagent.bank.supabase_bank import SupabaseBank
+
+    or_calls: list[str] = []
+
+    class _FakeQuery:
+        """Minimal recording query builder stub."""
+
+        def eq(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def gte(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def or_(self, filters: str, *_: object, **__: object) -> _FakeQuery:
+            or_calls.append(filters)
+            return self
+
+        def order(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        def limit(self, *_: object, **__: object) -> _FakeQuery:
+            return self
+
+        async def execute(self) -> object:
+            class _R:
+                data: list[object] = []
+
+            return _R()
+
+    class _FakeTable:
+        def select(self, *_: object, **__: object) -> _FakeQuery:
+            return _FakeQuery()
+
+    class _FakeCli:
+        def table(self, *_: object, **__: object) -> _FakeTable:
+            return _FakeTable()
+
+    bank = SupabaseBank.__new__(SupabaseBank)
+    bank._cli = _FakeCli()
+
+    cursor = "2026-06-22T10:00:00|some-uuid"
+    await bank.list_packets(cursor=cursor)
+
+    assert len(or_calls) == 1, f"expected exactly one .or_() call, got {or_calls!r}"
+    expr = or_calls[0]
+    # Both branches of the compound keyset must be present
+    assert "created_at.gt.2026-06-22T10:00:00" in expr, f"missing gt branch in {expr!r}"
+    assert "created_at.eq.2026-06-22T10:00:00" in expr, f"missing eq branch in {expr!r}"
+    assert "id.gt.some-uuid" in expr, f"missing id.gt branch in {expr!r}"
+
+
 # --------------------------------------------------------------------------- #
 # migration integrity (offline; full apply/no-op is the gated integration suite)
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_files_are_contiguous_00001_to_00012() -> None:
+def test_migration_files_are_contiguous() -> None:
     files = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
     prefixes = [f[:5] for f in files]
-    assert prefixes == [f"{i:05d}" for i in range(1, 13)], files
+    # Length-based so a new migration never re-hardcodes the count (tests.md LOW).
+    assert prefixes == [f"{i:05d}" for i in range(1, len(prefixes) + 1)], files
 
 
 async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
@@ -255,9 +372,31 @@ async def test_rendition_upsert_and_get(fake_bank: FakeBank) -> None:
         ("00006_swarms_taxonomy.sql", ["type in ('raw', 'post', 'distill')", "rating", "goal"]),
         ("00007_injection_ledger.sql", ["injections", "reuse_score", "create role curator"]),
         ("00011_agent_principal.sql", ["principal_id", "agents_principal_idx", "add column if not exists"]),
+        ("00013_injection_helpful.sql", ["helpful", "helpful_note", "trusted_update", "for update"]),
     ],
 )
 def test_migration_content_tokens(fname: str, must_contain: list[str]) -> None:
     text = (_MIGRATIONS / fname).read_text().lower()
     for token in must_contain:
         assert token.lower() in text, f"{fname} missing {token!r}"
+
+
+# --------------------------------------------------------------------------- #
+# FakeBank conformance: session_id filter gap (fix/type-boundary)
+# --------------------------------------------------------------------------- #
+
+
+async def test_list_packets_session_id_filter_without_explicit_session_id(fake_bank: FakeBank) -> None:
+    """put_packet must auto-derive session_id from the composite id so that
+    list_packets(session_id=...) works even when callers omit session_id from
+    the record (the behavioral gap caught by the Bank Protocol conformance PR).
+    """
+    # Put a packet WITHOUT an explicit session_id key in the record.
+    await fake_bank.put_packet({"id": "SX/p1", "type": "raw", "agent_id": None})
+    rows = await fake_bank.list_packets(session_id="SX")
+    assert len(rows) == 1
+    assert rows[0]["id"] == "SX/p1"
+    assert rows[0]["session_id"] == "SX"
+    # A different session must not see it.
+    other = await fake_bank.list_packets(session_id="OTHER")
+    assert other == []
