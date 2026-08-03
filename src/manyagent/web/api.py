@@ -546,15 +546,32 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
                 "quarantined": row.get("quarantined", False),
             }
 
-            if row["type"] == "raw" and may_read_raw and (may_audit_quarantined or not row.get("quarantined")):
-                # For raw traces, extract trace body, metadata, events, and mined
-                # conversation — but NOT for a retro-quarantined packet on the public
-                # surface: it stays visible+flagged (quarantined: true) with no body,
-                # matching every other raw path (?include=raw, /api/cast, /s/{s}?p=).
-                # Quarantine is the moderation lever on the open-write corpus, so a
-                # leak recovered by quarantine must not still surface here.
+            if row["type"] == "raw":
+                # For raw traces, fetch the trace row to surface completeness (always,
+                # regardless of may_read_raw — complete/trace_missing are metadata, not
+                # the trace body).  A crash between put_packet and put_trace leaves an
+                # orphan raw packet with no trace row; expose that explicitly so callers
+                # can distinguish a truncated/orphaned capture from a clean empty one.
+                # The body/events/mined conversation stay behind the full raw gate below
+                # — and NOT for a retro-quarantined packet on the public surface: it
+                # stays visible+flagged (quarantined: true) with no body, matching every
+                # other raw path (?include=raw, /api/cast, /s/{s}?p=).  Quarantine is the
+                # moderation lever on the open-write corpus, so a leak recovered by
+                # quarantine must not still surface here.
                 trace = await b.get_trace(row["id"])
-                if trace and trace.get("body"):
+                if trace is None:
+                    # Orphan: put_packet succeeded but put_trace never ran (crash mid-persist).
+                    item["trace_complete"] = False
+                    item["trace_missing"] = True
+                else:
+                    item["trace_complete"] = bool(trace.get("complete", True))
+
+                if (
+                    may_read_raw
+                    and (may_audit_quarantined or not row.get("quarantined"))
+                    and trace
+                    and trace.get("body")
+                ):
                     try:
                         events, term = _parse_envelope(trace["body"])
                         # Parse the body as JSON to extract adapter and source_fidelity metadata
