@@ -35,3 +35,27 @@ def slugify(goal: str | None) -> str:
     s = _NON_SLUG.sub("-", goal.strip().lower()).strip("-")
     s = s[:_MAX_CHARS].rstrip("-")
     return s or _UNGOALED
+
+
+def normalize_goal(goal: str | None) -> str | None:
+    """Canonical *storage/match* form of a goal label — the aggregation key.
+
+    Unlike :func:`slugify` (which always yields a non-empty URL slug, mapping
+    blanks to ``"ungoaled"``), this preserves the codebase's "no goal" sentinel:
+    ``None`` stays ``None`` and an empty/all-punctuation goal that slugifies to
+    nothing also returns ``None`` (an absent goal must NOT become ``""`` or the
+    literal string ``"ungoaled"``). For any real goal the result equals
+    ``slugify(goal)``, so ``"cfd solver"``, ``"cfd-solver"``, ``"CFD Solver"``
+    and ``"  cfd_solver  "`` all collapse to the single bucket ``"cfd-solver"``.
+
+    This is the on-write canonicalization and the on-compare key: normalizing a
+    user-typed goal the same way it was normalized on write makes
+    ``list_packets(goal=normalize_goal(g))`` aggregate across case/spacing/
+    punctuation variants instead of fragmenting into disjoint exact-match
+    buckets.
+    """
+    if goal is None:
+        return None
+    s = _NON_SLUG.sub("-", goal.strip().lower()).strip("-")
+    s = s[:_MAX_CHARS].rstrip("-")
+    return s or None

@@ -219,7 +219,7 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     async def _no_session() -> int:
-        raise SystemExit("no active session: run `manyagent start` or pass --session <id>")
+        raise SystemExit("no active session: run `ma session start` or pass --session <id>")
 
     assert cli._guard(_no_session()) == 1
     assert "no active session" in capsys.readouterr().err
@@ -290,7 +290,7 @@ def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
+    """`ma dev init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
     exactly the non-empty values, 0600. One Enter accepts the disclosure confirm."""
     _clear_bank_env(monkeypatch)
     s = Scripted("")  # disclosure confirm tap
@@ -530,6 +530,77 @@ async def test_start_writes_active_and_end_clears_it(fake_bank: FakeBank) -> Non
     assert (await fake_bank.get_session("SESS-0001"))["status"] == "ended"
 
 
+async def test_start_slug_normalizes_goal_on_write(fake_bank: FakeBank) -> None:
+    # decision #1: the stored goal is the canonical slug, so case/spacing
+    # variants land in ONE aggregation bucket instead of fragmenting.
+    s = Scripted()
+    rc = await cli._do_start(_args("session", "start", "  CFD Solver ", "--id", "S-NORM"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-NORM"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_offers_existing_and_selecting_reuses_slug(fake_bank: FakeBank) -> None:
+    # Seed an existing bucket, then start with a DIFFERENT typed goal so the
+    # picker lists buckets; pick "1" → reuse that exact slug (no parallel bucket).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted("1")  # the picker prompt: select bucket #1
+    rc = await cli._do_start(_args("session", "start", "new thing", "--id", "S-PICK"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-PICK"))["goal"] == "cfd-solver"
+    assert any("existing goals" in line for line in s.out)
+
+
+async def test_goal_picker_typed_variant_folds_into_existing_bucket(fake_bank: FakeBank) -> None:
+    # An explicit goal that normalizes to an existing bucket reuses it with NO
+    # list/prompt (consumes no input).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # "CFD Solver" → cfd-solver, already a bucket: confirm-reuse, no input
+    rc = await cli._do_start(_args("session", "start", "CFD Solver", "--id", "S-TYPE"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-TYPE"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_typing_variant_at_list_folds_into_bucket(fake_bank: FakeBank) -> None:
+    # Start with a non-matching explicit goal so the list shows, then type a
+    # case/spacing variant of an existing bucket → folds in (match note shown).
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted("CFD_Solver")  # at the list prompt: a variant of the existing slug
+    rc = await cli._do_start(_args("session", "start", "brand new", "--id", "S-FOLD"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-FOLD"))["goal"] == "cfd-solver"
+    assert any("matches an existing bucket" in line for line in s.out)
+
+
+async def test_goal_picker_explicit_goal_matching_bucket_reuses_without_listing(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # an explicit goal already in a bucket consumes NO input
+    rc = await cli._do_start(_args("session", "start", "cfd_solver", "--id", "S-EXP"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-EXP"))["goal"] == "cfd-solver"
+
+
+async def test_goal_picker_skipped_when_noninteractive(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    await fake_bank.put_session("OLD", goal="cfd-solver")
+    s = Scripted()  # noninteractive: no prompt, just normalize the passed goal
+    rc = await cli._do_start(_args("session", "start", "GPU Kernels", "--id", "S-NI"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-NI"))["goal"] == "gpu-kernels"
+    assert not any("existing goals" in line for line in s.out)
+
+
+async def test_goal_picker_survives_bank_failure(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A Bank hiccup fetching goals must not block starting a session.
+    async def _boom() -> Any:
+        raise RuntimeError("bank down")
+
+    monkeypatch.setattr(fake_bank, "list_sessions", _boom)
+    s = Scripted()
+    rc = await cli._do_start(_args("session", "start", "Fluid Sim", "--id", "S-FAIL"), bank=fake_bank, io=s.io())
+    assert rc == 0
+    assert (await fake_bank.get_session("S-FAIL"))["goal"] == "fluid-sim"
+
+
 def test_session_url_defaults_to_hosted_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI's `open:` links point at the hosted viewer by default — the
     deployment may move, so the base is the MANYAGENT_WEB_PUBLIC_URL tunable, never
@@ -628,7 +699,7 @@ async def test_resolve_sid_errors_without_session(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# manyagent end — ★ lands on the most recent unrated reflection post
+# ma session end — ★ lands on the most recent unrated reflection post
 # --------------------------------------------------------------------------- #
 
 
@@ -1120,7 +1191,7 @@ async def test_end_offers_self_distill_when_session_has_none(
     rc = await cli._do_end(_args("session", "end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
-    assert calls[0]["since"] is None  # bare `manyagent end`: no run window to scope to
+    assert calls[0]["since"] is None  # bare `ma session end`: no run window to scope to
 
 
 async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1145,7 +1216,7 @@ async def test_start_nudges_cross_distill_when_goal_is_stale(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """≥ MANYAGENT_CROSS_NUDGE_MIN reflections newer than the goal's newest bundle
-    → `manyagent start` offers cross-distillation (the moment a fresh bundle is
+    → `ma session start` offers cross-distillation (the moment a fresh bundle is
     about to be useful). Replaces the end-of-session cross offer."""
     pid = await _seed_goal_knowledge(fake_bank)  # bundle at T0
     for i in range(3):
@@ -1216,7 +1287,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
 
 
 async def test_start_goal_continuity_offer(fake_bank: FakeBank) -> None:
-    """`manyagent start` without a goal offers the previous session's goal; Enter
+    """`ma session start` without a goal offers the previous session's goal; Enter
     adopts it onto the new session; declining files the session under the
     default bucket."""
     await fake_bank.put_session("PREV-1", goal="speed")
@@ -1307,7 +1378,7 @@ async def test_explicit_goal_run_is_ephemeral_and_does_not_hijack_sticky(
     s = Scripted("", "")  # any start/end offers; the run must not stall on input
     rc = await cli._do_run_agent("claude", [], "fix bug", bank=fake_bank, io=s.io())
     assert rc == 0
-    assert (await fake_bank.get_session("EPH-2"))["goal"] == "fix bug"
+    assert (await fake_bank.get_session("EPH-2"))["goal"] == "fix-bug"  # slug-normalized on write
     assert (await fake_bank.get_session("EPH-2"))["status"] == "ended"  # ephemeral auto-ended
     assert cli._read_active() == "STICKY"  # the sticky marker survived
     assert (await fake_bank.get_session("STICKY")).get("status") != "ended"

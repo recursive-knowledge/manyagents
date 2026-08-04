@@ -119,11 +119,12 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
 
     rcs: list[int] = []
 
-    # 1. session start <goal>  → writes the sticky active-session marker, persists the goal.
+    # 1. session start <goal>  → writes the sticky active-session marker, persists the
+    #    goal as the canonical slug (decision #1: slug-normalize on write).
     rc, _ = await _run(cli._do_start, _args("session", "start", "ship the parser fix", "--id", "S-E2E"), fake_bank)
     rcs.append(rc)
     assert cli._read_active() == "S-E2E"
-    assert fake_bank._sessions["S-E2E"]["goal"] == "ship the parser fix"
+    assert fake_bank._sessions["S-E2E"]["goal"] == "ship-the-parser-fix"
 
     # 2. register the agent in the session — now automatic at run time
     #    (`_resolve_agent`, the same path `_do_run_agent` takes); auto-registers seq=1.
@@ -189,7 +190,7 @@ async def test_overview_transcript_composes_across_verbs(fake_bank: FakeBank, mo
     assert rcs == [0] * 8  # every leg succeeded
 
     assert fake_bank._sessions["S-E2E"]["status"] == "ended"
-    assert fake_bank._sessions["S-E2E"]["goal"] == "ship the parser fix"
+    assert fake_bank._sessions["S-E2E"]["goal"] == "ship-the-parser-fix"
 
     agents = await fake_bank.list_agents("S-E2E")
     assert len(agents) == 1 and agents[0]["seq"] == 1  # auto-registered exactly once

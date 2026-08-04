@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict
 
 from manyagent.bank import Bank, get_bank, make_cursor
 from manyagent.core import Agent, KnowledgePacket, Packet
-from manyagent.utils import config
+from manyagent.utils import config, slug
 
 # --------------------------------------------------------------------------- #
 # Response models (M9 follow-up: give the read API an OpenAPI schema + response
@@ -594,10 +594,14 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
         # Behavioral corpus signal for researchers: packets matching goal/since
         # joined to their injection reuse score. Quarantined packets are
         # excluded — this is the "use as context" affordance (manyagent.web.md).
+        # Normalize the query goal to the canonical slug so it matches the
+        # normalized form stored on write (decision #1).
         # Paginated like every other listing route (was unbounded — a no-goal
         # query returned the whole corpus).
         lim = _clamp_limit(limit)
-        rows = await b.list_packets(goal=goal, since=since, limit=lim, cursor=cursor, include_quarantined=False)
+        rows = await b.list_packets(
+            goal=slug.normalize_goal(goal), since=since, limit=lim, cursor=cursor, include_quarantined=False
+        )
         scored = {s["packet_id"]: s for s in await b.reuse_score()}
         reuse = []
         for r in rows:
