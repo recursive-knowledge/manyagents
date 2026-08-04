@@ -30,7 +30,7 @@ def parse(s: str) -> str:
     """Normalize lenient user input (case, surrounding whitespace, the no-hyphen
     32-hex / brace / ``urn:uuid:`` forms) to the canonical lowercase hyphenated
     UUID. Raises ``ValueError`` if it is not a UUID. (Only applied to a
-    user-supplied ``ma start --id`` — stored ids are never re-parsed on read.)
+    user-supplied ``ma session start --id`` — stored ids are never re-parsed on read.)
     """
     try:
         return str(uuid.UUID(s.strip()))

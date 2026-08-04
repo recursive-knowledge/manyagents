@@ -778,7 +778,7 @@ def create_app(*, bank: Bank | None = None, identity: str = "public") -> FastAPI
     @app.get("/.well-known/manyagent.json")
     async def well_known() -> JSONResponse:
         """The deployment's CURRENT public Bank connection, fetched/cached by
-        `ma init` so the hosted stack can rotate keys or move without a
+        `ma dev init` so the hosted stack can rotate keys or move without a
         package release. Serves only the MANYAGENT_WEB_PUBLISHED_* tunables —
         never this host's own resolved MANYAGENT_BANK_* (which may hold a
         privileged key the public must not see)."""
