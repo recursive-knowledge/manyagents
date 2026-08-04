@@ -921,7 +921,7 @@ async def test_well_known_publishes_connection_not_host_env(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """/.well-known/manyagent.json serves the MANYAGENT_WEB_PUBLISHED_* tunables —
-    `ma init`'s rotation source — and NEVER the host's own resolved
+    `ma dev init`'s rotation source — and NEVER the host's own resolved
     MANYAGENT_BANK_* (which locally holds a privileged service_role key)."""
     monkeypatch.setenv("MANYAGENT_BANK_TRUSTED_KEY", "SERVICE-ROLE-MUST-NOT-LEAK")
     monkeypatch.setenv("MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY", "published-write-token")
