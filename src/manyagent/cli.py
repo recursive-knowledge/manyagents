@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import signal
@@ -36,6 +37,8 @@ from rich.text import Text
 from manyagent import __version__
 from manyagent.bank import Bank, get_bank
 from manyagent.utils import config, messages, sid, slug, ui
+
+_log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # pure helpers (unit-testable in isolation, no I/O)
@@ -410,7 +413,8 @@ def _fetch_published_config() -> dict[str, str] | None:
         if resp.status_code != 200:
             return None
         doc = resp.json()
-    except Exception:
+    except Exception as exc:
+        _log.debug("_fetch_published_config: failed to fetch %s: %s", base, exc)
         return None
     if not isinstance(doc, dict):
         return None
@@ -473,7 +477,7 @@ def _init_key_value(
 
 
 async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent init`` — write the user-level env file. Defaults come from the
+    """``ma dev init`` — write the user-level env file. Defaults come from the
     deployment's published well-known document when reachable (so a re-run
     picks up rotated keys), else the currently-resolved config; flags win over
     both, and a re-run never silently drops a stored anon key / CF Access
@@ -581,7 +585,7 @@ async def _do_quarantine(args: argparse.Namespace, *, bank: Bank, io: tuple[In, 
 
 
 async def _do_preflight(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
-    """``manyagent preflight`` — the env/Bank/keys validator, reachable from the
+    """``ma dev preflight`` — the env/Bank/keys validator, reachable from the
     installed binary. ``python -m manyagent.preflight`` still works in a checkout,
     but a `uv tool install` user has no usable ``python`` for the module form —
     the hints must name a command that copy-pastes for everyone."""
@@ -608,16 +612,23 @@ async def _session_start_offers(
     # the type a plain str.
     raw_default = config.resolve("MANYAGENT_DEFAULT_GOAL", config.MANYAGENT_DEFAULT_GOAL)
     default_goal: str = slug.normalize_goal(raw_default) or raw_default
+    # Step 1: resolve the goal via best-effort offers (continuity prompt).
     try:
         if not goal and allow_continuity:
             goal = await _offer_goal_continuity(session_id, bank=bank, io=io)
-        if not goal:
-            # Every session carries a goal: no goal given (and continuity
-            # declined / disallowed) files the session under the default bucket.
-            goal = default_goal
-            await bank.put_session(session_id, goal=goal)
-            io[1](ui.render(Text(messages.START_DEFAULT_GOAL_NOTE.format(goal=goal), style="dim")))
-        if goal != default_goal:
+    except Exception as exc:
+        io[1](ui.render(Text(f"manyagent: start-time offers skipped ({type(exc).__name__}: {exc})", style="yellow")))
+    # Step 2: write the goal to the Bank — NOT best-effort; a failure here
+    # leaves the session with goal=NULL, so let it surface.
+    if not goal:
+        # Every session carries a goal: no goal given (and continuity
+        # declined / disallowed) files the session under the default bucket.
+        goal = default_goal
+        await bank.put_session(session_id, goal=goal)
+        io[1](ui.render(Text(messages.START_DEFAULT_GOAL_NOTE.format(goal=goal), style="dim")))
+    # Step 3: fire the remaining session-start offers (best-effort).
+    if goal != default_goal:
+        try:
             # The default bucket is the catch-all, not a curated goal — the
             # goal-scoped offers would never converge for it (its cross-goal
             # bundles carry no goal, so e.g. the cross nudge would re-fire
@@ -625,9 +636,10 @@ async def _session_start_offers(
             await _note_quarantine(goal, bank=bank, io=io)
             await _offer_cross_nudge(session_id, goal, bank=bank, io=io)
             await _offer_goal_context(session_id, goal, bank=bank, io=io)
-    except Exception as exc:
-        io[1](ui.render(Text(f"manyagent: start-time offers skipped ({type(exc).__name__}: {exc})", style="yellow")))
-        goal = goal or default_goal
+        except Exception as exc:
+            io[1](
+                ui.render(Text(f"manyagent: start-time offers skipped ({type(exc).__name__}: {exc})", style="yellow"))
+            )
     return goal
 
 
@@ -657,7 +669,7 @@ async def _do_start(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out])
 
 
 async def _offer_goal_continuity(session_id: str, *, bank: Bank, io: tuple[In, Out]) -> str | None:
-    """`manyagent start` without a goal argument: when the most recent other session
+    """`ma session start` without a goal argument: when the most recent other session
     carried a real goal (not the default bucket), offer to continue it (one
     allowance gate). Returns the adopted goal, or None."""
     if _noninteractive():
@@ -921,7 +933,7 @@ async def _do_run_agent(name: str, agent_args: list[str], goal: str | None, *, b
         io[1](
             ui.render(
                 Text(
-                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `manyagent status`",
+                    f"manyagent: skill install skipped ({type(exc).__name__}: {exc}) — see `ma agent list`",
                     style="yellow",
                 )
             )
@@ -1461,35 +1473,39 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
     sid_ = _resolve_sid(args.session)
     # Sensible default (2026-06-10): before the session closes, offer the
     # distillation moments instead of relying on the human remembering the
-    # verbs mid-session. One allowance gate each; never blocks `manyagent end`.
+    # verbs mid-session. One allowance gate each; never blocks `ma session end`.
     try:
         await _offer_end_distill(sid_, since=getattr(args, "since", None), bank=bank, io=io)
     except Exception as exc:
         io[1](ui.render(Text(f"manyagent: distill offer skipped ({type(exc).__name__}: {exc})", style="yellow")))
-    await bank.put_session(sid_, status="ended")
-    # ★ moment: manyagent.core has no sessions.rating column, so manyagent end's ★ lands on
-    # the most recent UNRATED reflection post in the session (no-op if none) —
-    # avoids an unneeded manyagent.bank migration (M8 Decision-log).
-    posts = await bank.list_packets(session_id=sid_, type="post")
-    unrated = [p for p in posts if p.get("kind") == "reflection" and p.get("rating") is None]
-    if unrated:
-        last = unrated[-1]
-        rating = ask_rating(3, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive())
-        if rating is not None:
-            last["rating"] = rating
-            last.pop("preference", None)  # C1
-            await bank.put_packet(last)
-            io[1](
-                ui.render(Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow")))
-            )
-    # 00013 per-injection "did this help?" tap (capture-only — does NOT feed
-    # reuse_score, the deferred formal eval). Best-effort: never break `manyagent end`.
     try:
-        await _offer_helpful_tap(sid_, bank=bank, io=io)
-    except Exception as exc:
-        io[1](ui.render(Text(f"manyagent: helpfulness tap skipped ({type(exc).__name__}: {exc})", style="yellow")))
-    _clear_active(sid_)
-    _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
+        await bank.put_session(sid_, status="ended")
+        # ★ moment: manyagent.core has no sessions.rating column, so `ma session end`'s ★ lands on
+        # the most recent UNRATED reflection post in the session (no-op if none) —
+        # avoids an unneeded manyagent.bank migration (M8 Decision-log).
+        posts = await bank.list_packets(session_id=sid_, type="post")
+        unrated = [p for p in posts if p.get("kind") == "reflection" and p.get("rating") is None]
+        if unrated:
+            last = unrated[-1]
+            rating = ask_rating(3, input_fn=io[0], output_fn=io[1], noninteractive=_noninteractive())
+            if rating is not None:
+                last["rating"] = rating
+                last.pop("preference", None)  # C1
+                await bank.put_packet(last)
+                io[1](
+                    ui.render(
+                        Text.assemble(("rated ", "green"), (str(last["id"]), "bold"), (f" ★{rating}", "bold yellow"))
+                    )
+                )
+        # 00013 per-injection "did this help?" tap (capture-only — does NOT feed
+        # reuse_score, the deferred formal eval). Best-effort: never break `manyagent end`.
+        try:
+            await _offer_helpful_tap(sid_, bank=bank, io=io)
+        except Exception as exc:
+            io[1](ui.render(Text(f"manyagent: helpfulness tap skipped ({type(exc).__name__}: {exc})", style="yellow")))
+    finally:
+        _clear_active(sid_)
+        _inject_stash_path(sid_).unlink(missing_ok=True)  # the hook stash dies with the session
     io[1](ui.render(Text.assemble(("session ", "dim"), (sid_, "bold"), (" ended", "dim"))))
     return 0
 
@@ -1505,7 +1521,7 @@ async def _offer_end_distill(sid_: str, *, since: float | None = None, bank: Ban
     cross-session ``disagree`` reply needs goal-scoped retrieve(), recorded
     there as the upgrade path).
 
-    The cross-distill moment moved to ``manyagent start`` (`_offer_cross_nudge`) —
+    The cross-distill moment moved to ``ma session start`` (`_offer_cross_nudge`) —
     a fresh bundle is useful at the START of the next session, and the
     newer-than-bundle counting there avoids immediate back-to-back re-runs.
 

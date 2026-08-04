@@ -105,6 +105,25 @@ async def _seed_session(bank: FakeBank, *, sid: str = "S1", goal: str | None = "
 
 
 # --------------------------------------------------------------------------- #
+# _agent_json: debug log on malformed output
+# --------------------------------------------------------------------------- #
+
+
+async def test_agent_json_logs_debug_on_malformed_output(caplog: pytest.LogCaptureFixture) -> None:
+    """When the model returns non-JSON, _agent_json returns None AND logs the
+    first 200 chars of raw output at DEBUG so operators can diagnose silently."""
+    import logging
+
+    adapter = FakeAdapter("not json at all {{{{")
+
+    with caplog.at_level(logging.DEBUG, logger="manyagent._handlers"):
+        result = await h._agent_json(adapter, "some prompt")
+
+    assert result is None
+    assert any("_agent_json" in r.message and "not json" in r.message.lower() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------- #
 # C1: rejected / parser-refused /self-distill post is NEVER persisted
 # --------------------------------------------------------------------------- #
 
@@ -455,7 +474,7 @@ async def test_self_distill_no_trace_no_section(fake_bank: FakeBank, monkeypatch
 
 # --------------------------------------------------------------------------- #
 # register gate: minting an agent row requires a real, runnable adapter
-# (decision 2026-06-10 — `manyagent register agent` used to persist a Bank row +
+# (decision 2026-06-10 — `ma agent register` used to persist a Bank row +
 # viewer URL for a name that resolves to nothing and isn't on PATH)
 # --------------------------------------------------------------------------- #
 

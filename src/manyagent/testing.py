@@ -75,7 +75,7 @@ class ScriptedIO:
     """A scripted ``input()`` / captured ``print()`` pair for the handlers'
     ``io=(input_fn, output_fn)`` seam. Responses are consumed in order; once
     exhausted, ``default`` answers every further prompt (handy for optional
-    prompts like the ``manyagent end`` ★, which only fires when an unrated
+    prompts like the ``ma session end`` ★, which only fires when an unrated
     reflection exists)."""
 
     def __init__(self, *responses: str, default: str = "skip") -> None:

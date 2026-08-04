@@ -21,6 +21,12 @@ from manyagent import cli
 from manyagent.bank import FakeBank
 from manyagent.utils import config, messages
 
+# Grab a reference to the REAL _fetch_published_config before any autouse
+# fixture can stub it out.  The autouse _tmp_home patches cli._fetch_published_config
+# to lambda: None at fixture-setup time; any test that wants the real function
+# must hold this module-level reference.
+_REAL_FETCH_PUBLISHED_CONFIG = cli._fetch_published_config
+
 
 @pytest.fixture(autouse=True)
 def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,7 +219,7 @@ def test_guard_systemexit_string_is_clean_but_numeric_preserved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     async def _no_session() -> int:
-        raise SystemExit("no active session: run `manyagent start` or pass --session <id>")
+        raise SystemExit("no active session: run `ma session start` or pass --session <id>")
 
     assert cli._guard(_no_session()) == 1
     assert "no active session" in capsys.readouterr().err
@@ -284,7 +290,7 @@ def _clear_bank_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_init_flags_write_user_env(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`manyagent init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
+    """`ma dev init --bank-url … --trusted-key …` writes $MANYAGENT_HOME/env with
     exactly the non-empty values, 0600. One Enter accepts the disclosure confirm."""
     _clear_bank_env(monkeypatch)
     s = Scripted("")  # disclosure confirm tap
@@ -693,7 +699,7 @@ async def test_resolve_sid_errors_without_session(fake_bank: FakeBank) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# manyagent end — ★ lands on the most recent unrated reflection post
+# ma session end — ★ lands on the most recent unrated reflection post
 # --------------------------------------------------------------------------- #
 
 
@@ -1185,7 +1191,7 @@ async def test_end_offers_self_distill_when_session_has_none(
     rc = await cli._do_end(_args("session", "end", "--session", "S-END1"), bank=fake_bank, io=s.io())
     assert rc == 0
     assert len(calls) == 1 and calls[0]["adapter"] == "claude" and calls[0]["session"] == "S-END1"
-    assert calls[0]["since"] is None  # bare `manyagent end`: no run window to scope to
+    assert calls[0]["since"] is None  # bare `ma session end`: no run window to scope to
 
 
 async def test_end_threads_run_window_into_self_distill(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1210,7 +1216,7 @@ async def test_start_nudges_cross_distill_when_goal_is_stale(
     fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """≥ MANYAGENT_CROSS_NUDGE_MIN reflections newer than the goal's newest bundle
-    → `manyagent start` offers cross-distillation (the moment a fresh bundle is
+    → `ma session start` offers cross-distillation (the moment a fresh bundle is
     about to be useful). Replaces the end-of-session cross offer."""
     pid = await _seed_goal_knowledge(fake_bank)  # bundle at T0
     for i in range(3):
@@ -1281,7 +1287,7 @@ async def test_end_followup_when_bundle_was_injected(fake_bank: FakeBank, monkey
 
 
 async def test_start_goal_continuity_offer(fake_bank: FakeBank) -> None:
-    """`manyagent start` without a goal offers the previous session's goal; Enter
+    """`ma session start` without a goal offers the previous session's goal; Enter
     adopts it onto the new session; declining files the session under the
     default bucket."""
     await fake_bank.put_session("PREV-1", goal="speed")
@@ -1485,6 +1491,113 @@ def test_principal_for_recovers_from_corrupt_file() -> None:
     from manyagent.utils import sid
 
     assert sid.is_valid(pid)
+    assert cli._principal_for("claude") == pid  # and the rewrite is now stable
+
+
+# --------------------------------------------------------------------------- #
+# fix: _do_end cleans up active marker + stash even on Bank failure (fix 4)
+# --------------------------------------------------------------------------- #
+
+
+async def test_do_end_clears_active_even_when_bank_raises(fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_clear_active and stash cleanup must run even if bank.put_session raises."""
+    await fake_bank.put_session("S-CLEANUP", goal="g")
+    cli._write_active("S-CLEANUP")
+    stash = cli._inject_stash_path("S-CLEANUP")
+    stash.parent.mkdir(parents=True, exist_ok=True)
+    stash.write_text("stashed", encoding="utf-8")
+
+    # Make put_session raise on the "ended" call.
+    original_put = fake_bank.put_session
+
+    async def _boom(id: str, **kw: object) -> None:
+        if kw.get("status") == "ended":
+            raise RuntimeError("Bank unavailable")
+        await original_put(id, **kw)
+
+    monkeypatch.setattr(fake_bank, "put_session", _boom)
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+
+    with pytest.raises(RuntimeError, match="Bank unavailable"):
+        await cli._do_end(_args("session", "end", "--session", "S-CLEANUP"), bank=fake_bank, io=Scripted().io())
+
+    # Despite the error, both cleanup paths must have run.
+    assert cli._read_active() is None
+    assert not stash.exists()
+
+
+# --------------------------------------------------------------------------- #
+# fix: _fetch_published_config logs cause at DEBUG before swallowing (fix 5)
+# --------------------------------------------------------------------------- #
+
+
+def test_fetch_published_config_logs_debug_on_exception(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A transient network error is swallowed (returns None) but logged at DEBUG
+    so operators can diagnose a stale-key write without adding noise."""
+    import logging
+    import unittest.mock as mock
+
+    monkeypatch.setenv("MANYAGENT_WEB_PUBLIC_URL", "https://example.org")
+
+    # The autouse _tmp_home fixture replaces cli._fetch_published_config with a
+    # stub.  Call the REAL function directly (saved at module import time, before
+    # any fixture could patch it).
+    with mock.patch("httpx.get", side_effect=ConnectionError("connection refused")):
+        with caplog.at_level(logging.DEBUG, logger="manyagent.cli"):
+            result = _REAL_FETCH_PUBLISHED_CONFIG()
+
+    assert result is None
+    assert any("connection refused" in r.message for r in caplog.records if r.name == "manyagent.cli")
+
+
+# --------------------------------------------------------------------------- #
+# fix: _session_start_offers — put_session outside the best-effort try (fix 6)
+# --------------------------------------------------------------------------- #
+
+
+async def test_session_start_offers_put_session_failure_surfaces(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Bank failure in put_session (goal assignment) must NOT be swallowed —
+    it must propagate so the caller knows the session has goal=NULL."""
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    await fake_bank.put_session("S-GOAL", goal=None)
+
+    original_put = fake_bank.put_session
+
+    async def _boom(id: str, **kw: object) -> None:
+        if id == "S-GOAL" and kw.get("goal") is not None:
+            raise RuntimeError("Bank write failed")
+        await original_put(id, **kw)
+
+    monkeypatch.setattr(fake_bank, "put_session", _boom)
+
+    with pytest.raises(RuntimeError, match="Bank write failed"):
+        await cli._session_start_offers("S-GOAL", None, bank=fake_bank, io=Scripted().io(), allow_continuity=False)
+
+
+async def test_session_start_offers_best_effort_niceties_dont_block_on_bank_error(
+    fake_bank: FakeBank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Bank failure in the offer niceties (quarantine, cross-nudge, inject)
+    is swallowed and narrated in yellow — goal is still returned correctly."""
+    monkeypatch.setenv("MANYAGENT_NONINTERACTIVE", "1")
+    await fake_bank.put_session("S-NICE", goal="mything")
+
+    # The goal is already set (explicit_goal="mything"), so put_session won't
+    # be called again. We corrupt list_packets to simulate an offer hiccup.
+    original_list = fake_bank.list_packets
+
+    async def _boom(**kw: object) -> list[object]:
+        raise RuntimeError("list_packets boom")
+
+    monkeypatch.setattr(fake_bank, "list_packets", _boom)
+    s = Scripted()
+    goal = await cli._session_start_offers("S-NICE", "mything", bank=fake_bank, io=s.io(), allow_continuity=False)
+    assert goal == "mything"  # returned correctly despite the hiccup
+    assert any("skipped" in line for line in s.out)  # narrated in yellow
 
 
 # --------------------------------------------------------------------------- #

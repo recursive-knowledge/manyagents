@@ -13,7 +13,7 @@ Targets per scope:
 Gemini extensions have **restricted env passthrough** — extension-bundled MCP
 servers only inherit env vars declared in the manifest's ``settings`` array.
 We declare ``MANYAGENT_SESSION`` there. The MCP server also falls back to
-``~/.manyagent/active`` (set by ``manyagent start``) so the chain works either way.
+``~/.manyagent/active`` (set by ``ma session start``) so the chain works either way.
 """
 
 from __future__ import annotations
@@ -59,9 +59,9 @@ Gemini CLI. The four slash commands (`/self-distill`, `/discuss`,
 
 ## The contract
 
-- The active manyagent session is set by `manyagent start` (writes `~/.manyagent/active`);
+- The active manyagent session is set by `ma session start` (writes `~/.manyagent/active`);
   `MANYAGENT_SESSION` env wins if set. If neither is present, the MCP tool errors
-  and you should tell the user to run `manyagent start` first.
+  and you should tell the user to run `ma session start` first.
 - For `/self-distill` and `/discuss`: always call the corresponding `*_draft`
   MCP tool, show the structured payload to the user verbatim, ask for accept
   + ★, and **only on accept** call `mcp__manyagent__commit_post`. On reject, do
@@ -109,7 +109,7 @@ def _manifest_payload() -> dict[str, Any]:
         "settings": [
             {
                 "name": "session",
-                "description": "Active manyagent session id (set by `manyagent start`; the MCP server also falls back to ~/.manyagent/active).",
+                "description": "Active manyagent session id (set by `ma session start`; the MCP server also falls back to ~/.manyagent/active).",
                 "envVar": "MANYAGENT_SESSION",
                 "sensitive": False,
             }

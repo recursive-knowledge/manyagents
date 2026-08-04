@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar, overload
 
 _T = TypeVar("_T")
 
@@ -27,13 +27,22 @@ def as_bool(raw: str) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "")
 
 
+# Two typing surfaces over one runtime body: with no ``cast`` the value is
+# returned verbatim from ``os.environ`` / the default, so the result is ``str``
+# (and ``default`` must be a ``str``); with an explicit ``cast`` the result is
+# whatever ``cast`` produces (``_T``). The default ``cast=str`` lives only on
+# the implementation, never on an overload, so mypy never infers ``_T`` from it.
+@overload
+def resolve(name: str, default: str, *, cli_value: str | None = None) -> str: ...
+@overload
+def resolve(name: str, default: _T, *, cast: Callable[[str], _T], cli_value: str | None = None) -> _T: ...
 def resolve(
     name: str,
-    default: _T,
+    default: Any,
     *,
-    cast: Callable[[str], _T] = str,  # type: ignore[assignment]
+    cast: Callable[[str], Any] = str,
     cli_value: str | None = None,
-) -> _T:
+) -> Any:
     """Resolve one tunable with the canonical precedence.
 
     ``cli_value`` (when not ``None``) is the CLI override and wins outright;
@@ -60,7 +69,7 @@ MANYAGENT_DISTILL_TIMEOUT_S: int = resolve("MANYAGENT_DISTILL_TIMEOUT_S", 600, c
 MANYAGENT_DISTILL_CONTEXT_MAX_BYTES: int = resolve("MANYAGENT_DISTILL_CONTEXT_MAX_BYTES", 60_000, cast=int)
 MANYAGENT_TRACE_MAX_BYTES: int = resolve("MANYAGENT_TRACE_MAX_BYTES", 2 * 1024 * 1024, cast=int)
 MANYAGENT_CROSSDISTILL_WINDOW_DAYS: int = resolve("MANYAGENT_CROSSDISTILL_WINDOW_DAYS", 30, cast=int)
-# Stale-goal nudge: offer /cross-distill at `manyagent start` once this many
+# Stale-goal nudge: offer /cross-distill at `ma session start` once this many
 # reflections accumulated under the goal SINCE its newest bundle (manyagent.cli).
 MANYAGENT_CROSS_NUDGE_MIN: int = resolve("MANYAGENT_CROSS_NUDGE_MIN", 3, cast=int)
 MANYAGENT_INJECT_PREVIEW_HEAD_TOKENS: int = resolve("MANYAGENT_INJECT_PREVIEW_HEAD_TOKENS", 100, cast=int)
@@ -73,7 +82,7 @@ MANYAGENT_CURATOR_SERVER_URL: str = resolve("MANYAGENT_CURATOR_SERVER_URL", "")
 MANYAGENT_RATING_PROMPT: bool = resolve("MANYAGENT_RATING_PROMPT", True, cast=as_bool)
 MANYAGENT_REUSE_WEIGHT: float = resolve("MANYAGENT_REUSE_WEIGHT", 1.0, cast=float)
 MANYAGENT_NONINTERACTIVE: bool = resolve("MANYAGENT_NONINTERACTIVE", False, cast=as_bool)
-# Goal bucket assigned by `manyagent start` when no goal is given and the
+# Goal bucket assigned by `ma session start` when no goal is given and the
 # continuity offer is declined — every session carries a goal (manyagent.cli).
 MANYAGENT_DEFAULT_GOAL: str = resolve("MANYAGENT_DEFAULT_GOAL", "misc")
 MANYAGENT_COLOR: str = resolve("MANYAGENT_COLOR", "auto")  # auto | always | never (manyagent.utils.ui)

@@ -34,8 +34,8 @@ graph LR
 
 ## Nouns
 
-- **`Session`** — a collaboration container several agents join (`manyagent start`; Alice shares the id with Bob). *Not* a task: no verifier, no solved-state. Unchanged in role.
-- **`Goal`** — a **soft, optional, possibly agent-inferred** scope label. The swarms `task` analog *minus the oracle*: it scopes per-goal vs cross-goal curation and anchors the ★ rating. Set by `manyagent start --goal "..."`, inherited by the session's posts, or proposed by the agent at `/self-distill` (stored in `Packet.goal` / `Session.goal`). **Never gates anything** — open-endedness is preserved (a session may have no goal, one, or several over time).
+- **`Session`** — a collaboration container several agents join (`ma session start`; Alice shares the id with Bob). *Not* a task: no verifier, no solved-state. Unchanged in role.
+- **`Goal`** — a **soft, optional, possibly agent-inferred** scope label. The swarms `task` analog *minus the oracle*: it scopes per-goal vs cross-goal curation and anchors the ★ rating. Set by `ma session start --goal "..."`, inherited by the session's posts, or proposed by the agent at `/self-distill` (stored in `Packet.goal` / `Session.goal`). **Never gates anything** — open-endedness is preserved (a session may have no goal, one, or several over time).
 - **`Agent`** — a registered adapter instance in a session; bookkeeping derived from its packets.
 - **`Packet`** — `raw` | `post` | `distill` (below).
 
@@ -94,7 +94,7 @@ Mapping to the verbs: `/self-distill` → `post(kind=reflection)`; `/discuss` �
 
 Three distinct signals, deliberately not conflated (swarms gets them free from one evaluator; ManyAgent gets them from different acts):
 
-- **`rating`** (1–5★, on a `post`/session) — *how the work went*. Optional, **unrated is a first-class valid state**, asked only at accept-time / `manyagent end`, non-blocking. The agent proposes a value from the trace; the human one-taps confirm or override (the override is itself signal). Used as a soft within-goal prior, bucketed high/med/low — never a global number (`manyagent.distill`).
+- **`rating`** (1–5★, on a `post`/session) — *how the work went*. Optional, **unrated is a first-class valid state**, asked only at accept-time / `ma session end`, non-blocking. The agent proposes a value from the trace; the human one-taps confirm or override (the override is itself signal). Used as a soft within-goal prior, bucketed high/med/low — never a global number (`manyagent.distill`).
 - **`preference`** (`accept`/`reject`, on a `distill`) — *artifact quality*. The existing loop, generalized; rejected attempts retained as negative preference data.
 - **downstream reuse** — *the load-bearing default signal*: a packet that was `/inject`ed into a later session that was then rated/accepted well. Behavioral, hard to game; computed by an `manyagent.bank` view over `injection` records (not a field on `Packet`).
 

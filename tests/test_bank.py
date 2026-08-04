@@ -42,6 +42,61 @@ async def test_with_backoff_exhausts_and_raises() -> None:
         await always_fails()
 
 
+async def test_with_backoff_4xx_fails_fast() -> None:
+    """A 403/409/422 PostgREST error must surface on the FIRST attempt — a
+    client error cannot be fixed by retrying."""
+    from manyagent.bank.retry import _is_nonretryable_http
+
+    calls = {"n": 0}
+
+    class _FakeAPIError(Exception):
+        def __init__(self, code: int) -> None:
+            super().__init__(f"HTTP {code}")
+            self.code = code
+
+    @with_backoff(max_retries=3, base_delay=0.0)
+    async def forbidden() -> None:
+        calls["n"] += 1
+        raise _FakeAPIError(403)
+
+    with pytest.raises(_FakeAPIError):
+        await forbidden()
+    assert calls["n"] == 1  # no retries on a 403
+
+    # 500 IS retryable
+    calls["n"] = 0
+
+    @with_backoff(max_retries=2, base_delay=0.0)
+    async def server_error() -> None:
+        calls["n"] += 1
+        raise _FakeAPIError(500)
+
+    with pytest.raises(_FakeAPIError):
+        await server_error()
+    assert calls["n"] == 3  # initial + 2 retries
+
+    # 429 IS retryable (rate limit)
+    calls["n"] = 0
+
+    @with_backoff(max_retries=2, base_delay=0.0)
+    async def rate_limited() -> None:
+        calls["n"] += 1
+        raise _FakeAPIError(429)
+
+    with pytest.raises(_FakeAPIError):
+        await rate_limited()
+    assert calls["n"] == 3  # initial + 2 retries
+
+    # helper predicate: 4xx (except 408/429) → nonretryable
+    assert _is_nonretryable_http(_FakeAPIError(400))
+    assert _is_nonretryable_http(_FakeAPIError(403))
+    assert _is_nonretryable_http(_FakeAPIError(422))
+    assert not _is_nonretryable_http(_FakeAPIError(408))
+    assert not _is_nonretryable_http(_FakeAPIError(429))
+    assert not _is_nonretryable_http(_FakeAPIError(500))
+    assert not _is_nonretryable_http(RuntimeError("no code attr"))
+
+
 async def test_with_backoff_nonretryable_fails_fast() -> None:
     """A config error (missing Bank key) must surface on the FIRST attempt —
     backoff in front of an error a retry cannot fix only adds dead seconds

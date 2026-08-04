@@ -122,6 +122,30 @@ def test_config_casts() -> None:
     assert config.resolve("MANYAGENT_MISSING", 1.5, cast=float) == 1.5
 
 
+def test_resolve_overloads_match_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The two ``resolve`` typing overloads must agree with the single runtime
+    body: no ``cast`` ⇒ the value is returned verbatim (a ``str`` from env, the
+    ``str`` default otherwise); an explicit ``cast`` ⇒ the cast's result type.
+    The static guarantee (``-> str`` vs ``-> _T``, no ``# type: ignore``) is
+    asserted below with ``assert_type`` and enforced by mypy over this file."""
+    from typing import assert_type
+
+    monkeypatch.delenv("MANYAGENT_OVERLOAD", raising=False)
+    # No-cast form: default str is returned unchanged and is statically ``str``.
+    no_cast = config.resolve("MANYAGENT_OVERLOAD", "dflt")
+    assert no_cast == "dflt"
+    assert_type(no_cast, str)
+    # Env value comes back as the raw ``str`` (no implicit casting).
+    monkeypatch.setenv("MANYAGENT_OVERLOAD", "42")
+    from_env = config.resolve("MANYAGENT_OVERLOAD", "dflt")
+    assert from_env == "42" and isinstance(from_env, str)
+    assert_type(from_env, str)
+    # Explicit-cast form: result type follows ``cast`` (here ``int``).
+    casted = config.resolve("MANYAGENT_OVERLOAD", 0, cast=int)
+    assert casted == 42
+    assert_type(casted, int)
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

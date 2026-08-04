@@ -122,6 +122,8 @@ class _OpenAICompatModel:
         self._model = model
 
     def complete(self, prompt: str, *, max_tokens: int | None = None) -> str:
+        import json as _json
+
         import httpx
 
         resp = httpx.post(
@@ -131,7 +133,13 @@ class _OpenAICompatModel:
             timeout=float(config.MANYAGENT_DISTILL_TIMEOUT_S),
         )
         resp.raise_for_status()
-        choices = resp.json().get("choices") or [{}]
+        try:
+            body = resp.json()
+        except _json.JSONDecodeError as exc:
+            raise ValueError(
+                f"OpenAI-compat endpoint returned non-JSON response (status {resp.status_code}): {exc}"
+            ) from exc
+        choices = body.get("choices") or [{}]
         return str(choices[0].get("message", {}).get("content", "")).strip()
 
 

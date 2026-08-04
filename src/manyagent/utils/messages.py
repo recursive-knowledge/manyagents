@@ -68,14 +68,14 @@ POST_REJECTED_BY_DISCIPLINE = "post rejected by the discipline (not stored): {re
 POST_STORED = "stored post {post_id}"
 
 # --------------------------------------------------------------------------- #
-# ★ rating (legacy standalone prompt — `manyagent end` on an unrated reflection)
+# ★ rating (legacy standalone prompt — `ma session end` on an unrated reflection)
 # --------------------------------------------------------------------------- #
 
 RATING_HINT = "(Enter=accept, 'skip'=unrated):"
 RATING_UNRECOGNIZED = "  (unrecognized — leaving unrated)"
 
 # --------------------------------------------------------------------------- #
-# `manyagent init` — first-run setup (writes the user-level env file) + the
+# `ma dev init` — first-run setup (writes the user-level env file) + the
 # CLI-boundary failure hint (`cli._guard`)
 # --------------------------------------------------------------------------- #
 
@@ -112,7 +112,7 @@ INIT_DISCLOSURE = (
 INIT_DISCLOSURE_CONFIRM = "Proceed with setup? (public corpus — see above)"
 
 # --------------------------------------------------------------------------- #
-# `manyagent start` — session-start offers and notes
+# `ma session start` — session-start offers and notes
 # --------------------------------------------------------------------------- #
 
 START_CONTINUE_GOAL_OFFER = "your last session worked on /{goal} — continue that goal here?"
@@ -133,7 +133,7 @@ START_GOAL_PICKER_PROMPT = "pick a number to reuse, or type a new goal (Enter to
 START_GOAL_PICKER_MATCH_NOTE = "/{goal} matches an existing bucket — reusing it (knowledge aggregates)"
 
 # --------------------------------------------------------------------------- #
-# agent exit / `manyagent end` — session-end offers
+# agent exit / `ma session end` — session-end offers
 # --------------------------------------------------------------------------- #
 
 AGENT_TRACE_READY = "view trace at {url}"
