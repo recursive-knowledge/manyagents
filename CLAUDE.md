@@ -38,9 +38,10 @@ MANYAGENT_RUN_ONLINE=1      uv run pytest -m online          # opt in to live ag
 Offline end-to-end smoke (drives the real handlers against an in-memory Bank;
 no Supabase, no real LLM): `uv run python scripts/simulate_story.py`.
 
-Pre-flight before real work against a live Bank: `python -m manyagent.preflight`
-validates env / Bank reachability / keys and prints a one-line actionable hint
-on failure (set `MANYAGENT_DEBUG=1` to re-raise).
+Pre-flight before real work against a live Bank: `ma dev preflight` (or
+`python -m manyagent.preflight` in a checkout) validates env / Bank reachability
+/ keys and prints a one-line actionable hint on failure (set `MANYAGENT_DEBUG=1`
+to re-raise).
 
 ## Build conventions
 
