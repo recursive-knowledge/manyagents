@@ -6,7 +6,7 @@ agent's CLI). Read after [Quickstart](quickstart.md). Reference: `manyagent._ins
 
 ## The seam
 
-`manyagent <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
+`ma <name>` calls `adapter.install_skills(*, session_id, oma_home, scope,
 dry_run)` before spawning the PTY. The default ABC implementation
 (`manyagent.adapters.base.Adapter.install_skills`) returns `None` (no-op), so
 adapters that don't expose an in-agent surface (e.g. the `qwen` stub) are

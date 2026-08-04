@@ -148,7 +148,10 @@ async def curate(
     weighted = await weigh_posts(posts, bank=bank)
     system, user = build_distill_prompt(posts=weighted, scope=scope, goal=stored_goal)
 
-    raw = await curator.complete(system, user)
+    try:
+        raw = await curator.complete(system, user)
+    except ValueError as exc:
+        raise CurationError(f"curator model returned an unparseable response: {exc}") from exc
     payload = _extract_json(raw)
     if payload is None:
         raise CurationError("curator returned no recoverable JSON bundle (nothing persisted; run is resumable)")
