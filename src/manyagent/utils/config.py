@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar, overload
 
 _T = TypeVar("_T")
 
@@ -27,13 +27,22 @@ def as_bool(raw: str) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "")
 
 
+# Two typing surfaces over one runtime body: with no ``cast`` the value is
+# returned verbatim from ``os.environ`` / the default, so the result is ``str``
+# (and ``default`` must be a ``str``); with an explicit ``cast`` the result is
+# whatever ``cast`` produces (``_T``). The default ``cast=str`` lives only on
+# the implementation, never on an overload, so mypy never infers ``_T`` from it.
+@overload
+def resolve(name: str, default: str, *, cli_value: str | None = None) -> str: ...
+@overload
+def resolve(name: str, default: _T, *, cast: Callable[[str], _T], cli_value: str | None = None) -> _T: ...
 def resolve(
     name: str,
-    default: _T,
+    default: Any,
     *,
-    cast: Callable[[str], _T] = str,  # type: ignore[assignment]
+    cast: Callable[[str], Any] = str,
     cli_value: str | None = None,
-) -> _T:
+) -> Any:
     """Resolve one tunable with the canonical precedence.
 
     ``cli_value`` (when not ``None``) is the CLI override and wins outright;

@@ -47,7 +47,13 @@ def validate_schema(structured: Any) -> str | None:
     confidence = structured["confidence"].strip().lower()
     if confidence not in CONFIDENCE_LEVELS:
         return f"confidence must be one of {sorted(CONFIDENCE_LEVELS)}, got {structured['confidence']!r}"
+    # Normalize the string "null" (common model output when no JSON null is
+    # used) to Python None before validation, so bank.get_packet("null") is
+    # never called and a forge rejection is not triggered.
     ref = structured.get("evidence_ref")
+    if isinstance(ref, str) and ref.strip().lower() == "null":
+        structured["evidence_ref"] = None
+        ref = None
     if ref is not None and not (isinstance(ref, str) and ref.strip()):
         return "evidence_ref must be a packet-id string or null"
     return None
