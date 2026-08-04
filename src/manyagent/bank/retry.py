@@ -26,6 +26,22 @@ class NonRetryableError(Exception):
     in front of the same error."""
 
 
+def _is_nonretryable_http(exc: BaseException) -> bool:
+    """Return True when *exc* is a 4xx PostgREST/HTTP error that a retry
+    cannot fix (client error).  408 (Request Timeout) and 429 (Too Many
+    Requests) are transient and therefore excluded — those ARE retryable."""
+    # postgrest-py raises ``postgrest.exceptions.APIError``; its ``code``
+    # attribute carries the HTTP status as an int or digit-string.
+    code_attr = getattr(exc, "code", None)
+    if code_attr is not None:
+        try:
+            code = int(code_attr)
+        except (TypeError, ValueError):
+            return False
+        return 400 <= code <= 499 and code not in (408, 429)
+    return False
+
+
 def with_backoff(
     max_retries: int = 3,
     base_delay: float = 0.5,
@@ -44,7 +60,7 @@ def with_backoff(
                     return await func(*args, **kwargs)
                 except exceptions as exc:
                     last_exc = exc
-                    if isinstance(exc, NonRetryableError) or attempt == max_retries:
+                    if isinstance(exc, NonRetryableError) or _is_nonretryable_http(exc) or attempt == max_retries:
                         raise
                     await asyncio.sleep(delay)
                     delay *= 2
