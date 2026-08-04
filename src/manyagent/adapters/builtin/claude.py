@@ -49,7 +49,7 @@ class ClaudeAdapter(_StructuredBuiltin):
         """Drop manyagent's skill files + register the MCP server entry so the user
         can type ``/self-distill`` (etc.) inside Claude Code. Idempotent;
         every write is logged in ``$MANYAGENT_HOME/installed/claude.json`` and
-        ``manyagent uninstall claude`` reverses it cleanly (manyagent.adapters.skills.claude)."""
+        ``ma agent unregister claude`` reverses it cleanly (manyagent.adapters.skills.claude)."""
         from pathlib import Path
 
         from manyagent.adapters.skills.claude import install
