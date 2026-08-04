@@ -108,7 +108,13 @@ POST_ANTI_META_BLOCK = (
 # Rendered-prompt CI guard (mirrors swarms ``_REQUIRED_PHRASES``): if any
 # clause is missing from the injected prompt the agent cannot see the
 # blacklist, silently defeating the discipline.
-_REQUIRED_PHRASES: tuple[str, ...] = (
+#
+# Split into shared (present in BOTH the curator block and the post block)
+# and curator-only (present ONLY in ANTI_META_BLOCK / distill prompts).
+# ``assert_anti_meta_rules_present`` checks only the shared phrases by
+# default for a post prompt, so that ``render_post_prompt`` output does
+# not raise a false-positive AssertionError.
+_SHARED_REQUIRED_PHRASES: tuple[str, ...] = (
     "STRICT ANTI-META RULES",
     "validate first",
     "decompose before solving",
@@ -117,16 +123,29 @@ _REQUIRED_PHRASES: tuple[str, ...] = (
     "REQUIRE concrete grounding",
     "Abstract nouns alone",
     "REQUIRE evidence grounding",
+)
+
+_CURATOR_ONLY_PHRASES: tuple[str, ...] = (
     "evidence_post_ids",
     "at most 5 insights",
     "5 pitfalls",
     "5 checks",
 )
 
+# Kept for backward compatibility — the full union used by the curator prompt.
+_REQUIRED_PHRASES: tuple[str, ...] = _SHARED_REQUIRED_PHRASES + _CURATOR_ONLY_PHRASES
 
-def assert_anti_meta_rules_present(text: str) -> None:
-    """CI helper: confirm a rendered prompt exposes every required clause."""
-    for phrase in _REQUIRED_PHRASES:
+
+def assert_anti_meta_rules_present(text: str, *, post_prompt: bool = False) -> None:
+    """CI helper: confirm a rendered prompt exposes every required clause.
+
+    When ``post_prompt=True`` only the shared phrases are checked — the
+    curator-only phrases (``evidence_post_ids``, insight/pitfall/check caps)
+    are intentionally absent from the post-flow prompt and must not raise a
+    false-positive AssertionError against ``render_post_prompt()`` output.
+    """
+    phrases = _SHARED_REQUIRED_PHRASES if post_prompt else _REQUIRED_PHRASES
+    for phrase in phrases:
         if phrase not in text:
             raise AssertionError(
                 f"Expected anti-meta phrase {phrase!r} in rendered prompt; "
@@ -170,12 +189,23 @@ def is_concrete(text: str) -> bool:
     return CONCRETE_RE.search(stripped) is not None
 
 
+# Whole-word pattern for the single-word phrase "iterate": substring matching
+# would falsely flag "iteration", "iterator", "max_iter=", "reiterate", etc.
+# All other banned phrases are multi-word and cannot collide this way.
+_ITERATE_RE = re.compile(r"\biterate\b", re.IGNORECASE)
+
+
 def has_banned_meta(text: str) -> str | None:
     """Return the first banned process-meta phrase present in ``text``
-    (case-insensitive verbatim substring), else ``None``. Mechanical, not
-    model judgement (manyagent.forum.md:62)."""
+    (case-insensitive verbatim substring for multi-word phrases; whole-word
+    regex for the single-word "iterate" to avoid matching "iteration" /
+    "iterator" / "max_iter"), else ``None``. Mechanical, not model judgement
+    (manyagent.forum.md:62)."""
     low = text.lower()
     for phrase in BANNED_META_PHRASES:
-        if phrase in low:
+        if phrase == "iterate":
+            if _ITERATE_RE.search(text):
+                return phrase
+        elif phrase in low:
             return phrase
     return None
