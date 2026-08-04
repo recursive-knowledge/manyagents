@@ -1,14 +1,17 @@
 """The anti-meta discipline — *the single source of truth*
 (manyagent.forum.md "Write-time discipline").
 
-``ANTI_META_BLOCK`` is ported verbatim from
+``ANTI_META_BLOCK`` is adapted from
 ``swarms/discussion/concreteness.py:20-51`` (the empirically-measured
 anti-meta discipline: live audits found cross-task bundles were ~74% process
-meta-advice); ``manyagent.distill`` (M7) imports **this same object** for the
+meta-advice); the concrete-grounding clause was de-biased from swarms'
+ARC/SWE-bench/polyglot benchmark labels to a domain-neutral primitive list so
+the curator does not skew against generalist sessions (prompt-quality review,
+2026-06-22). ``manyagent.distill`` (M7) imports **this same object** for the
 curator prompt — identity (``is``), not equality. The *post* prompt
 (``manyagent.forum.prompt``) renders ``POST_ANTI_META_BLOCK`` instead (decision
 2026-06-11): the curator block's referents ("bullets", "insights/pitfalls/
-checks", "evidence_post_ids", ARC/SWE-bench/polyglot) don't exist in the
+checks", "evidence_post_ids") don't exist in the
 single-post flow and a live distiller followed them into a reflection. The
 single-source contract holds at the level of ``BANNED_META_PHRASES`` and the
 mechanical primitives below, which both blocks and both parsers share.
@@ -33,11 +36,9 @@ ANTI_META_BLOCK = (
     "lifted and dropped into a software-engineering tutorial unchanged, "
     "it is not an insight -- drop it.\n"
     "- REQUIRE concrete grounding. Every bullet must name at least one "
-    "concrete primitive drawn from the posts: e.g. a specific grid "
-    "operation, color index, shape signature, transformation rule "
-    "(ARC); a specific API call, function/class name, import, file "
-    "path, or code pattern (SWE-bench); a specific language feature, "
-    "library function, stdlib module, or test-runner flag (polyglot). "
+    "concrete primitive drawn from the posts, from this domain-neutral "
+    "list: a specific API call, a function name or file path, a CLI flag, "
+    "an error/exception type, or a data-shape invariant. "
     'Abstract nouns alone ("structure", "pattern", "approach") do '
     "NOT count as concrete.\n"
     "- REQUIRE evidence grounding. Every bullet must be derivable from "
@@ -47,8 +48,8 @@ ANTI_META_BLOCK = (
     "evidence_post_ids empty and make the attempt grounding explicit.\n"
     "- PREFER transferable wording. For cross-task insights, describe "
     "the primitive generically enough to apply across multiple tasks, "
-    'but keep the primitive itself concrete (e.g. "BFS flood-fill on '
-    '8-neighborhood to isolate connected regions of the same color" -- '
+    'but keep the primitive itself concrete (e.g. "set a bounded '
+    'connect-timeout on the HTTP client and retry only on 5xx" -- '
     "concrete operation, still task-agnostic).\n"
     "- QUALITY OVER QUANTITY. Return at most 5 insights, 5 pitfalls, "
     "and 5 checks. Pick the best bullets, not the most. Empty lists "
@@ -77,8 +78,8 @@ ABSTRACT_NOUNS: tuple[str, ...] = ("structure", "pattern", "approach")
 # The write-time discipline rendered into the *post* prompt (`/self-distill` /
 # `/discuss` — `manyagent.forum.prompt.render_post_prompt`). ``ANTI_META_BLOCK``
 # above is the CURATOR's block: it speaks in curator referents ("bullets",
-# "insights/pitfalls/checks", "evidence_post_ids", ARC/SWE-bench/polyglot
-# domains) that do not exist in the single-post reflection/reply flow, and a
+# "insights/pitfalls/checks", "evidence_post_ids") that do not exist in the
+# single-post reflection/reply flow, and a
 # live run (2026-06-11) showed the headless distiller following those foreign
 # rules into the post. This block carries the SAME banned-phrase blacklist —
 # built from ``BANNED_META_PHRASES``, the single source of truth the parser

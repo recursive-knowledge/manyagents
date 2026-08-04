@@ -84,9 +84,46 @@ _OUTPUT_SCHEMA = (
     "cited post. Paraphrases are DROPPED — the quote is what proves the "
     "Insight is grounded, not invented. Do not invent post ids.\n"
     "- At most 5 Insights per bucket. Prefer fewer, higher-signal.\n"
+    "- CONFIDENCE: mark confidence='high' ONLY if the Insight's evidence "
+    "cites >=2 DISTINCT sessions (recurrence). A claim grounded in a single "
+    "session is at most 'medium' — the curator demotes a single-session "
+    "'high' to 'medium' mechanically.\n"
     "- Weight high-reuse / high-rating authors over unrated ones when claims "
     "conflict; a low-rated or contradicted claim becomes a "
     "rejected_hypotheses/pitfalls Insight, not a transferable one.\n"
+)
+
+# One worked example pair (models follow examples far better than prose). The
+# GOOD Insight is concrete, bounded, and evidence-grounded; the BAD Insight is
+# the meta/vague anti-pattern the rules forbid (no concrete primitive, no
+# boundary, no verbatim evidence). Domain-neutral on purpose — a generic HTTP
+# client, not any one benchmark — so the curator is not biased toward a domain.
+_FEWSHOT = (
+    "EXAMPLE (one good Insight, one bad Insight — for shape only; do NOT copy "
+    "this text or its post ids into your output):\n"
+    "GOOD (a transferable_insight; concrete primitive, bounded, verbatim "
+    "evidence from >=2 sessions => confidence high):\n"
+    "{\n"
+    '  "text": "set connect_timeout=2s on the requests.Session and retry only '
+    'on HTTP 5xx, not on 4xx",\n'
+    '  "applies_when": "the client talks to a flaky upstream that intermittently '
+    'returns 503",\n'
+    '  "does_not_apply_when": "the upstream returns 4xx (a 4xx is a client bug; '
+    'retrying masks it)",\n'
+    '  "evidence": [{"post_id": "<id-A>", "quote": "<verbatim excerpt naming '
+    'connect_timeout>"}, {"post_id": "<id-B>", "quote": "<verbatim excerpt from '
+    'a second session>"}],\n'
+    '  "confidence": "high"\n'
+    "}\n"
+    "BAD (REJECTED — process meta, no concrete primitive, unbounded boundary, "
+    "no verbatim evidence): \n"
+    "{\n"
+    '  "text": "validate first and check edge cases before shipping",\n'
+    '  "applies_when": "any task",\n'
+    '  "does_not_apply_when": "never",\n'
+    '  "evidence": [],\n'
+    '  "confidence": "high"\n'
+    "}\n"
 )
 
 # Sanitize rendered post text exactly as swarms ``_sanitize_prompt_excerpt``:
@@ -101,14 +138,25 @@ def _sanitize(value: Any, *, max_chars: int = _POST_EXCERPT_CHARS) -> str:
     text = _PROTOCOL_LINE_RE.sub(r"\1[\2]\3", text)
     text = " ".join(text.splitlines())
     if len(text) > max_chars:
-        return text[:max_chars] + "..."
+        cut = text[:max_chars]
+        # Truncate at the last word boundary so a quote is not cut mid-word
+        # (a mid-word cut leaves an unmatched fragment that fails the curator's
+        # verbatim check). Fall back to the hard cut if there is no whitespace.
+        boundary = cut.rfind(" ")
+        if boundary > 0:
+            cut = cut[:boundary]
+        return cut + "..."
     return text
 
 
 def _render_post(post: dict[str, Any]) -> str:
     structured = post.get("structured")
     if isinstance(structured, dict):
-        body = " | ".join(f"{k}={_sanitize(v)}" for k, v in structured.items() if isinstance(v, str))
+        # Render bare field VALUES (no `key=` prefix) joined by ` | `. The
+        # curator's verbatim check (parse._post_searchable) builds its corpus
+        # from the structured *values* only, so a `key=` prefix here would let
+        # the model quote `field=...` and fail the verbatim substring check.
+        body = " | ".join(_sanitize(v) for v in structured.values() if isinstance(v, str))
     else:
         body = _sanitize(post.get("text") or post.get("content"))
     meta = f"kind={post.get('kind')}"
@@ -130,7 +178,7 @@ def _stable_system(scope: str) -> str:
     ``scope`` (role directive + ANTI_META_BLOCK + schema); contains NO
     per-call post data."""
     directive = _PER_GOAL_DIRECTIVE if scope == "per_goal" else _CROSS_GOAL_DIRECTIVE
-    return f"{_SYSTEM_ROLE}\n{directive}\n{ANTI_META_BLOCK}\n{_OUTPUT_SCHEMA}"
+    return f"{_SYSTEM_ROLE}\n{directive}\n{ANTI_META_BLOCK}\n{_OUTPUT_SCHEMA}\n{_FEWSHOT}"
 
 
 def build_distill_prompt(
