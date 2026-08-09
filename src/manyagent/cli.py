@@ -1677,6 +1677,152 @@ async def _do_session_list(args: argparse.Namespace, *, bank: Bank, io: tuple[In
     return 0
 
 
+async def _do_session_explain(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
+    """``ma session explain <id>`` — walk the provenance chain for a packet or
+    a session.
+
+    KSI (arXiv:2607.19592) claims that moving improvement into the knowledge
+    makes it *inspectable*. The Bank already stores the whole lineage — a
+    bundle names its parent posts, each Insight quotes the post that grounds
+    it, each post names its session and agent — but nothing surfaced it, so the
+    claim was untestable from the CLI. This is that walk, in the spirit of
+    entire.io's chain of command: it shows how a high-level goal decomposed
+    into the individual sessions and claims that produced a piece of knowledge.
+
+    Read-only and degrades rather than fails: a parent that is gone or
+    quarantined is reported in place, never raised, so a partial chain still
+    prints.
+    """
+    from rich.text import Text as _T
+
+    ident = str(args.id).strip()
+    packet = await bank.get_packet(ident)
+    if packet is not None:
+        return await _explain_packet(packet, bank=bank, io=io)
+
+    session = await bank.get_session(ident)
+    if session is None:
+        io[1](ui.render(_T(messages.EXPLAIN_UNKNOWN.format(id=ident), style="yellow")))
+        return 1
+    return await _explain_session(session, bank=bank, io=io)
+
+
+def _explain_header(packet: dict[str, Any]) -> str:
+    kind = str(packet.get("type") or "?")
+    bits = [f"{kind} {packet.get('id')}"]
+    for key in ("goal", "scope", "curator", "kind", "stance"):
+        val = packet.get(key)
+        if val:
+            bits.append(f"{key}={val}")
+    if packet.get("rating") is not None:
+        bits.append(f"rating={packet.get('rating')}")
+    if packet.get("quarantined"):
+        bits.append("QUARANTINED")
+    return " · ".join(bits)
+
+
+async def _explain_packet(packet: dict[str, Any], *, bank: Bank, io: tuple[In, Out]) -> int:
+    """One packet's chain: upward to what produced it, downward to what reuses it."""
+    from rich.text import Text as _T
+
+    io[1](ui.render(_T(_explain_header(packet), style="bold")))
+
+    if packet.get("type") == "distill":
+        await _explain_bundle_parents(packet, bank=bank, io=io)
+        _explain_bundle_insights(packet, io=io)
+        return 0
+
+    # A post or a raw trace: name its container, then who cites it downstream.
+    sid = str(packet.get("session_id") or "")
+    if sid:
+        io[1](f"  session {sid}  agent {packet.get('agent_id') or '—'}")
+    structured = packet.get("structured")
+    if isinstance(structured, dict):
+        io[1](ui.render(ui.render_post(structured, kind=str(packet.get("kind") or "reflection"))))
+    await _explain_downstream(str(packet.get("id")), bank=bank, io=io)
+    return 0
+
+
+async def _explain_bundle_parents(packet: dict[str, Any], *, bank: Bank, io: tuple[In, Out]) -> None:
+    parents = [str(x) for x in (packet.get("parents") or [])]
+    if not parents:
+        io[1](f"  {messages.EXPLAIN_NO_PARENTS}")
+        return
+    sessions: set[str] = set()
+    lines: list[str] = []
+    for pid in parents:
+        parent = await bank.get_packet(pid)
+        if parent is None:
+            lines.append(f"    {pid}  {messages.EXPLAIN_MISSING_PARENT}")
+            continue
+        psid = str(parent.get("session_id") or "")
+        sessions.add(psid)
+        rating = parent.get("rating")
+        star = f" ★{rating}" if rating is not None else ""
+        flag = "  QUARANTINED" if parent.get("quarantined") else ""
+        lines.append(f"    {pid}  session {psid}  agent {parent.get('agent_id') or '—'}{star}{flag}")
+    io[1](f"  synthesized {len(parents)} post(s) from {len(sessions)} session(s):")
+    for line in lines:
+        io[1](line)
+
+
+def _explain_bundle_insights(packet: dict[str, Any], *, io: tuple[In, Out]) -> None:
+    """Each Insight with the boundary that boxes it and the quote that grounds it."""
+    from manyagent.distill.schema import BUCKETS  # lazy: keeps `ma <agent>` startup light
+
+    bundle = packet.get("bundle")
+    if not isinstance(bundle, dict):
+        return
+    for bucket in BUCKETS:
+        items = bundle.get(bucket)
+        if not isinstance(items, list) or not items:
+            continue
+        io[1](f"  {bucket}:")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            io[1](f"    - {item.get('text')}")
+            if item.get("applies_when"):
+                io[1](f"        applies when   : {item.get('applies_when')}")
+            if item.get("does_not_apply_when"):
+                io[1](f"        does not apply : {item.get('does_not_apply_when')}")
+            for ev in item.get("evidence") or []:
+                if isinstance(ev, dict):
+                    io[1](f'        grounded in    : {ev.get("post_id")} — "{ev.get("quote")}"')
+
+
+async def _explain_downstream(pid: str, *, bank: Bank, io: tuple[In, Out]) -> None:
+    """Which bundles cite this post. The reuse direction of the chain."""
+    citing = [d for d in await bank.list_packets(type="distill") if pid in [str(x) for x in (d.get("parents") or [])]]
+    if not citing:
+        io[1](f"  {messages.EXPLAIN_NO_DOWNSTREAM}")
+        return
+    io[1](f"  cited by {len(citing)} bundle(s):")
+    for d in citing:
+        io[1](f"    {d.get('id')}  scope={d.get('scope')}  goal={d.get('goal') or '—'}")
+
+
+async def _explain_session(session: dict[str, Any], *, bank: Bank, io: tuple[In, Out]) -> int:
+    from rich.text import Text as _T
+
+    sid = str(session.get("id"))
+    io[1](
+        ui.render(
+            _T(
+                f"session {sid} · goal={session.get('goal') or '—'} · status={session.get('status') or '—'}",
+                style="bold",
+            )
+        )
+    )
+    packets = await bank.list_packets(session_id=sid)
+    if not packets:
+        io[1](f"  {messages.EXPLAIN_EMPTY_SESSION.format(id=sid)}")
+        return 0
+    for p in packets:
+        io[1](f"    {_explain_header(p)}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # argparse + sniffing dispatch
 # --------------------------------------------------------------------------- #
@@ -1758,6 +1904,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sl.add_argument("--since", help="only sessions created after (ISO date or offset like 7d)")
     sl.add_argument("--until", help="only sessions created before (ISO date or offset like 7d)")
     sl.add_argument("--goal", help="only sessions filed under this goal")
+    sx = session_sub.add_parser("explain", help="walk the provenance chain of a packet or session")
+    sx.add_argument("id", help="a packet id (post/bundle) or a session id")
 
     # --- ma dev … : first-run setup + diagnostics ---------------------------
     dev = group.add_parser("dev", help="first-run setup + diagnostics")
@@ -1781,7 +1929,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # a group with no verb prints that group's help.
 _DISPATCH: dict[str, dict[str, Callable[..., Coroutine[Any, Any, int]]]] = {
     "agent": {"register": _do_agent_register, "unregister": _do_agent_unregister, "list": _do_agent_list},
-    "session": {"start": _do_start, "end": _do_end, "list": _do_session_list},
+    "session": {"start": _do_start, "end": _do_end, "list": _do_session_list, "explain": _do_session_explain},
     "dev": {"init": _do_init, "preflight": _do_preflight, "quarantine": _do_quarantine},
 }
 
