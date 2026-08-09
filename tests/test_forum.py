@@ -465,3 +465,31 @@ def test_render_post_prompt_reply_includes_outer_shape() -> None:
     assert '"structured"' in p
     # The instruction that these are OUTER fields (not inside structured).
     assert "OUTER" in p or "outer" in p
+
+
+# --------------------------------------------------------------------------- #
+# is_concrete — terminal-domain primitives (2026-08-09)
+# --------------------------------------------------------------------------- #
+
+
+def test_is_concrete_accepts_bracketed_severity_marker() -> None:
+    """KSI evaluates a terminal family whose primitives are log markers, not
+    code identifiers. Measured drop: this Insight was rejected as non-concrete
+    while a sibling from the same post survived only because the model happened
+    to backtick its command."""
+    from manyagent.forum.anti_meta import is_concrete
+
+    assert is_concrete("nginx accepts duplicate listen directives, causing [emerg] errors.")
+    assert is_concrete("the unit logged [warning] and kept the old worker")
+
+
+def test_is_concrete_still_rejects_prose_and_abstract_nouns() -> None:
+    """The bracketed alternative must not open the gate to prose."""
+    from manyagent.forum.anti_meta import is_concrete
+
+    assert not is_concrete("be more careful when restarting the service")
+    assert not is_concrete("the approach worked well overall")
+    assert not is_concrete("structure")
+    assert not is_concrete("pattern")
+    # A one- or two-letter bracket is not a log level (array/footnote shaped).
+    assert not is_concrete("item [a] came before item [bc]")

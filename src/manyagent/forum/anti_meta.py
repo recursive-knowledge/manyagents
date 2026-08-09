@@ -173,7 +173,19 @@ def assert_anti_meta_rules_present(text: str, *, post_prompt: bool = False) -> N
 
 # A concrete primitive looks like code/identifier material, not prose: a
 # `backticked` token, dotted.path, snake_case/CamelCase id, a call(), a
-# --flag, a /path, an Error/Exception name.
+# --flag, a /path, an Error/Exception name, a [severity] marker.
+#
+# The alternatives above the last one came from swarms, whose benchmarks were
+# ARC, SWE-bench and polyglot — grid operations and code identifiers. KSI also
+# evaluates a *terminal* family, where the concrete primitives are log markers
+# and command output rather than code. Measured on the terminal scenario in
+# ``scripts/simulate_ksi.py``: the Insight "nginx accepts duplicate listen
+# directives in different files, causing [emerg] errors" was dropped as
+# non-concrete while a sibling Insight built from the *same* post survived,
+# because the model happened to backtick ``nginx -t`` there and not here. The
+# bracketed-severity alternative closes that gap. It stays deliberately narrow
+# — a lowercase word in square brackets, which is log-level shaped — because
+# every widening of this gate admits prose into the corpus.
 CONCRETE_RE = re.compile(
     r"`[^`]+`"  # backticked token
     r"|\b\w+\.\w+"  # dotted path / attribute / file.ext
@@ -183,6 +195,7 @@ CONCRETE_RE = re.compile(
     r"|\b[a-z]+_[a-z_]+\b"  # snake_case
     r"|\b[A-Z][a-z]+[A-Z]\w+\b"  # CamelCase
     r"|\b\w+(?:Error|Exception)\b"  # an error type
+    r"|\[[a-z]{3,}\]"  # a [severity] / log-level marker
 )
 
 

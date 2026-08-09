@@ -126,10 +126,30 @@ class _OpenAICompatModel:
 
         import httpx
 
+        # ``max_tokens`` used to be accepted and then dropped on the floor, so a
+        # caller bounding cost got no bound at all. It matters most on a
+        # reasoning model: with no ceiling the server happily spends the whole
+        # remaining context window on a chain of thought before the bundle.
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = int(max_tokens)
+
+        extra = config.resolve("MANYAGENT_LLM_EXTRA_BODY", config.MANYAGENT_LLM_EXTRA_BODY).strip()
+        if extra:
+            try:
+                decoded = _json.loads(extra)
+            except ValueError:
+                decoded = None  # a malformed tunable must not break curation
+            if isinstance(decoded, dict):
+                payload.update(decoded)
+
         resp = httpx.post(
             f"{self._base}/chat/completions",
             headers={"Authorization": f"Bearer {self._key}"},
-            json={"model": self._model, "messages": [{"role": "user", "content": prompt}]},
+            json=payload,
             timeout=float(config.MANYAGENT_DISTILL_TIMEOUT_S),
         )
         resp.raise_for_status()

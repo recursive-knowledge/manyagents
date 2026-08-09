@@ -488,3 +488,83 @@ def test_extract_json_fenced_and_plain_still_work() -> None:
 
     assert _extract_json('```json\n{"transferable_insights": []}\n```') == {"transferable_insights": []}
     assert _extract_json('{"pitfalls": []}') == {"pitfalls": []}
+
+
+def test_openai_compat_model_sends_max_tokens_when_given() -> None:
+    """``max_tokens`` was accepted and then never sent, so a caller bounding
+    cost got no bound. It matters most on a reasoning model, which will
+    otherwise spend the whole remaining context on a chain of thought."""
+    import httpx
+
+    from manyagent.distill.resolve import _OpenAICompatModel
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def _fake_post(url: str, **kw: object) -> _Resp:
+        seen.update(kw.get("json") or {})  # type: ignore[arg-type]
+        return _Resp()
+
+    model = _OpenAICompatModel(base_url="http://x/v1", api_key="k", model="m")
+    original = httpx.post
+    httpx.post = _fake_post  # type: ignore[assignment]
+    try:
+        model.complete("p", max_tokens=256)
+        assert seen["max_tokens"] == 256
+        seen.clear()
+        model.complete("p")
+        assert "max_tokens" not in seen  # omitted, not defaulted to a guess
+    finally:
+        httpx.post = original  # type: ignore[assignment]
+
+
+def test_openai_compat_model_merges_extra_body_and_ignores_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MANYAGENT_LLM_EXTRA_BODY carries provider knobs the OpenAI wire format
+    has no field for — notably the reasoning switch. Malformed JSON is ignored
+    rather than fatal: a bad tunable must not break curation."""
+    import httpx
+
+    from manyagent.distill.resolve import _OpenAICompatModel
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def _fake_post(url: str, **kw: object) -> _Resp:
+        seen.clear()
+        seen.update(kw.get("json") or {})  # type: ignore[arg-type]
+        return _Resp()
+
+    model = _OpenAICompatModel(base_url="http://x/v1", api_key="k", model="m")
+    original = httpx.post
+    httpx.post = _fake_post  # type: ignore[assignment]
+    try:
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", '{"chat_template_kwargs":{"enable_thinking":false}}')
+        model.complete("p")
+        assert seen["chat_template_kwargs"] == {"enable_thinking": False}
+
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", "{not json")
+        model.complete("p")  # must not raise
+        assert seen["model"] == "m"
+        assert "chat_template_kwargs" not in seen
+
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", '"a string, not an object"')
+        model.complete("p")  # non-dict JSON is ignored too
+        assert "chat_template_kwargs" not in seen
+    finally:
+        httpx.post = original  # type: ignore[assignment]
