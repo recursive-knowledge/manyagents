@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import re
 from typing import Any
 
 from manyagent.bank import Bank
@@ -39,6 +40,7 @@ from manyagent.core import Packet
 from manyagent.distill.parse import validate_bundle
 from manyagent.distill.prompts import build_distill_prompt
 from manyagent.distill.resolve import Curator, resolve
+from manyagent.distill.schema import BUCKETS
 from manyagent.distill.weighting import weigh_posts
 from manyagent.utils import config
 from manyagent.utils.slug import normalize_goal
@@ -72,22 +74,103 @@ def _packet_id(scope: str, goal: str | None, parent_ids: list[str]) -> str:
     return f"curator/{digest}"
 
 
+_THINK_BLOCK_RE = re.compile(r"<(think|thinking|reasoning)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+
+
+def _end_of_string(text: str, i: int) -> int:
+    """Index just past the JSON string literal that opens at ``text[i]``.
+
+    A backslash escapes the next character, so ``"a\\"b"`` is one string and
+    the inner quote does not end it.
+    """
+    i += 1
+    n = len(text)
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i + 1
+        i += 1
+    return i  # unterminated string: consume the rest
+
+
+def _balanced_object_spans(text: str) -> list[tuple[int, int]]:
+    """Every balanced ``{...}`` span in ``text``, outermost first.
+
+    Braces inside a string literal (``"see {here}"``) are skipped, so they
+    never open or close a span.
+    """
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            i = _end_of_string(text, i)
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                spans.append((start, i + 1))
+        i += 1
+    return spans
+
+
 def _extract_json(raw: str) -> Any | None:
-    """Recover the bundle object from the model's output (tolerant of code
-    fences / surrounding prose). ``None`` ⇒ unrecoverable (CurationError)."""
+    """Recover the bundle object from the model's output. ``None`` ⇒
+    unrecoverable (CurationError).
+
+    Real model output is messier than "JSON, maybe fenced". A reasoning model
+    emits a chain of thought *before* the bundle, and that prose routinely
+    contains braces; a chatty model appends "hope that helps {...}" *after* it.
+    The old first-``{``-to-last-``}`` slice spanned those, so a response that
+    plainly contained a valid bundle decoded to nothing and the whole curation
+    raised. Both shapes are measured, not hypothetical — see
+    ``tests/test_distill.py`` for the captured cases.
+
+    So: strip reasoning blocks, then scan for *balanced* object spans and take
+    the best one. "Best" prefers a span that actually looks like a bundle (it
+    carries a known bucket key) over an incidental object from the prose.
+    """
     raw = raw.strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end > start:
+
+    # A reasoning trace is never the answer; drop it before looking for braces.
+    stripped = _THINK_BLOCK_RE.sub("", raw)
+    # An unterminated <think> (truncated generation) leaves the opener behind.
+    for opener in ("</think>", "</thinking>", "</reasoning>"):
+        idx = stripped.rfind(opener)
+        if idx != -1:
+            stripped = stripped[idx + len(opener) :]
+
+    candidates: list[Any] = []
+    for start, end in _balanced_object_spans(stripped):
         try:
-            return json.loads(raw[start : end + 1])
+            parsed = json.loads(stripped[start:end])
         except json.JSONDecodeError:
-            return None
-    return None
+            continue
+        if isinstance(parsed, dict):
+            candidates.append(parsed)
+    if not candidates:
+        return None
+
+    # Prefer a real bundle over an incidental object mentioned in the prose;
+    # among equals prefer the richest (most buckets present).
+    def _rank(obj: dict[str, Any]) -> tuple[int, int]:
+        buckets = sum(1 for b in BUCKETS if b in obj)
+        return (1 if buckets else 0, buckets)
+
+    return max(candidates, key=_rank)
 
 
 async def _cluster(

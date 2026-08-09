@@ -38,11 +38,15 @@ _SCHEMA = (
     'proposed_next is applied>",\n'
     '  "confidence": "high | medium | low"\n'
     "}\n"
-    "A falsifiable claim, not a summary. The parser DROPS this post "
-    "mechanically if a field is missing/empty, if it names no concrete "
-    "primitive, if it contains banned process-meta wording, or (for a "
-    "citation) if evidence_ref does not resolve to a real post — so write it "
-    "grounded or not at all."
+    "Write a claim that a later agent can prove wrong. Do not write a "
+    "summary.\n"
+    "The parser reads this post mechanically. It drops the post when any of "
+    "these is true:\n"
+    "1. A field is missing or empty.\n"
+    "2. No field names a concrete primitive.\n"
+    "3. A field contains banned process-meta wording.\n"
+    "4. `evidence_ref` does not resolve to a real post.\n"
+    "A dropped post helps nobody. Ground the post, or write no post."
 )
 
 _REPLY_OUTER_SHAPE = (

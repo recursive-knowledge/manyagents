@@ -305,14 +305,22 @@ def test_post_anti_meta_block_shares_blacklist_without_curator_referents() -> No
     """The post prompt's discipline carries the parser's banned-phrase list
     (single source of truth) but none of the curator block's foreign
     referents — a live run (2026-06-11) showed the headless distiller
-    following ARC/'insights'/'evidence_post_ids' rules into a reflection."""
+    following ARC/'insights'/bucket-cap rules into a reflection."""
     from manyagent.forum import POST_ANTI_META_BLOCK, render_post_prompt
     from manyagent.forum.anti_meta import BANNED_META_PHRASES
 
     for phrase in BANNED_META_PHRASES:
         assert phrase in POST_ANTI_META_BLOCK  # the blacklist the parser enforces
     p = render_post_prompt(kind="reflection", goal="g")
-    for curator_only in ("evidence_post_ids", "ARC", "SWE-bench", "polyglot", "5 insights", "5 pitfalls", "5 checks"):
+    for curator_only in (
+        "PREFER transferable wording",
+        "ARC",
+        "SWE-bench",
+        "polyglot",
+        "5 insights",
+        "5 pitfalls",
+        "5 checks",
+    ):
         assert curator_only not in p
     assert "unresolved question is NOT a result" in p  # no fabricated resolutions
 
@@ -384,17 +392,17 @@ def test_render_post_prompt_ordinary_guidance_preserved() -> None:
 
 def test_assert_anti_meta_rules_present_post_prompt_mode() -> None:
     """post_prompt=True must not raise for render_post_prompt() output, which
-    intentionally omits curator-only phrases like evidence_post_ids / 5 insights."""
+    intentionally omits curator-only phrases like the per-bucket caps."""
     from manyagent.forum import render_post_prompt
     from manyagent.forum.anti_meta import assert_anti_meta_rules_present
 
     p = render_post_prompt(kind="reflection", goal="speed")
     # Must not raise — the shared phrases are present even though curator-only
-    # phrases (evidence_post_ids, "5 pitfalls", etc.) are absent.
+    # phrases ("at most 5 insights", "5 pitfalls", etc.) are absent.
     assert_anti_meta_rules_present(p, post_prompt=True)
 
-    # Default (post_prompt=False) raises because evidence_post_ids is absent.
-    with pytest.raises(AssertionError, match="evidence_post_ids"):
+    # Default (post_prompt=False) raises because the curator-only caps are absent.
+    with pytest.raises(AssertionError, match="at most 5 insights"):
         assert_anti_meta_rules_present(p)
 
 
