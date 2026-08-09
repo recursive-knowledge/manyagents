@@ -91,9 +91,14 @@ POST_ANTI_META_BLOCK = (
     "software-engineering tutorial and change nothing.\n"
     "- REQUIRE concrete grounding. Each field must name a concrete primitive "
     "that you touched in this session. A concrete primitive is an API call, "
-    "a function name, a class name, an import, a file path, a CLI flag, or a "
-    'named code pattern. Abstract nouns alone ("structure", "pattern", '
-    '"approach") do NOT count as concrete.\n'
+    "a function name, a class name, an import, a file path, a CLI flag, a "
+    "shell command, or a named code pattern. Abstract nouns alone "
+    '("structure", "pattern", "approach") do NOT count as concrete.\n'
+    "  Put the primitive in `backticks`. The parser looks for code-shaped "
+    "text, and a bare command in prose does not read as code-shaped. Write "
+    "`systemctl restart nginx` returns 0, not: systemctl restart nginx "
+    "returns 0. The second form is dropped even though it says the same "
+    "thing.\n"
     "- REQUIRE evidence grounding. Copy `evidence` word for word from this "
     "session's trace. You may instead cite one prior post and put its packet "
     "id in `evidence_ref`. Never invent a citation.\n"

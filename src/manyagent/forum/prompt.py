@@ -26,14 +26,15 @@ _SCHEMA = (
     "Emit ONE JSON object, nothing else, with exactly these keys:\n"
     "{\n"
     '  "load_bearing_assumption": "<the ONE assumption the work relied on; '
-    "concrete — names a specific tool/API/file/data-shape/invariant, not "
-    "'be careful'>\",\n"
+    "concrete — names a specific tool/API/file/command/data-shape/invariant "
+    "in `backticks`, not 'be careful'>\",\n"
     '  "evidence": "<verbatim 1-3 sentence excerpt from THIS session\'s trace '
     'OR a cited prior post; not a paraphrase>",\n'
     '  "evidence_ref": "<packet id of the cited prior post, or JSON literal '
     'null (not the string "null") if grounded in your own trace>",\n'
     '  "proposed_next": "<ONE concrete change a future agent should try; '
-    'names a file/tool/API/decision-point; differs from what was tried>",\n'
+    "names a file/tool/API/command/decision-point in `backticks`; differs "
+    'from what was tried>",\n'
     '  "predicted_outcome": "<a falsifiable prediction of what happens if '
     'proposed_next is applied>",\n'
     '  "confidence": "high | medium | low"\n'

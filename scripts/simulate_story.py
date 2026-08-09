@@ -27,6 +27,7 @@ os.environ["MANYAGENT_HOME"] = tempfile.mkdtemp(prefix="manyagent-sim-")
 from manyagent import cli
 from manyagent.bank import FakeBank
 from manyagent.capture.models import CanonicalTrace, TraceEvent
+from manyagent.utils import messages
 
 _resolve_mod = importlib.import_module("manyagent.distill.resolve")
 
@@ -82,6 +83,15 @@ class _IO:
         self.out: list[str] = []
 
     def __call__(self, _prompt: str = "") -> str:
+        # The existing-goals picker (2026-06-23) is NOT an allowance gate: it
+        # reads free text, and any non-empty, non-numeric answer becomes a
+        # brand-new goal. The "n" fallback below therefore filed Carol's
+        # session under a goal literally named "n", after which no post
+        # carried `rust-async-runtime` and story B died on an opaque
+        # "RuntimeError: coroutine raised StopIteration". Answer the picker
+        # with Enter, which keeps the goal the story passed explicitly.
+        if messages.START_GOAL_PICKER_PROMPT in _prompt:
+            return ""
         # Fallback for UNSCRIPTED prompts must be "n": allowance gates are
         # affirmative-by-default (2026-06-10), so anything else silently
         # ACCEPTS e.g. the agent-exit "end session?" offer mid-story.
