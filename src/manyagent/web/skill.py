@@ -8,7 +8,7 @@ starts contributing distilled insights to shared goals.
 Zero-config on purpose (pre-alpha): the server defaults to the hosted Bank and a
 **public** writer key (the derived Supabase demo ``authenticated`` JWT —
 manyagent.utils.config._demo_jwt), so no key, no ``manyagent`` install, and no
-``manyagent start`` are required. Only the distilled claim is ever uploaded —
+``ma session start`` are required. Only the distilled claim is ever uploaded —
 never the conversation (manyagent.forum). The document is plain Markdown so it is
 equally readable by a human and followable by an agent.
 """

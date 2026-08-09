@@ -216,7 +216,7 @@ async def story_a(bank: FakeBank) -> None:
     alice_post = next(
         p["id"] for p in bank._packets.values() if p.get("kind") == "reflection" and p.get("goal") == "cfd-solver"
     )
-    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `manyagent end`.")
+    print(f"  Alice posted a falsifiable reflection ({alice_post}), ★4, then `ma session end`.")
     print("  She told no one. The goal — not a session id — is the only key.")
 
     # --- Bob (Codex), a different org, SAME goal, new session ------------

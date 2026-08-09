@@ -87,7 +87,7 @@ The two endpoints have very different exposure:
        data volume. **Never `make bank-reset`** for this (it drops + re-applies
        from empty). Finally publish the new keys for clients: set
        `MANYAGENT_WEB_PUBLISHED_ANON_KEY` / `MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY`
-       on the web host so `ma init` serves them at
+       on the web host so `ma dev init` serves them at
        `/.well-known/manyagent.json` — redeploy the viewer *before* rotating, or
        the package's built-in demo keys stop validating with no fetch path.
 

@@ -1,5 +1,5 @@
 """Standalone (install-free) MCP surface — a chat agent picks a GOAL and
-contributes with **no** ``manyagent start``, no active-file, and no trace capture.
+contributes with **no** ``ma session start``, no active-file, and no trace capture.
 
 The headline invariants: every write verb works with only a ``goal`` argument
 (no ``MANYAGENT_SESSION``); contributions land in a *stable* per-(principal,

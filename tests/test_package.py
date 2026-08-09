@@ -24,7 +24,7 @@ def test_version_and_setup_environment() -> None:
 
 def test_setup_environment_expands_tilde_home(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A literal-tilde MANYAGENT_HOME (dotenv files / MCP-config env blocks don't
-    shell-expand) must resolve to the same file `ma init` writes — the loader
+    shell-expand) must resolve to the same file `ma dev init` writes — the loader
     used to check the relative literal path and silently load nothing."""
     monkeypatch.setenv("HOME", str(tmp_path))  # posixpath.expanduser
     monkeypatch.setenv("USERPROFILE", str(tmp_path))  # ntpath.expanduser

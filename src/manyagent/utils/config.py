@@ -125,9 +125,9 @@ def _demo_jwt(role: str) -> str:
     of migration 00004 — never service_role). They are the offline fallback
     for the hosted pre-alpha Bank, which has not rotated its secret; the
     CURRENT connection is published at /.well-known/manyagent.json
-    (manyagent.web) and fetched/cached by `ma init`. Rotating the hosted
+    (manyagent.web) and fetched/cached by `ma dev init`. Rotating the hosted
     secret invalidates these mechanically — the intended failure mode (the
-    CLI error hint routes to `ma init`, which fetches the new keys).
+    CLI error hint routes to `ma dev init`, which fetches the new keys).
 
     Derived, never hardcoded: **no key-shaped literal may live in this
     repo** — a literal would train scanners to cry wolf and train future
@@ -160,7 +160,7 @@ MANYAGENT_BANK_TRUSTED_KEY: str = resolve("MANYAGENT_BANK_TRUSTED_KEY", _demo_jw
 # MANYAGENT_BANK_* above — the web host's own env may hold a privileged key
 # (service_role locally) that must never reach the published document. After
 # rotating the hosted stack's JWT secret, set these on the web deployment;
-# clients pick the new values up at their next `ma init`.
+# clients pick the new values up at their next `ma dev init`.
 MANYAGENT_WEB_PUBLISHED_BANK_URL: str = resolve("MANYAGENT_WEB_PUBLISHED_BANK_URL", MANYAGENT_BANK_URL_DEFAULT)
 MANYAGENT_WEB_PUBLISHED_ANON_KEY: str = resolve("MANYAGENT_WEB_PUBLISHED_ANON_KEY", _demo_jwt("anon"))
 MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY: str = resolve("MANYAGENT_WEB_PUBLISHED_TRUSTED_KEY", _demo_jwt("authenticated"))

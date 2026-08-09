@@ -37,7 +37,7 @@ def _tmp_home(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # (prevents MANYAGENT_SESSION pollution between tests).
     monkeypatch.delenv("MANYAGENT_SESSION", raising=False)
     monkeypatch.setenv("MANYAGENT_INSTALL_SKILLS", "deny")  # tests never write to ~/.claude
-    # `ma init`'s well-known fetch must never leave the test process; tests
+    # `ma dev init`'s well-known fetch must never leave the test process; tests
     # of the fetch behavior monkeypatch their own return value.
     monkeypatch.setattr(cli, "_fetch_published_config", lambda: None)
     from manyagent.forum import clear_discuss_gate
@@ -723,7 +723,7 @@ async def test_end_star_rates_last_unrated_reflection(fake_bank: FakeBank) -> No
 
 
 # --------------------------------------------------------------------------- #
-# manyagent end — per-injection "did this help?" tap (00012; capture-only)
+# ma session end — per-injection "did this help?" tap (00012; capture-only)
 # --------------------------------------------------------------------------- #
 
 

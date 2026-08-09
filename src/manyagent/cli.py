@@ -330,7 +330,7 @@ def _goal_url(goal: str) -> str:
 
 
 def _open_url(session_id: str, goal: str | None) -> str:
-    """The `open:` link `ma start` prints: the goal board when the session has a
+    """The `open:` link `ma session start` prints: the goal board when the session has a
     goal, else the session deep-link (an ungoaled session has no goal board)."""
     return _goal_url(goal) if goal else _session_url(session_id)
 
@@ -424,7 +424,7 @@ def _fetch_published_config() -> dict[str, str] | None:
 
 def _init_published(resolved_url: str, io: tuple[In, Out]) -> dict[str, str]:
     """The deployment's published connection, when it applies. A custom-Bank
-    user is never fetched for — `ma init` must not repoint them at the public
+    user is never fetched for — `ma dev init` must not repoint them at the public
     deployment; the three outcomes each narrate one dim/yellow line."""
     if resolved_url != config.MANYAGENT_BANK_URL_DEFAULT:
         io[1](ui.render(Text(messages.INIT_CUSTOM_BANK_NOTE, style="dim")))
@@ -498,7 +498,7 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
         ("MANYAGENT_BANK_URL", url.strip()),
         ("MANYAGENT_BANK_TRUSTED_KEY", key.strip()),
         # Flag wins, else published, else carry forward what's already
-        # resolvable — a key rotation via `ma init` must not silently discard
+        # resolvable — a key rotation via `ma dev init` must not silently discard
         # the stored anon key or the CF Access pair the db tunnel needs.
         (
             "MANYAGENT_BANK_ANON_KEY",
@@ -514,7 +514,7 @@ async def _do_init(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) 
         ),
     )
     content = (
-        "# Written by `ma init` (manyagent.cli). Loaded at import from ANY working\n"
+        "# Written by `ma dev init` (manyagent.cli). Loaded at import from ANY working\n"
         "# directory; live env vars and ./manyagent.env win on overlap.\n"
         + "".join(_env_line(name, value) for name, value in pairs if value)
     )
@@ -1100,7 +1100,7 @@ async def _do_agent_unregister(args: argparse.Namespace, *, bank: Bank, io: tupl
 async def _do_agent_list(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -> int:
     """``ma agent list [-v]`` — list every agent that currently has an in-agent
     install (skills + MCP server entry). Plain shows one line per agent; ``-v``
-    expands the per-file manifest it owns (the old ``ma status`` detail)."""
+    expands the per-file manifest it owns (the old ``manyagent status`` detail)."""
     from manyagent._installer import list_installed
 
     manifests = list_installed(_manyagent_home())
@@ -1498,7 +1498,7 @@ async def _do_end(args: argparse.Namespace, *, bank: Bank, io: tuple[In, Out]) -
                     )
                 )
         # 00013 per-injection "did this help?" tap (capture-only — does NOT feed
-        # reuse_score, the deferred formal eval). Best-effort: never break `manyagent end`.
+        # reuse_score, the deferred formal eval). Best-effort: never break `ma session end`.
         try:
             await _offer_helpful_tap(sid_, bank=bank, io=io)
         except Exception as exc:

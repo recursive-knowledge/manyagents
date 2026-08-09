@@ -55,7 +55,7 @@ def _session_id() -> str:
 
 # --------------------------------------------------------------------------- #
 # standalone (install-free) resolution: a chat agent picks a GOAL and the server
-# maps it to a stable (principal, goal) session — no `manyagent start`, no active
+# maps it to a stable (principal, goal) session — no `ma session start`, no active
 # file, no trace capture. `goal=None` on any verb falls back to `_session_id()`
 # so the installed in-agent flow is unchanged.
 # --------------------------------------------------------------------------- #
@@ -372,7 +372,7 @@ async def inject_commit(packet: str, goal: str | None = None) -> dict[str, Any]:
 
 async def list_goals(query: str = "", limit: int = 20) -> dict[str, Any]:
     """List recent goals in the Bank so a chat agent can choose one to contribute
-    to — the install-free entry point (no session, no `manyagent start`). Returns
+    to — the install-free entry point (no session, no `ma session start`). Returns
     each goal's slug, human label, and activity (threads/digests/agents/latest),
     most-recently-active first; optional substring ``query`` filters slug/label."""
     from manyagent.bank import get_bank
