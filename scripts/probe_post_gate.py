@@ -43,9 +43,9 @@ GOAL = "terminal-service-restart"
 
 def _model() -> _OpenAICompatModel:
     return _OpenAICompatModel(
-        base_url=os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:30005/v1"),
+        base_url=os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:8000/v1"),
         api_key=os.environ.get("MANYAGENT_LLM_API_KEY", "local"),
-        model=os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.6-35b-a3b"),
+        model=os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.5-9b"),
     )
 
 

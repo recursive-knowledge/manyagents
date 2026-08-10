@@ -9,9 +9,9 @@ real ``build_distill_prompt``, the real ``_extract_json``, and the real
 Usage (points at any OpenAI-compatible endpoint; the local debug model by
 default)::
 
-    MANYAGENT_LLM_BASE_URL=http://localhost:30005/v1 \
+    MANYAGENT_LLM_BASE_URL=http://localhost:8000/v1 \
     MANYAGENT_LLM_API_KEY=local \
-    MANYAGENT_LLM_MODEL=qwen3.6-35b-a3b \
+    MANYAGENT_LLM_MODEL=qwen3.5-9b \
     uv run python scripts/simulate_ksi.py
 
 Add ``--json out.json`` to write the full record for a before/after diff.
@@ -61,9 +61,9 @@ _CONCRETE = re.compile(
 def _model() -> Any:
     from manyagent.distill.resolve import _OpenAICompatModel
 
-    base = os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:30005/v1")
+    base = os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:8000/v1")
     key = os.environ.get("MANYAGENT_LLM_API_KEY", "local")
-    name = os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.6-35b-a3b")
+    name = os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.5-9b")
     return _OpenAICompatModel(base_url=base, api_key=key, model=name)
 
 

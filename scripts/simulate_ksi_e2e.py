@@ -32,9 +32,9 @@ that rather than retrying, because a drop is the finding.
 
 Usage::
 
-    MANYAGENT_LLM_BASE_URL=http://localhost:30005/v1 \
+    MANYAGENT_LLM_BASE_URL=http://localhost:8000/v1 \
     MANYAGENT_LLM_API_KEY=local \
-    MANYAGENT_LLM_MODEL=qwen3.6-35b-a3b \
+    MANYAGENT_LLM_MODEL=qwen3.5-9b \
     MANYAGENT_LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' \
     uv run python scripts/simulate_ksi_e2e.py
 """
@@ -89,9 +89,9 @@ class LiveModel:
     def complete(self, prompt: str, *, max_tokens: int | None = None) -> str:
         self.calls += 1
         model = _OpenAICompatModel(
-            base_url=os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:30005/v1"),
+            base_url=os.environ.get("MANYAGENT_LLM_BASE_URL", "http://localhost:8000/v1"),
             api_key=os.environ.get("MANYAGENT_LLM_API_KEY", "local"),
-            model=os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.6-35b-a3b"),
+            model=os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.5-9b"),
         )
         out = model.complete(prompt, max_tokens=max_tokens)
         self.log.append((prompt, out))
