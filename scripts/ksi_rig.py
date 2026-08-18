@@ -225,7 +225,16 @@ class InfraError(RuntimeError):
 
 
 class LiveModel:
-    def __init__(self, *, retries: int = 3, backoff: float = 0.5) -> None:
+    """Bounded on purpose. The handlers call ``complete`` without a
+    ``max_tokens``, and an unbounded request against a 32k-context server lets
+    the model spend the whole window on one answer: a 9-run sweep passed twelve
+    minutes with the endpoint otherwise idle. A post needs a few hundred tokens
+    and a six-bucket bundle a couple of thousand, so the cap below is generous
+    for the task and still finite. Production wants the same bound for the same
+    reason, which is why ``_OpenAICompatModel`` now forwards it."""
+
+    def __init__(self, *, retries: int = 3, backoff: float = 0.5, max_tokens: int = 2048) -> None:
+        self._cap = max_tokens
         self.responses: list[Any] = []
         self.calls = 0
         self.infra_failures = 0
@@ -241,11 +250,12 @@ class LiveModel:
             api_key=os.environ.get("MANYAGENT_LLM_API_KEY", "local"),
             model=os.environ.get("MANYAGENT_LLM_MODEL", "qwen3.5-9b"),
         )
+        cap = max_tokens if max_tokens is not None else self._cap
         last: Exception | None = None
         for attempt in range(self._retries):
             try:
                 self.calls += 1
-                return client.complete(prompt, max_tokens=max_tokens)
+                return client.complete(prompt, max_tokens=cap)
             except Exception as exc:  # transient endpoint trouble
                 last = exc
                 time.sleep(self._backoff * (2**attempt))
@@ -469,7 +479,7 @@ def report(runs: list[Run], model: LiveModel) -> None:
 async def main_async(args: argparse.Namespace) -> int:
     # Seeded only so a sweep is reproducible; nothing here is security-sensitive.
     rng = random.Random(args.seed)  # noqa: S311
-    model = LiveModel(retries=args.retries)
+    model = LiveModel(retries=args.retries, max_tokens=args.max_tokens)
     doms = [d for d in DOMAINS if args.domain in ("all", d.key)]
     runs: list[Run] = []
     total = len(doms) * args.repeat
@@ -479,37 +489,63 @@ async def main_async(args: argparse.Namespace) -> int:
             i += 1
             seed = rng.randrange(1 << 30)
             print(f"[{i}/{total}] {dom.key} rep={rep + 1} seed={seed} ...", flush=True)
+            started = time.monotonic()
             try:
-                runs.append(await one_run(dom, seed, model=model))
-            except Exception as exc:  # a rig bug must not lose the runs already done
+                # A single wedged generation must not cost the whole sweep. One
+                # run that hung past the endpoint timeout, retried, and hung
+                # again held a 9-run sweep open indefinitely; with results only
+                # written at the end, killing it would have discarded the eight
+                # runs already finished.
+                runs.append(await asyncio.wait_for(one_run(dom, seed, model=model), timeout=args.run_timeout))
+            except TimeoutError:
+                print(f"    run timed out after {args.run_timeout}s — recorded as a failed run")
+                bad = Run(domain=dom.key, seed=seed)
+                bad.record("rig", False, f"run exceeded {args.run_timeout}s")
+                bad.infra_failures += 1
+                runs.append(bad)
+            except BaseException as exc:
                 print(f"    rig error: {type(exc).__name__}: {exc}")
                 bad = Run(domain=dom.key, seed=seed)
                 bad.record("rig", False, f"{type(exc).__name__}: {exc}")
                 runs.append(bad)
+            r = runs[-1]
+            print(
+                f"    {time.monotonic() - started:5.1f}s posts={r.posts_stored} replies={r.replies_stored} "
+                f"bundles={r.bundles} insights={r.insights} gen2={'Y' if r.gen2_post_stored else 'n'}",
+                flush=True,
+            )
+            # Checkpoint after every run so a later hang or kill cannot erase
+            # what already succeeded.
+            if args.out:
+                _write(args.out, runs)
 
     report(runs, model)
     if args.out:
-        payload = [
-            {
-                "domain": r.domain,
-                "seed": r.seed,
-                "posts_stored": r.posts_stored,
-                "posts_attempted": r.posts_attempted,
-                "replies_stored": r.replies_stored,
-                "bundles": r.bundles,
-                "insights": r.insights,
-                "gen2_injected": r.gen2_injected,
-                "gen2_post_stored": r.gen2_post_stored,
-                "rejections": r.rejections,
-                "infra_failures": r.infra_failures,
-                "steps": r.steps,
-            }
-            for r in runs
-        ]
-        with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+        _write(args.out, runs)
         print(f"\nwrote {args.out}")
     return 0
+
+
+def _write(path: str, runs: list[Run]) -> None:
+    payload = [
+        {
+            "domain": r.domain,
+            "seed": r.seed,
+            "posts_stored": r.posts_stored,
+            "posts_attempted": r.posts_attempted,
+            "replies_stored": r.replies_stored,
+            "bundles": r.bundles,
+            "insights": r.insights,
+            "gen2_injected": r.gen2_injected,
+            "gen2_post_stored": r.gen2_post_stored,
+            "rejections": r.rejections,
+            "infra_failures": r.infra_failures,
+            "steps": r.steps,
+        }
+        for r in runs
+    ]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
 
 
 def main() -> int:
@@ -518,6 +554,8 @@ def main() -> int:
     ap.add_argument("--domain", default="all", choices=["all", *(d.key for d in DOMAINS)])
     ap.add_argument("--retries", type=int, default=3, help="endpoint retries per call")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--max-tokens", type=int, default=2048, help="per-call generation cap")
+    ap.add_argument("--run-timeout", type=float, default=240.0, help="wall-clock cap per run")
     ap.add_argument("--json", dest="out", help="write per-run records here")
     ap.add_argument("--verbose", action="store_true", help="print every step outcome")
     args = ap.parse_args()
