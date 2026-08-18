@@ -188,3 +188,13 @@ NO_PARSEABLE_POST = "agent produced no parseable JSON post (not stored)"
 NO_PARSEABLE_REPLY = "agent produced no parseable JSON reply (not stored)"
 CURATION_FAILED = "curation failed (nothing stored, resumable): {reason}"
 CURATED_BUNDLE = "curated {scope} bundle {bundle_id} (curator={curator}) — /inject @{bundle_id} to seed"
+
+# --------------------------------------------------------------------------- #
+# session explain — the provenance chain (KSI inspectability)
+# --------------------------------------------------------------------------- #
+
+EXPLAIN_UNKNOWN = "no packet or session {id!r} in the Bank"
+EXPLAIN_NO_PARENTS = "this bundle records no parent posts (nothing to walk)"
+EXPLAIN_MISSING_PARENT = "(unavailable — deleted or quarantined)"
+EXPLAIN_NO_DOWNSTREAM = "not cited by any bundle yet"
+EXPLAIN_EMPTY_SESSION = "session {id} holds no packets"

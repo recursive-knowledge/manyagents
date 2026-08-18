@@ -23,36 +23,33 @@ from __future__ import annotations
 import re
 
 ANTI_META_BLOCK = (
-    "STRICT ANTI-META RULES (applied before you write anything):\n"
-    "- REJECT generic process meta-advice. Insights of the form "
-    '"validate first", "decompose before solving", "check edge '
-    'cases", "think step by step", "verify boundary conditions", '
-    '"test incrementally", "iterate", "reason carefully", '
-    '"handle errors", or any wording that could apply to literally '
-    "any coding/reasoning task are REJECTED. If your bullet could be "
-    "lifted and dropped into a software-engineering tutorial unchanged, "
-    "it is not an insight -- drop it.\n"
-    "- REQUIRE concrete grounding. Every bullet must name at least one "
-    "concrete primitive drawn from the posts: e.g. a specific grid "
-    "operation, color index, shape signature, transformation rule "
-    "(ARC); a specific API call, function/class name, import, file "
-    "path, or code pattern (SWE-bench); a specific language feature, "
-    "library function, stdlib module, or test-runner flag (polyglot). "
-    'Abstract nouns alone ("structure", "pattern", "approach") do '
-    "NOT count as concrete.\n"
-    "- REQUIRE evidence grounding. Every bullet must be derivable from "
-    "at least one forum post or attempt in the input. Put supporting forum "
-    "post IDs in evidence_post_ids when posts support the bullet. Do not "
-    "invent post IDs; if the only support is an attempt, leave "
-    "evidence_post_ids empty and make the attempt grounding explicit.\n"
-    "- PREFER transferable wording. For cross-task insights, describe "
-    "the primitive generically enough to apply across multiple tasks, "
-    'but keep the primitive itself concrete (e.g. "BFS flood-fill on '
-    '8-neighborhood to isolate connected regions of the same color" -- '
-    "concrete operation, still task-agnostic).\n"
+    "STRICT ANTI-META RULES (apply these before you write anything):\n"
+    "- REJECT generic process meta-advice. Drop any Insight that reads like "
+    'these: "validate first", "decompose before solving", "check edge '
+    'cases", "think step by step", "verify boundary conditions", "test '
+    'incrementally", "iterate", "reason carefully", "handle errors". Drop '
+    "any wording that fits every coding task or reasoning task. Use this "
+    "test: if you can lift the Insight into a software-engineering tutorial "
+    "and change nothing, it is not an Insight. Drop it.\n"
+    "- REQUIRE concrete grounding. Each Insight must name at least one "
+    "concrete primitive that comes from the posts. A concrete primitive is "
+    "an API call, a function name, a class name, an import, a file path, a "
+    "CLI flag, a data-shape invariant, an error type, a grid or shape "
+    "operation, or a named code pattern. Abstract nouns alone "
+    '("structure", "pattern", "approach") do NOT count as concrete.\n'
+    "- REQUIRE evidence grounding. Each Insight must come from at least one "
+    "post in the input. Record that support in the Insight's `evidence` "
+    "list. Each entry needs the cited `post_id` and a verbatim `quote` from "
+    "that post. Do not invent a post id. Do not paraphrase the quote: the "
+    "parser compares it against the post and drops an Insight when the "
+    "quote is not literal.\n"
+    "- PREFER transferable wording. Word a cross-goal Insight so it applies "
+    "to more than one goal, but keep the primitive concrete. Example: write "
+    '"BFS flood-fill on an 8-neighborhood to isolate connected regions of '
+    'the same colour". That names an operation and still fits many goals.\n'
     "- QUALITY OVER QUANTITY. Return at most 5 insights, 5 pitfalls, "
-    "and 5 checks. Pick the best bullets, not the most. Empty lists "
-    "are fine when there is no concrete signal.\n"
+    "and 5 checks. Choose the best Insights, not the most. An empty list is "
+    "correct when the posts carry no concrete signal.\n"
 )
 
 # The enumerated banned process-meta phrases (the empirically-measured failure
@@ -86,23 +83,29 @@ ABSTRACT_NOUNS: tuple[str, ...] = ("structure", "pattern", "approach")
 # where it matters: the phrase list and the mechanical enforcement primitives
 # below are shared objects; only the prose wrapper differs per flow.
 POST_ANTI_META_BLOCK = (
-    "STRICT ANTI-META RULES (applied before you write anything):\n"
-    "- REJECT generic process meta-advice. Wording of the form "
+    "STRICT ANTI-META RULES (apply these before you write anything):\n"
+    "- REJECT generic process meta-advice. The parser drops this post when a "
+    "field contains any of these: "
     + ", ".join(f'"{p}"' for p in BANNED_META_PHRASES)
-    + ", or anything that could be lifted into a software-engineering "
-    "tutorial unchanged, is rejected mechanically by the parser.\n"
-    "- REQUIRE concrete grounding. Every field must name a concrete "
-    "primitive: a specific API call, function/class name, import, file "
-    "path, CLI flag, or code pattern actually touched in the session. "
-    'Abstract nouns alone ("structure", "pattern", "approach") do NOT '
-    "count as concrete.\n"
-    "- REQUIRE evidence grounding. `evidence` is a verbatim excerpt from "
-    "this session's trace, or a cited prior post resolved via "
-    "`evidence_ref` — never an invented citation.\n"
-    "- An unresolved question is NOT a result. If the session ended with a "
-    "question unanswered or a step blocked, write the post about what "
-    "blocked it; do NOT assert an answer the session never established, "
-    'and set confidence to "low".\n'
+    + ". It also drops wording that you could lift into a "
+    "software-engineering tutorial and change nothing.\n"
+    "- REQUIRE concrete grounding. Each field must name a concrete primitive "
+    "that you touched in this session. A concrete primitive is an API call, "
+    "a function name, a class name, an import, a file path, a CLI flag, a "
+    "shell command, or a named code pattern. Abstract nouns alone "
+    '("structure", "pattern", "approach") do NOT count as concrete.\n'
+    "  Put the primitive in `backticks`. The parser looks for code-shaped "
+    "text, and a bare command in prose does not read as code-shaped. Write "
+    "`systemctl restart nginx` returns 0, not: systemctl restart nginx "
+    "returns 0. The second form is dropped even though it says the same "
+    "thing.\n"
+    "- REQUIRE evidence grounding. Copy `evidence` word for word from this "
+    "session's trace. You may instead cite one prior post and put its packet "
+    "id in `evidence_ref`. Never invent a citation.\n"
+    "- An unresolved question is NOT a result. Sometimes a session ends with "
+    "a question still open, or with a step still blocked. Then write the "
+    "post about the thing that blocked you. Do not assert an answer that the "
+    'session did not establish. Set `confidence` to "low".\n'
 )
 
 # Rendered-prompt CI guard (mirrors swarms ``_REQUIRED_PHRASES``): if any
@@ -125,11 +128,20 @@ _SHARED_REQUIRED_PHRASES: tuple[str, ...] = (
     "REQUIRE evidence grounding",
 )
 
+# Phrases that exist ONLY in the curator block. ``evidence_post_ids`` used to
+# head this list, inherited from swarms — but manyagent has no such field. Its
+# grounding lives in each Insight's ``evidence: [{post_id, quote}]``, and
+# ``distill.parse.validate_bundle`` reads nothing else, so the clause told the
+# curator to fill a field the parser never looks at while the output schema in
+# the same prompt asked for ``evidence[]``. Two grounding mechanisms in one
+# prompt cost real Insights: anything grounded only via the dead field arrives
+# with an empty ``evidence`` list and the parser drops it. The clause now names
+# the real field, and the anchor below moved to wording unique to that clause.
 _CURATOR_ONLY_PHRASES: tuple[str, ...] = (
-    "evidence_post_ids",
     "at most 5 insights",
     "5 pitfalls",
     "5 checks",
+    "PREFER transferable wording",
 )
 
 # Kept for backward compatibility — the full union used by the curator prompt.
@@ -166,7 +178,19 @@ def assert_anti_meta_rules_present(text: str, *, post_prompt: bool = False) -> N
 
 # A concrete primitive looks like code/identifier material, not prose: a
 # `backticked` token, dotted.path, snake_case/CamelCase id, a call(), a
-# --flag, a /path, an Error/Exception name.
+# --flag, a /path, an Error/Exception name, a [severity] marker.
+#
+# The alternatives above the last one came from swarms, whose benchmarks were
+# ARC, SWE-bench and polyglot — grid operations and code identifiers. KSI also
+# evaluates a *terminal* family, where the concrete primitives are log markers
+# and command output rather than code. Measured on the terminal scenario in
+# ``scripts/simulate_ksi.py``: the Insight "nginx accepts duplicate listen
+# directives in different files, causing [emerg] errors" was dropped as
+# non-concrete while a sibling Insight built from the *same* post survived,
+# because the model happened to backtick ``nginx -t`` there and not here. The
+# bracketed-severity alternative closes that gap. It stays deliberately narrow
+# — a lowercase word in square brackets, which is log-level shaped — because
+# every widening of this gate admits prose into the corpus.
 CONCRETE_RE = re.compile(
     r"`[^`]+`"  # backticked token
     r"|\b\w+\.\w+"  # dotted path / attribute / file.ext
@@ -176,6 +200,7 @@ CONCRETE_RE = re.compile(
     r"|\b[a-z]+_[a-z_]+\b"  # snake_case
     r"|\b[A-Z][a-z]+[A-Z]\w+\b"  # CamelCase
     r"|\b\w+(?:Error|Exception)\b"  # an error type
+    r"|\[[a-z]{3,}\]"  # a [severity] / log-level marker
 )
 
 

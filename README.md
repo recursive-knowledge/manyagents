@@ -133,6 +133,7 @@ ma agent list [-v]               # list registered agents (-v shows the per-file
 ma session start [goal] [--id]   # start a session that stays active across runs
 ma session end [--session id]    # end the active session (optional rating on the last reflection)
 ma session list [N] [--since W]  # browse recent sessions (also --until and --goal)
+ma session explain <id>          # walk the chain: bundle → posts → sessions, and back
 
 ma dev init                      # first-run setup: write ~/.manyagent/env (Bank URL and key)
 ma dev preflight                 # validate env, Bank reachability, and keys

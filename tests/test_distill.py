@@ -403,3 +403,168 @@ async def test_quarantined_posts_excluded_from_curation(fake_bank: FakeBank) -> 
     good = _bundle_json(_insight(evidence=[{"post_id": "S1/p1", "quote": "retry_backoff() loop slept 30s"}]))
     pkt = await curate(scope="per_goal", goal="g", bank=fake_bank, model=FakeModel(good), mode="local")
     assert pkt.parents == ["S1/p1"]  # quarantined p2 never reaches curation
+
+
+# --------------------------------------------------------------------------- #
+# _extract_json — recovery from real model output shapes (2026-08-08)
+#
+# Measured against qwen3.6-35b-a3b over the KSI scenarios in
+# ``scripts/simulate_ksi.py``: the previous first-`{`-to-last-`}` slice
+# recovered a bundle only when the model's reasoning trace happened to contain
+# no brace. One sample carried 18k brace-free chars of reasoning and parsed;
+# another mentioned `{a, b}` while thinking and decoded to nothing, failing the
+# whole curation. The failure was therefore intermittent and sampling-
+# dependent, which is why it survived into production untested.
+# --------------------------------------------------------------------------- #
+
+
+def test_extract_json_recovers_bundle_after_reasoning_trace_with_braces() -> None:
+    """A reasoning model writes prose containing braces, then the bundle."""
+    from manyagent.distill.curator import _extract_json
+
+    raw = (
+        "Thinking Process:\n"
+        "1. The schema is {transferable_insights: ...} so I must fill it.\n"
+        "2. Do {a, b} pairs matter here? No.\n\n"
+        '{"transferable_insights": [{"text": "t"}], "pitfalls": []}'
+    )
+    out = _extract_json(raw)
+    assert isinstance(out, dict)
+    assert out["transferable_insights"] == [{"text": "t"}]
+
+
+def test_extract_json_strips_think_blocks() -> None:
+    from manyagent.distill.curator import _extract_json
+
+    raw = '<think>Consider {x} then {y}.</think>\n{"transferable_insights": [], "checks": []}'
+    assert _extract_json(raw) == {"transferable_insights": [], "checks": []}
+
+
+def test_extract_json_survives_unterminated_think_opener() -> None:
+    """A truncated generation can leave the closing tag as the only marker."""
+    from manyagent.distill.curator import _extract_json
+
+    raw = '<think>reasoning about {a}</think>{"pitfalls": [], "checks": []}'
+    assert _extract_json(raw) == {"pitfalls": [], "checks": []}
+
+
+def test_extract_json_ignores_trailing_prose_containing_a_brace() -> None:
+    from manyagent.distill.curator import _extract_json
+
+    raw = '{"transferable_insights": [], "checks": []}\n\nHope that helps {more}!'
+    assert _extract_json(raw) == {"transferable_insights": [], "checks": []}
+
+
+def test_extract_json_treats_braces_inside_strings_as_literal() -> None:
+    """A brace inside a JSON string must not open or close a span."""
+    from manyagent.distill.curator import _extract_json
+
+    raw = '{"transferable_insights": [{"text": "use {curly} syntax"}]}'
+    out = _extract_json(raw)
+    assert isinstance(out, dict)
+    assert out["transferable_insights"][0]["text"] == "use {curly} syntax"
+
+
+def test_extract_json_prefers_the_bundle_over_an_incidental_object() -> None:
+    """Prose may contain a JSON-looking object that is not the bundle."""
+    from manyagent.distill.curator import _extract_json
+
+    raw = 'Here is an example row: {"post_id": "S/p1"}\n\n{"transferable_insights": [], "pitfalls": []}'
+    out = _extract_json(raw)
+    assert isinstance(out, dict)
+    assert "transferable_insights" in out
+
+
+def test_extract_json_still_returns_none_when_there_is_no_object() -> None:
+    from manyagent.distill.curator import _extract_json
+
+    assert _extract_json("I could not produce a bundle, sorry.") is None
+    assert _extract_json("") is None
+
+
+def test_extract_json_fenced_and_plain_still_work() -> None:
+    """Regression guard on the two shapes the old slice already handled."""
+    from manyagent.distill.curator import _extract_json
+
+    assert _extract_json('```json\n{"transferable_insights": []}\n```') == {"transferable_insights": []}
+    assert _extract_json('{"pitfalls": []}') == {"pitfalls": []}
+
+
+def test_openai_compat_model_sends_max_tokens_when_given() -> None:
+    """``max_tokens`` was accepted and then never sent, so a caller bounding
+    cost got no bound. It matters most on a reasoning model, which will
+    otherwise spend the whole remaining context on a chain of thought."""
+    import httpx
+
+    from manyagent.distill.resolve import _OpenAICompatModel
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def _fake_post(url: str, **kw: object) -> _Resp:
+        seen.update(kw.get("json") or {})  # type: ignore[arg-type]
+        return _Resp()
+
+    model = _OpenAICompatModel(base_url="http://x/v1", api_key="k", model="m")
+    original = httpx.post
+    httpx.post = _fake_post  # type: ignore[assignment]
+    try:
+        model.complete("p", max_tokens=256)
+        assert seen["max_tokens"] == 256
+        seen.clear()
+        model.complete("p")
+        assert "max_tokens" not in seen  # omitted, not defaulted to a guess
+    finally:
+        httpx.post = original  # type: ignore[assignment]
+
+
+def test_openai_compat_model_merges_extra_body_and_ignores_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MANYAGENT_LLM_EXTRA_BODY carries provider knobs the OpenAI wire format
+    has no field for — notably the reasoning switch. Malformed JSON is ignored
+    rather than fatal: a bad tunable must not break curation."""
+    import httpx
+
+    from manyagent.distill.resolve import _OpenAICompatModel
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def _fake_post(url: str, **kw: object) -> _Resp:
+        seen.clear()
+        seen.update(kw.get("json") or {})  # type: ignore[arg-type]
+        return _Resp()
+
+    model = _OpenAICompatModel(base_url="http://x/v1", api_key="k", model="m")
+    original = httpx.post
+    httpx.post = _fake_post  # type: ignore[assignment]
+    try:
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", '{"chat_template_kwargs":{"enable_thinking":false}}')
+        model.complete("p")
+        assert seen["chat_template_kwargs"] == {"enable_thinking": False}
+
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", "{not json")
+        model.complete("p")  # must not raise
+        assert seen["model"] == "m"
+        assert "chat_template_kwargs" not in seen
+
+        monkeypatch.setenv("MANYAGENT_LLM_EXTRA_BODY", '"a string, not an object"')
+        model.complete("p")  # non-dict JSON is ignored too
+        assert "chat_template_kwargs" not in seen
+    finally:
+        httpx.post = original  # type: ignore[assignment]

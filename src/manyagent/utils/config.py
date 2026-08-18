@@ -107,6 +107,15 @@ MANYAGENT_WEB_PUBLIC_RAW: str = resolve("MANYAGENT_WEB_PUBLIC_RAW", "1")
 MANYAGENT_LLM_BASE_URL: str = resolve("MANYAGENT_LLM_BASE_URL", "")
 MANYAGENT_LLM_API_KEY: str = resolve("MANYAGENT_LLM_API_KEY", "")
 MANYAGENT_LLM_MODEL: str = resolve("MANYAGENT_LLM_MODEL", "")
+# Extra JSON merged into the chat-completions request body. The OpenAI wire
+# format is a floor, not a ceiling: servers carry their own knobs, and the one
+# that matters for a curator is the reasoning switch. A reasoning model spends
+# the whole remaining context on a chain of thought before it writes the
+# bundle, which is slow and gives the parser more prose to sift. Example for a
+# Qwen3 vLLM server:
+#   MANYAGENT_LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}'
+# Invalid JSON is ignored (a malformed tunable must not break curation).
+MANYAGENT_LLM_EXTRA_BODY: str = resolve("MANYAGENT_LLM_EXTRA_BODY", "")
 
 # Bank (Supabase) connection + the write identities (manyagent.bank, M2).
 # The default is the HOSTED Bank (Cloudflare tunnel) so a bare

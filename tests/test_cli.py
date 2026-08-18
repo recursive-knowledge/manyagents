@@ -1693,3 +1693,120 @@ def test_quarantine_in_dispatch() -> None:
     """Quarantine is registered in _DISPATCH['dev'] and callable."""
     assert "quarantine" in cli._DISPATCH["dev"]
     assert cli._DISPATCH["dev"]["quarantine"] is cli._do_quarantine
+
+
+# --------------------------------------------------------------------------- #
+# ma session explain — the provenance chain (KSI inspectability, 2026-08-09)
+# --------------------------------------------------------------------------- #
+
+
+def _explain_post(pid: str, *, session: str, goal: str) -> dict[str, Any]:
+    return {
+        "id": pid,
+        "session_id": session,
+        "type": "post",
+        "agent_id": f"{session}/agent-001-claude",
+        "kind": "reflection",
+        "goal": goal,
+        "rating": 5,
+        "structured": {
+            "load_bearing_assumption": "the tokenize() hot loop recompiled the regex per call",
+            "evidence": "verbatim from trace: 'cumtime 4.2s in tokenize()'",
+            "evidence_ref": None,
+            "proposed_next": "hoist the compiled pattern to scanner.py module scope",
+            "predicted_outcome": "parse throughput ~1.8x",
+            "confidence": "medium",
+        },
+    }
+
+
+def _bundle_packet(parents: list[str]) -> dict[str, Any]:
+    return {
+        "id": "curator/abc123",
+        "session_id": "curator",
+        "type": "distill",
+        "agent_id": "curator",
+        "scope": "per_goal",
+        "goal": "g",
+        "curator": "local",
+        "parents": parents,
+        "bundle": {
+            "transferable_insights": [
+                {
+                    "text": "Hoist the compiled pattern to scanner.py module scope.",
+                    "applies_when": "the regex is rebuilt inside a hot loop",
+                    "does_not_apply_when": "the pattern varies per call",
+                    "evidence": [{"post_id": parents[0], "quote": "cumtime 4.2s in tokenize()"}],
+                    "confidence": "high",
+                }
+            ]
+        },
+    }
+
+
+async def test_session_explain_walks_a_bundle_up_to_its_posts(fake_bank: FakeBank) -> None:
+    """A bundle names the posts and sessions it synthesized, and each Insight
+    shows its boundary and the quote that grounds it."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_explain_post("S1/p1", session="S1", goal="g"))
+    await fake_bank.put_packet(_bundle_packet(["S1/p1"]))
+
+    s = Scripted()
+    rc = await cli._do_session_explain(_args("session", "explain", "curator/abc123"), bank=fake_bank, io=s.io())
+    out = "\n".join(s.out)
+    assert rc == 0
+    assert "synthesized 1 post(s) from 1 session(s)" in out
+    assert "S1/p1" in out
+    assert "applies when" in out and "does not apply" in out
+    assert "cumtime 4.2s in tokenize()" in out  # the grounding quote is shown
+
+
+async def test_session_explain_shows_downstream_reuse_of_a_post(fake_bank: FakeBank) -> None:
+    """The chain runs the other way too: a post names the bundles citing it."""
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_explain_post("S1/p1", session="S1", goal="g"))
+    await fake_bank.put_packet(_bundle_packet(["S1/p1"]))
+
+    s = Scripted()
+    rc = await cli._do_session_explain(_args("session", "explain", "S1/p1"), bank=fake_bank, io=s.io())
+    out = "\n".join(s.out)
+    assert rc == 0
+    assert "cited by 1 bundle(s)" in out
+    assert "curator/abc123" in out
+
+
+async def test_session_explain_reports_a_missing_parent_instead_of_raising(fake_bank: FakeBank) -> None:
+    """A quarantined or deleted parent must not abort the walk — a partial
+    chain is still worth printing."""
+    await fake_bank.put_packet(_bundle_packet(["S1/gone"]))
+
+    s = Scripted()
+    rc = await cli._do_session_explain(_args("session", "explain", "curator/abc123"), bank=fake_bank, io=s.io())
+    out = "\n".join(s.out)
+    assert rc == 0
+    assert "S1/gone" in out
+    assert "unavailable" in out
+
+
+async def test_session_explain_accepts_a_session_id(fake_bank: FakeBank) -> None:
+    await fake_bank.put_session("S1", goal="g")
+    await fake_bank.put_packet(_explain_post("S1/p1", session="S1", goal="g"))
+
+    s = Scripted()
+    rc = await cli._do_session_explain(_args("session", "explain", "S1"), bank=fake_bank, io=s.io())
+    out = "\n".join(s.out)
+    assert rc == 0
+    assert "session S1" in out and "S1/p1" in out
+
+
+async def test_session_explain_unknown_id_exits_nonzero(fake_bank: FakeBank) -> None:
+    s = Scripted()
+    rc = await cli._do_session_explain(_args("session", "explain", "nope/xyz"), bank=fake_bank, io=s.io())
+    assert rc == 1
+    assert "no packet or session" in "\n".join(s.out)
+
+
+def test_session_explain_is_registered_in_dispatch_and_parser() -> None:
+    assert cli._DISPATCH["session"]["explain"] is cli._do_session_explain
+    args = cli._build_parser().parse_args(["session", "explain", "curator/abc"])
+    assert args.id == "curator/abc"
